@@ -45,6 +45,9 @@ public final class PowerManager {
         updatePolicy()
     }
 
+    /// Optional callback for easy wiring in the prototype (called on main actor when policy changes).
+    public var onPolicyChange: ((WallpaperPlaybackPolicy) -> Void)?
+
     deinit {
         observers.forEach { NotificationCenter.default.removeObserver($0) }
     }
@@ -127,8 +130,7 @@ public final class PowerManager {
     private func setPolicy(_ newPolicy: WallpaperPlaybackPolicy) {
         guard currentPolicy != newPolicy else { return }
         currentPolicy = newPolicy
-        // In a real implementation we would also log or post a typed Notification here
-        // so renderers can react without tight coupling.
         print("[PowerManager] Policy changed → \(newPolicy)")
+        onPolicyChange?(newPolicy)
     }
 }

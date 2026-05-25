@@ -30,17 +30,38 @@ Most Mac "live wallpaper" solutions are either:
 
 Lumina is different: **the power & performance manager is a first-class citizen**. The app will aggressively (but respectfully) pause or throttle when it would otherwise interfere with foreground work, video calls, gaming, or battery life.
 
-## Building & Running (Development)
+## Building & Running the Prototype (Working Now!)
 
 ```bash
 swift build
 .build/debug/Lumina
 ```
 
-The binary will appear as a menu bar icon (🌊 placeholder) with no Dock presence.
+A menu bar icon (🌊) will appear with **no Dock icon**. This is intentional.
+
+### How to see a real live wallpaper right now
+
+1. Run the binary above.
+2. Click the 🌊 icon in the menu bar → **Load Video…**
+3. Choose any `.mp4`, `.mov`, or `.m4v` file on your Mac (best results: 1080p or 4K, smooth looping footage, preferably muted).
+4. The video instantly becomes your desktop wallpaper on **every monitor**, behind all windows and icons.
+
+**Power intelligence is already active:**
+- Enable **Low Power Mode** in System Settings → Battery → the wallpaper should pause automatically.
+- Do something CPU/thermal heavy (compile a big project, run a game, etc.) → it throttles or pauses.
+- Click the menu bar icon → "Pause / Resume" to toggle manually.
+
+This is the core promise of Lumina already working in prototype form.
+
+### Important Prototype Notes
+
+- The windows are created at the correct desktop level using the same techniques as the best existing Mac wallpaper apps.
+- Looping uses `AVPlayerLooper` (seamless, hardware-accelerated on Apple Silicon).
+- Currently one video is shared across all displays. Per-display wallpapers come later.
+- Close the app (Quit from the menu) to stop the wallpaper.
 
 **Testing note:**  
-`swift test` may fail on minimal Command Line Tools installs because XCTest / Swift Testing modules are provided by a full Xcode installation. Open the package in Xcode (File → Open Package) for the best development experience — tests, SwiftUI previews, and signing all work there.
+`swift test` may fail on minimal Command Line Tools installs because XCTest / Swift Testing modules are provided by a full Xcode installation. Open the package in Xcode (File → Open Package) for the best development experience.
 
 For pure CLI validation of the engine logic you can still build the main product at any time with `swift build`.
 
