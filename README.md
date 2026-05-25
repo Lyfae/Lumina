@@ -8,18 +8,16 @@ Lumina brings the beloved experience of Wallpaper Engine (Windows/Steam) to the 
 
 This project is in active bootstrapping / MVP phase.
 
-**What works today:**
+**What works today (prototype improved with UX + debug support):**
 - Pure menu-bar accessory app (no Dock icon, `LSUIElement` / `.accessory` policy)
 - Clean Swift 6 + SPM structure targeting latest macOS (Tahoe+)
-- Placeholder status item with basic menu
+- Full working engine: `AVVideoRenderer` (seamless `AVPlayerLooper`), `PowerManager` (LPM + thermal + fullscreen intelligence), `DesktopWallpaperWindow` (correct desktop layering on all screens), `FullscreenDetector`, bookmark-based persistence with fallback.
+- **Improved UX (B)**: Dynamic menu showing current video filename, "Clear Current Wallpaper" (stop playback, keep persistence), helpful "no video loaded" state, "About / Status…" dialog with live policy + instructions, simple power toggles in menu, highly informative status bar icon (🌊 / 🌊○ / 🌊⏱ / 🌊⏸ + rich tooltips), "Debug: Print Status" (⌘D).
+- **Hardware verification support (C)**: In-app debug menu + status, plus comprehensive `docs/PROTOTYPE_TESTING.md` with Instruments guidance and checklist.
 
-**Next immediate goals (see the approved implementation plan):**
-- PowerManager (smart pause on Low Power Mode, thermal, fullscreen, battery)
-- DesktopWallpaperWindow at the proper window level behind icons
-- Hardware-accelerated video renderer (AVFoundation + AVPlayerLooper) as the first content type
+The core low-power promise is already demonstrable on real hardware.
 
-See the detailed plan here (internal):
-`/Users/lyfae/.grok/sessions/%2FUsers%2Flyfae%2FDocuments%2Fgithub%2Fwallpaper/019e5d9d-f1bf-7d01-940d-20d1e9703497/plan.md`
+See the detailed plan (internal) for full phased roadmap.
 
 ## Why Another Wallpaper App?
 
@@ -32,42 +30,128 @@ Lumina is different: **the power & performance manager is a first-class citizen*
 
 ## Building & Running the Prototype (Working Now!)
 
+**Recommended way:**
+```bash
+./scripts/setup.sh
+```
+
+This one script handles building + opens demo videos and the testing guide.
+
+Manual alternative:
 ```bash
 swift build
 .build/debug/Lumina
 ```
 
-A menu bar icon (🌊) will appear with **no Dock icon**. This is intentional.
+A menu bar icon (🌊 or 🌊○) will appear with **no Dock icon**. This is intentional.
 
 ### How to see a real live wallpaper right now
 
 1. Run the binary above.
-2. Click the 🌊 icon in the menu bar → **Load Video…**
-3. Choose any `.mp4`, `.mov`, or `.m4v` file on your Mac (best results: 1080p or 4K, smooth looping footage, preferably muted).
+2. Click the menu bar icon → **Load Video…** (⌘O).
+3. Choose any local `.mp4`, `.mov`, or `.m4v` (best: 1080p/4K smooth looping footage, preferably muted or silent audio).
 4. The video instantly becomes your desktop wallpaper on **every monitor**, behind all windows and icons.
 
 **Power intelligence is already active:**
-- Enable **Low Power Mode** in System Settings → Battery → the wallpaper pauses automatically.
-- Do something CPU/thermal heavy → it throttles or pauses.
-- Go into a **fullscreen app** (YouTube, games, full-screen Xcode, Zoom, etc.) → wallpaper **automatically pauses**.
-- The last video you chose is now **remembered** and will automatically reload the next time you launch Lumina (or after login).
-- Click the menu bar icon → "Pause / Resume" for manual control. You can also "Reload Last Video" or "Clear Saved Wallpaper".
+- Enable **Low Power Mode** → wallpaper pauses automatically.
+- CPU/thermal heavy work → throttles or pauses.
+- **Fullscreen app** (YouTube fullscreen, games, full-screen Xcode, Zoom, etc.) → wallpaper **automatically pauses**.
+- Last video is **remembered** via security-scoped bookmarks + fallback and auto-restores on next launch.
+- Manual controls: Pause/Resume (⌘P), Reload Last (⌘R), etc.
 
-This is the core promise of Lumina already working in prototype form.
+### New in This Prototype Update (Improved UX + Debug)
+
+The menu is now much more useful:
+- Always shows current wallpaper filename (or clear "No video loaded" guidance).
+- **Clear Current Wallpaper**: instantly stops playback **without** clearing your saved bookmark.
+- **About / Status…**: shows live loaded video, exact power policy, current settings, and quick instructions.
+- Simple toggles for Low Power Mode and thermal pause behavior.
+- **Debug: Print Status to Console** (⌘D): detailed dump of policy, per-renderer rates (for verifying throttling/FPS), flags, etc.
+- Status bar icon + tooltip are highly informative and change with state (including no-video case).
+
+See the full user-friendly changes in the menu when you run it.
+
+**For real hardware testing and Instruments guidance, read:**
+`docs/PROTOTYPE_TESTING.md`
+
+It includes:
+- Step-by-step MacBook verification instructions
+- How to use Energy Diagnostics + CPU Profiler
+- Detailed scenarios (LPM, thermal load, fullscreen, sleep/wake, multi-monitor)
+- A ready-to-use **Verification Checklist**
 
 ### Important Prototype Notes
 
-- The windows are created at the correct desktop level using the same techniques as the best existing Mac wallpaper apps.
-- Looping uses `AVPlayerLooper` (seamless, hardware-accelerated on Apple Silicon).
-- Currently one video is shared across all displays. Per-display wallpapers come later.
-- Close the app (Quit from the menu) to stop the wallpaper.
+- Windows use the correct desktop window level (same techniques as top Mac wallpaper apps).
+- Seamless looping via `AVPlayerLooper` (hardware accelerated on Apple Silicon).
+- One video shared across displays for now (per-display support planned).
+- Close via "Quit Lumina" (⌘Q) to stop everything cleanly.
 
 **Testing note:**  
-`swift test` may fail on minimal Command Line Tools installs because XCTest / Swift Testing modules are provided by a full Xcode installation. Open the package in Xcode (File → Open Package) for the best development experience.
+`swift test` may fail on minimal Command Line Tools installs (XCTest/Swift Testing require full Xcode). Open the package in Xcode for the best dev experience. Pure CLI builds always work with `swift build`.
 
-For pure CLI validation of the engine logic you can still build the main product at any time with `swift build`.
+---
 
-For a more app-like experience during development you can later wrap it or simply `open` a generated .app (future release scripts will handle proper bundling + notarization).
+## Demo Assets — Ready-to-Test Royalty-Free Videos
+
+For immediate testing, run the setup script:
+
+```bash
+./scripts/setup.sh
+```
+
+This will build the project, create the samples folder, open recommended demo videos, and the testing guide.
+
+**Top recommendations (subtle, calm, perfect for wallpapers, muted, excellent loops):**
+
+- **Mixkit – Clouds and Blue Sky Background** (highly recommended)  
+  https://mixkit.co/free-stock-video/clouds-and-blue-sky-background-2408/  
+  Slow natural clouds. 4K available. **License**: Mixkit Free License — royalty-free for personal/commercial, **no attribution required**.
+
+- **Mixkit – Multicolor Ink Swirls in Water**  
+  https://mixkit.co/free-stock-video/multicolor-ink-swirls-in-water-286/  
+  Calm abstract. Beautiful for desktops.
+
+- **Pixabay** (search "looping 4k", "ocean loop", "abstract seamless"):  
+  https://pixabay.com/videos/search/looping/  
+  Many free 4K options. License: free personal + commercial, **no attribution** for most.
+
+- **Pexels Videos**: https://www.pexels.com/search/videos/loop%20nature/ or "slow motion waves".
+
+**One-command setup + browser helper (macOS):**
+
+```bash
+mkdir -p "$HOME/Movies/Lumina Samples" && \
+cd "$HOME/Movies/Lumina Samples" && \
+open "https://mixkit.co/free-stock-video/clouds-and-blue-sky-background-2408/" && \
+open "https://mixkit.co/free-stock-video/multicolor-ink-swirls-in-water-286/" && \
+open "https://pixabay.com/videos/search/looping%204k/" && \
+echo "✅ Ready: ~/Movies/Lumina Samples/. Download MP4s from the pages and load via Lumina menu."
+```
+
+**Tips for best wallpaper results:**
+- H.264 or H.265 (HEVC) for maximum efficiency on Apple Silicon.
+- 1080p or 4K, 24–60 fps, short seamless loops (5–30s ideal).
+- Lumina forces mute for wallpapers (audio support is future optional).
+
+See full guidance + fallback options (GIFs etc.) in `docs/PROTOTYPE_TESTING.md`.
+
+---
+
+## Hardware Verification & Testing
+
+See the complete guide:
+
+**`docs/PROTOTYPE_TESTING.md`**
+
+It covers everything needed to validate the low-power claims on real Mac hardware using Instruments and the built-in debug tools. Includes a printable Verification Checklist.
+
+**Quick build verification:**
+```bash
+swift build
+```
+
+The prototype must build cleanly after every change.
 
 ## Roadmap (High Level)
 
