@@ -223,14 +223,25 @@ main() {
     print_info "Creating samples folder..."
     mkdir -p ~/Movies/Lumina\ Samples
     print_success "Folder ready: ~/Movies/Lumina Samples"
+
+    # Check for a demo video (convention: demo.mp4 makes it easy for scripts / future auto-load)
+    if [[ -f ~/Movies/Lumina\ Samples/demo.mp4 ]]; then
+        print_success "Demo video detected: ~/Movies/Lumina Samples/demo.mp4"
+    else
+        print_plain "   (No demo.mp4 found yet — drop or rename a video to demo.mp4 for easy reference)"
+    fi
     echo ""
 
-    # Open resources
-    print_info "Opening recommended demo videos and documentation..."
-    open "https://mixkit.co/free-stock-video/clouds-and-blue-sky-background-2408/" 2>/dev/null || true
-    open "https://mixkit.co/free-stock-video/multicolor-ink-swirls-in-water-286/" 2>/dev/null || true
-    open "docs/PROTOTYPE_TESTING.md" 2>/dev/null || true
-    print_success "Resources opened"
+    # Open resources (only on first-time / incomplete setup)
+    if [[ -f ~/Movies/Lumina\ Samples/demo.mp4 ]]; then
+        print_plain "   Demo video already present — skipping first-time resource opens (Mixkit links + testing guide)."
+    else
+        print_info "Opening recommended demo videos and documentation (first-time setup)..."
+        open "https://mixkit.co/free-stock-video/clouds-and-blue-sky-background-2408/" 2>/dev/null || true
+        open "https://mixkit.co/free-stock-video/multicolor-ink-swirls-in-water-286/" 2>/dev/null || true
+        open "docs/PROTOTYPE_TESTING.md" 2>/dev/null || true
+        print_success "Resources opened"
+    fi
     echo ""
 
     # Final instructions
@@ -240,18 +251,23 @@ main() {
     echo ""
     print_plain "${BOLD}Next steps:${NC}"
     echo ""
-    print_plain "  1. Download one of the opened videos into:"
-    print_plain "     ~/Movies/Lumina Samples/"
+
+    if [[ -f ~/Movies/Lumina\ Samples/demo.mp4 ]]; then
+        print_plain "  1. Your demo video is ready at ~/Movies/Lumina Samples/demo.mp4"
+        print_plain "  2. Run the prototype:   .build/debug/Lumina"
+        print_plain "  3. Load it via the menu bar icon → \"Load Video…\" (⌘O)"
+    else
+        print_plain "  1. Place (or rename) a video as demo.mp4 inside ~/Movies/Lumina Samples/"
+        print_plain "  2. Run the prototype:   .build/debug/Lumina"
+        print_plain "  3. Load it via the menu bar icon → \"Load Video…\" (⌘O)"
+    fi
+
     echo ""
-    print_plain "  2. Run the prototype:"
-    print_plain "     .build/debug/Lumina"
+    print_plain "  4. Read docs/PROTOTYPE_TESTING.md for full verification steps & Instruments guidance."
     echo ""
-    print_plain "  3. In the menu bar, click the icon → \"Load Video…\" (⌘O)"
+    print_plain "${YELLOW}Tip:${NC} Using the name demo.mp4 makes it easy for this script and future tools to detect it."
     echo ""
-    print_plain "  4. Read the testing guide (just opened) for Instruments instructions"
-    echo "     and the full verification checklist."
-    echo ""
-    print_plain "${YELLOW}Tip:${NC} Re-run this script anytime: ./scripts/setup.sh"
+    print_plain "${YELLOW}Re-run anytime:${NC} ./scripts/setup.sh"
     echo ""
     print_header
 }

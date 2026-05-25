@@ -81,12 +81,20 @@ public final class FullscreenDetector {
     // MARK: - Core Detection Logic
 
     private func performFullscreenCheck() {
+        // TEMPORARILY DISABLED for development (see todo list)
+        // We want the wallpaper to keep running even when fullscreen apps are detected.
+        // This will be re-enabled once we have proper per-monitor pause configuration.
+        return
+
+        // --- Original logic (kept for later) ---
+        /*
         let obscured = isAnyScreenObscuredByFullscreenWindow()
 
         guard obscured != isCurrentlyObscured else { return }
         isCurrentlyObscured = obscured
 
         powerManager?.updateFullscreenObscured(obscured)
+        */
     }
 
     private func isAnyScreenObscuredByFullscreenWindow() -> Bool {

@@ -16,6 +16,10 @@ public struct WallpaperPersistence {
     // MARK: - Last Video
 
     public static func saveLastVideo(_ url: URL) {
+        // Always save the plain filesystem path as a reliable fallback.
+        // This survives bookmark invalidation (file renames, etc.).
+        UserDefaults.standard.set(url.path, forKey: "lastVideoPathFallback")
+
         do {
             // Use the most compatible bookmark options for broad macOS support
             let bookmarkData = try url.bookmarkData(
@@ -26,15 +30,21 @@ public struct WallpaperPersistence {
             UserDefaults.standard.set(bookmarkData, forKey: lastVideoBookmarkKey)
         } catch {
             print("[Persistence] Failed to create bookmark for \(url): \(error)")
-            // Fallback: store the path as string (very reliable for our current non-sandboxed prototype)
-            UserDefaults.standard.set(url.path, forKey: "lastVideoPathFallback")
+            // Path fallback is already saved above — no further action needed.
         }
     }
 
     /// Attempts to restore the last video the user chose.
-    /// Returns a URL that has had `startAccessingSecurityScopedResource()` called if successful.
+    /// Returns a URL (security-scoped if possible).
+    ///
+    /// Behavior:
+    /// - Tries bookmark first.
+    /// - On any failure or staleness, automatically clears the bad bookmark.
+    /// - Falls back to the plain path saved during the last successful `saveLastVideo`.
+    /// - As a final prototype convenience, falls back to `~/Movies/Lumina Samples/demo.mp4`
+    ///   if it exists and nothing else is available.
     public static func restoreLastVideo() -> URL? {
-        // Try bookmark first (preferred)
+        // Try bookmark first (preferred when valid)
         if let data = UserDefaults.standard.data(forKey: lastVideoBookmarkKey) {
             var isStale = false
             do {
@@ -46,22 +56,30 @@ public struct WallpaperPersistence {
                 )
 
                 if isStale {
-                    print("[Persistence] Bookmark is stale for last video.")
-                    return tryFallbackPath()
+                    print("[Persistence] Bookmark is stale — clearing it and falling back.")
+                    clearBookmarkOnly()
+                    return tryFallbackPath() ?? tryDemoPath()
                 }
 
                 if url.startAccessingSecurityScopedResource() {
                     return url
                 } else {
-                    print("[Persistence] Could not start accessing security scoped resource.")
+                    print("[Persistence] Could not start accessing security scoped resource — clearing bookmark.")
+                    clearBookmarkOnly()
                 }
             } catch {
-                print("[Persistence] Failed to resolve bookmark: \(error)")
+                print("[Persistence] Failed to resolve bookmark: \(error) — clearing bad bookmark data.")
+                clearBookmarkOnly()
             }
         }
 
-        // Fallback to plain path (very reliable for our current non-sandboxed prototype)
-        return tryFallbackPath()
+        // Fallback to plain path (saved on every successful saveLastVideo)
+        if let url = tryFallbackPath() {
+            return url
+        }
+
+        // Prototype convenience fallback
+        return tryDemoPath()
     }
 
     private static func tryFallbackPath() -> URL? {
@@ -75,5 +93,23 @@ public struct WallpaperPersistence {
     public static func clearLastVideo() {
         UserDefaults.standard.removeObject(forKey: lastVideoBookmarkKey)
         UserDefaults.standard.removeObject(forKey: "lastVideoPathFallback")
+    }
+
+    // MARK: - Private Helpers
+
+    private static func clearBookmarkOnly() {
+        UserDefaults.standard.removeObject(forKey: lastVideoBookmarkKey)
+    }
+
+    /// Prototype convenience: returns the standard demo video location if the file exists.
+    private static func tryDemoPath() -> URL? {
+        let demoPath = NSString(string: "~/Movies/Lumina Samples/demo.mp4").expandingTildeInPath
+        let url = URL(fileURLWithPath: demoPath)
+
+        if FileManager.default.fileExists(atPath: url.path) {
+            print("[Persistence] No saved video found — falling back to demo.mp4 for prototype convenience.")
+            return url
+        }
+        return nil
     }
 }

@@ -64,6 +64,11 @@ public final class PowerManager {
         updatePolicy()
     }
 
+    /// Public hook for prototype menu toggles & debug: immediately re-evaluate policy from current system state.
+    public func recomputePolicy() {
+        updatePolicy()
+    }
+
     /// Called by FullscreenDetector when the desktop is (or is no longer) obscured by a fullscreen window.
     public func updateFullscreenObscured(_ isObscured: Bool) {
         guard respectFullscreenApps else { return }
