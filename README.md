@@ -49,8 +49,9 @@ A menu bar icon (🌊) will appear with **no Dock icon**. This is intentional.
 **Power intelligence is already active:**
 - Enable **Low Power Mode** in System Settings → Battery → the wallpaper pauses automatically.
 - Do something CPU/thermal heavy → it throttles or pauses.
-- Go into a **fullscreen app** (YouTube, games, full-screen Xcode, Zoom, etc.) → wallpaper **automatically pauses** (new in this build).
-- Click the menu bar icon → "Pause / Resume" for manual control.
+- Go into a **fullscreen app** (YouTube, games, full-screen Xcode, Zoom, etc.) → wallpaper **automatically pauses**.
+- The last video you chose is now **remembered** and will automatically reload the next time you launch Lumina (or after login).
+- Click the menu bar icon → "Pause / Resume" for manual control. You can also "Reload Last Video" or "Clear Saved Wallpaper".
 
 This is the core promise of Lumina already working in prototype form.
 

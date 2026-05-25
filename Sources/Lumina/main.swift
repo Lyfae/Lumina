@@ -85,6 +85,20 @@ final class LuminaApp: NSObject, NSApplicationDelegate {
 
         // Initial policy application
         applyPolicyToRenderers(powerManager.currentPolicy)
+
+        // === Basic Persistence (Step A) ===
+        // Try to restore the user's last chosen video automatically
+        if let lastURL = WallpaperPersistence.restoreLastVideo() {
+            print("Restoring last wallpaper: \(lastURL.path)")
+            for renderer in renderers {
+                renderer.load(url: lastURL, autoPlay: true)
+            }
+            let filename = lastURL.lastPathComponent
+            statusItem.button?.toolTip = "Lumina – \(filename)"
+
+            // Re-apply current power policy (in case Low Power Mode was already on)
+            applyPolicyToRenderers(powerManager.currentPolicy)
+        }
     }
 
     private func applyPolicyToRenderers(_ policy: WallpaperPlaybackPolicy) {
@@ -114,6 +128,9 @@ final class LuminaApp: NSObject, NSApplicationDelegate {
             renderer.load(url: url, autoPlay: true)
         }
 
+        // Persist so it comes back after restart / login
+        WallpaperPersistence.saveLastVideo(url)
+
         // Update tooltip with the loaded file
         let filename = url.lastPathComponent
         statusItem.button?.toolTip = "Lumina – \(filename)"
@@ -133,7 +150,8 @@ final class LuminaApp: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem(title: "Pause / Resume", action: #selector(togglePause), keyEquivalent: "p"))
         menu.addItem(NSMenuItem.separator())
 
-        menu.addItem(NSMenuItem(title: "Reload Current Video", action: #selector(reloadCurrentVideo), keyEquivalent: "r"))
+        menu.addItem(NSMenuItem(title: "Reload Last Video", action: #selector(reloadLastVideo), keyEquivalent: "r"))
+        menu.addItem(NSMenuItem(title: "Clear Saved Wallpaper", action: #selector(clearSavedWallpaper), keyEquivalent: ""))
         menu.addItem(NSMenuItem.separator())
 
         menu.addItem(NSMenuItem(title: "Quit Lumina", action: #selector(quit), keyEquivalent: "q"))
@@ -167,10 +185,26 @@ final class LuminaApp: NSObject, NSApplicationDelegate {
         }
     }
 
-    @objc private func reloadCurrentVideo() {
-        // For prototype we just re-apply the last policy to current renderers.
-        // A full implementation would remember the last URL per renderer.
-        print("Reload not fully implemented in prototype – use Load Video… again.")
+    @objc private func reloadLastVideo() {
+        guard let url = WallpaperPersistence.restoreLastVideo() else {
+            print("No saved wallpaper to reload.")
+            return
+        }
+        print("Reloading saved wallpaper: \(url.path)")
+        for renderer in renderers {
+            renderer.load(url: url, autoPlay: true)
+        }
+        statusItem.button?.toolTip = "Lumina – \(url.lastPathComponent)"
+    }
+
+    @objc private func clearSavedWallpaper() {
+        WallpaperPersistence.clearLastVideo()
+        print("Cleared saved wallpaper. It will no longer auto-load on next launch.")
+        // Optionally pause current playback
+        for renderer in renderers {
+            renderer.pause()
+        }
+        statusItem.button?.toolTip = "Lumina – Low-power wallpapers"
     }
 
     @objc private func quit() {
