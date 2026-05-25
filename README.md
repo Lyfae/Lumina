@@ -35,7 +35,13 @@ Lumina is different: **the power & performance manager is a first-class citizen*
 ./scripts/setup.sh
 ```
 
-This one script handles building + opens demo videos and the testing guide.
+This script now does much more:
+- Checks your macOS and Swift versions
+- Detects missing Command Line Tools and offers to install them
+- Uses safe color output (auto-detects terminal support)
+- Builds the project + prepares everything for testing
+
+You can also run with `./scripts/setup.sh --no-color` if needed.
 
 Manual alternative:
 ```bash
