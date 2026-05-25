@@ -18,6 +18,7 @@ final class LuminaApp: NSObject, NSApplicationDelegate {
 
     // MARK: - Core Engine (Prototype)
     private var powerManager: PowerManager!
+    private var fullscreenDetector: FullscreenDetector!
     private var wallpaperWindows: [DesktopWallpaperWindow] = []
     private var renderers: [AVVideoRenderer] = []
 
@@ -37,7 +38,20 @@ final class LuminaApp: NSObject, NSApplicationDelegate {
         setupPowerManager()
         setupWallpaperWindowsAndRenderers()
 
+        // Extra triggers for fullscreen detection
+        let nc = NotificationCenter.default
+        nc.addObserver(self, selector: #selector(wakeFromSleep), name: NSWorkspace.didWakeNotification, object: nil)
+        nc.addObserver(self, selector: #selector(screensChanged), name: NSApplication.didChangeScreenParametersNotification, object: nil)
+
         print("Lumina prototype started (menu-bar only). Use the 🌊 icon → Load Video…")
+    }
+
+    @objc private func wakeFromSleep() {
+        fullscreenDetector?.checkNow()
+    }
+
+    @objc private func screensChanged() {
+        fullscreenDetector?.checkNow()
     }
 
     // MARK: - Engine Setup
@@ -50,6 +64,9 @@ final class LuminaApp: NSObject, NSApplicationDelegate {
             self?.applyPolicyToRenderers(policy)
             self?.updateStatusItem(for: policy)
         }
+
+        // Fullscreen / obscured detection (critical for not interfering with user work)
+        fullscreenDetector = FullscreenDetector(powerManager: powerManager)
     }
 
     private func setupWallpaperWindowsAndRenderers() {
@@ -164,6 +181,7 @@ final class LuminaApp: NSObject, NSApplicationDelegate {
         for window in wallpaperWindows {
             window.hideAndRelease()
         }
+        // FullscreenDetector will be deallocated; it stops its own timer
         NSApplication.shared.terminate(nil)
     }
 }

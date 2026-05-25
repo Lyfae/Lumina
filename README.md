@@ -47,9 +47,10 @@ A menu bar icon (🌊) will appear with **no Dock icon**. This is intentional.
 4. The video instantly becomes your desktop wallpaper on **every monitor**, behind all windows and icons.
 
 **Power intelligence is already active:**
-- Enable **Low Power Mode** in System Settings → Battery → the wallpaper should pause automatically.
-- Do something CPU/thermal heavy (compile a big project, run a game, etc.) → it throttles or pauses.
-- Click the menu bar icon → "Pause / Resume" to toggle manually.
+- Enable **Low Power Mode** in System Settings → Battery → the wallpaper pauses automatically.
+- Do something CPU/thermal heavy → it throttles or pauses.
+- Go into a **fullscreen app** (YouTube, games, full-screen Xcode, Zoom, etc.) → wallpaper **automatically pauses** (new in this build).
+- Click the menu bar icon → "Pause / Resume" for manual control.
 
 This is the core promise of Lumina already working in prototype form.
 
