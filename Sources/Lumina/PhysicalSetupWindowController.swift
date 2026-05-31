@@ -71,14 +71,14 @@ final class PhysicalSetupWindowController: NSWindowController {
     
     @objc private func windowDidBecomeKey() {
         Task { @MainActor in
-            (store.appDelegate as? LuminaApp)?.powerManager?.setManagerWindowsActive(true)
-            (store.appDelegate as? LuminaApp)?.applyPolicyToRenderers(.normal)
+            store.appDelegate?.powerManager?.setManagerWindowsActive(true)
+            store.appDelegate?.applyPolicyToRenderers(.normal)
         }
     }
     
     @objc private func windowDidResignKey() {
         Task { @MainActor in
-            (store.appDelegate as? LuminaApp)?.powerManager?.setManagerWindowsActive(false)
+            store.appDelegate?.powerManager?.setManagerWindowsActive(false)
         }
     }
     

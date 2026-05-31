@@ -18,7 +18,6 @@ final class VideoCompressor: ObservableObject {
     @Published var lastCompressedURL: URL? = nil
 
     private var exportSession: AVAssetExportSession?
-    private var progressTimer: Timer?
 
     // MARK: - Quality Presets
 
@@ -74,8 +73,6 @@ final class VideoCompressor: ObservableObject {
 
         defer {
             isCompressing = false
-            progressTimer?.invalidate()
-            progressTimer = nil
             exportSession = nil
         }
 
@@ -106,36 +103,37 @@ final class VideoCompressor: ObservableObject {
             counter += 1
         }
 
-        session.outputURL      = output
-        session.outputFileType = .mp4
         session.shouldOptimizeForNetworkUse = false
         exportSession = session
 
         statusMessage = "Compressing to \(preset.label)…"
 
-        // Poll progress on main actor
-        progressTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                guard let self, let s = self.exportSession else { return }
-                self.progress = Double(s.progress)
+        // Stream progress using the modern (non-deprecated, macOS 15+) states API.
+        let progressTask = Task { @MainActor [weak self] in
+            for await state in session.states(updateInterval: 0.1) {
+                if case .exporting(let p) = state {
+                    self?.progress = p.fractionCompleted
+                }
             }
         }
 
-        await session.export()
-        progressTimer?.invalidate()
-        progressTimer = nil
-
-        switch session.status {
-        case .completed:
-            progress = 1.0
-            statusMessage = "Done"
-            lastCompressedURL = output
-            return output
-        case .cancelled:
-            throw CompressionError.cancelled
-        default:
-            throw session.error ?? CompressionError.exportFailed
+        do {
+            try await session.export(to: output, as: .mp4)
+        } catch {
+            progressTask.cancel()
+            // cancelExport() / task cancellation surface here.
+            if error is CancellationError { throw CompressionError.cancelled }
+            if (error as NSError).code == AVError.Code.operationCancelled.rawValue {
+                throw CompressionError.cancelled
+            }
+            throw error
         }
+        progressTask.cancel()
+
+        progress = 1.0
+        statusMessage = "Done"
+        lastCompressedURL = output
+        return output
     }
 
     func cancel() {

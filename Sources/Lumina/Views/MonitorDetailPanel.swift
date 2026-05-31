@@ -72,48 +72,56 @@ struct MonitorDetailPanel: View {
 
             livePreviewSection
 
-            ScrollView {
-                VStack(spacing: 10) {
+            // Prominent "Keep on startup" control — this is one of the most important
+            // decisions the user makes. It is deliberately placed in a high-visibility
+            // location with strong visual weight (best practice for primary persistence actions).
+            keepOnStartupControl
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
 
-                    // Playback section (video and animated image only)
-                    if assignment?.mediaType == .video || assignment?.mediaType == .animatedImage {
-                        SettingsSection(icon: "play.fill", title: "Playback") {
-                            playbackContent
-                        }
-                    }
+            Divider()
 
-                    // Display section
-                    SettingsSection(icon: "display", title: "Display") {
-                        displayContent
-                    }
+            // Settings groups.
+            // Note: We intentionally do *not* wrap these in another ScrollView here.
+            // The parent `configurationColumn` already provides a single ScrollView
+            // around the entire MonitorDetailPanel. Nested scroll views are a major
+            // source of janky scrolling and fighting gestures on macOS.
+            VStack(spacing: 16) {
+                // Core visual controls first (most frequently adjusted)
+                SettingsGroup(icon: "display", title: "Display") {
+                    displayContent
+                }
 
-                    // Visual Effects section
-                    SettingsSection(icon: "wand.and.stars", title: "Visual Effects") {
-                        visualEffectsContent
-                    }
+                SettingsGroup(icon: "wand.and.stars", title: "Visual Effects") {
+                    visualEffectsContent
+                }
 
-                    // Performance / compression (video only)
-                    if assignment?.mediaType == .video, let _ = assignment?.filePath {
-                        SettingsSection(icon: "speedometer", title: "Performance", startExpanded: false) {
-                            performanceContent
-                        }
-                    }
-
-                    // Advanced section
-                    SettingsSection(icon: "gearshape.2", title: "Advanced", startExpanded: false) {
-                        advancedContent
-                    }
-
-                    // Slideshow section — always available so it's discoverable. Adding images
-                    // here turns this display into an auto-cycling image slideshow.
-                    SettingsSection(icon: "photo.on.rectangle.angled", title: "Slideshow",
-                                    startExpanded: !slideshowItems.isEmpty) {
-                        slideshowContent
+                // Playback behavior (only relevant for video/animated)
+                if assignment?.mediaType == .video || assignment?.mediaType == .animatedImage {
+                    SettingsGroup(icon: "play.fill", title: "Playback & Looping") {
+                        playbackContent
                     }
                 }
-                .padding(12)
+
+                // Performance tools (video only)
+                if assignment?.mediaType == .video, let _ = assignment?.filePath {
+                    SettingsGroup(icon: "speedometer", title: "Performance") {
+                        performanceContent
+                    }
+                }
+
+                // Slideshow — powerful but secondary
+                SettingsGroup(icon: "photo.on.rectangle.angled", title: "Slideshow") {
+                    slideshowContent
+                }
+
+                // Advanced / power-user options (kept small now that Keep is promoted)
+                SettingsGroup(icon: "gearshape.2", title: "Advanced") {
+                    advancedContent
+                }
             }
-            .frame(maxHeight: .infinity)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
 
             Divider()
 
@@ -166,6 +174,19 @@ struct MonitorDetailPanel: View {
                 .opacity(previewOpacity)
                 .padding(.horizontal, 12)
                 .padding(.top, 12)
+
+                // Visual hint that the desktop is running a slideshow even though
+                // the inline preview only shows single-media at the moment.
+                if let a = assignment, !a.slideshowItems.isEmpty {
+                    HStack(spacing: 6) {
+                        Image(systemName: "photo.on.rectangle.angled")
+                        Text("Slideshow active on desktop — \(a.slideshowItems.count) images cycling")
+                            .font(.caption2.weight(.medium))
+                    }
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 4)
+                }
             } else {
                 ZStack {
                     RoundedRectangle(cornerRadius: 10)
@@ -202,6 +223,66 @@ struct MonitorDetailPanel: View {
                     }
             )
         }
+    }
+
+    // MARK: - Prominent Keep on Startup Control
+    // This is deliberately placed in a high-visibility position directly under the
+    // live preview. "Keep on startup" is one of the highest-stakes decisions in the
+    // entire app (it controls whether the wallpaper survives relaunch). It deserves
+    // strong visual weight and clear explanation — classic best practice for
+    // primary persistence / power-user toggles.
+
+    private var keepOnStartupControl: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Toggle(isOn: $keepOnStartup) {
+                HStack(spacing: 8) {
+                    Image(systemName: keepOnStartup ? "pin.fill" : "pin")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(keepOnStartup ? Color.yellow : .secondary)
+                        .frame(width: 18)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Keep this wallpaper on startup")
+                            .font(.subheadline.weight(.semibold))
+
+                        Text(keepOnStartup
+                             ? "This display will automatically restore when Lumina launches."
+                             : "Wallpaper will be black on next launch unless you enable this.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
+                }
+            }
+            .toggleStyle(.switch)
+            .onChange(of: keepOnStartup) { _, newValue in
+                store.setKeepOnStartup(for: monitor, enabled: newValue)
+                if !newValue {
+                    store.appDelegate?.clearRenderer(for: monitor.id)
+                }
+            }
+
+            if keepOnStartup {
+                HStack(spacing: 6) {
+                    Image(systemName: "checkmark.seal.fill")
+                        .font(.caption2)
+                        .foregroundStyle(.yellow)
+                    Text("Pinned for this display")
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(.yellow)
+                }
+                .padding(.leading, 26)
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color(NSColor.controlBackgroundColor))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .strokeBorder(keepOnStartup ? Color.yellow.opacity(0.35) : Color.gray.opacity(0.25), lineWidth: 1)
+                )
+        )
     }
 
     // MARK: - Playback Section Content
@@ -252,6 +333,10 @@ struct MonitorDetailPanel: View {
                                 }
                             }
                             .pickerStyle(.segmented)
+                            .onChange(of: loopFadeEasing) { _, e in
+                                store.setLoopFade(for: monitor, enabled: loopFadeEnabled,
+                                                  duration: loopFadeDuration, easing: e)
+                            }
                         }
                         .help("Controls how the opacity ramps in and out during the fade")
 
@@ -415,25 +500,11 @@ struct MonitorDetailPanel: View {
     }
 
     // MARK: - Advanced Section Content
+    // Note: "Keep on startup" has been promoted to a high-visibility control
+    // directly under the live preview for much better discoverability and importance.
 
     private var advancedContent: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Toggle(isOn: $keepOnStartup) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Keep this wallpaper on startup")
-                    Text("This monitor will automatically restore this wallpaper when Lumina launches.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .toggleStyle(.switch)
-            .onChange(of: keepOnStartup) { _, newValue in
-                store.setKeepOnStartup(for: monitor, enabled: newValue)
-                if !newValue {
-                    (store.appDelegate as? LuminaApp)?.clearRenderer(for: monitor.id)
-                }
-            }
-
             VStack(alignment: .leading, spacing: 6) {
                 Text("Loop Mode").font(.subheadline).foregroundStyle(.secondary)
                 Picker("Loop Mode", selection: $loopMode) {
@@ -443,7 +514,9 @@ struct MonitorDetailPanel: View {
                     }
                 }
                 .pickerStyle(.segmented)
-                .onChange(of: loopMode) { _, _ in }
+                .onChange(of: loopMode) { _, newMode in
+                    store.setLoopMode(for: monitor, mode: newMode)
+                }
                 Text(loopMode.modeDescription)
                     .font(.caption2).foregroundStyle(.tertiary)
                     .animation(.easeInOut(duration: 0.15), value: loopMode)
@@ -620,6 +693,7 @@ struct MonitorDetailPanel: View {
         store.setOpacity(for: monitor, opacity: 1.0)
         store.setColorCorrection(for: monitor, saturation: 1.0, hue: 0.0, grayscale: false)
         store.setVolume(for: monitor, volume: 0.0)
+        store.setLoopMode(for: monitor, mode: .loop)
     }
 
     // MARK: - Load Current Values
@@ -775,6 +849,10 @@ struct MonitorDetailPanel: View {
             if savedBytes > 0 {
                 compressor.statusMessage = "Saved ~\(ByteCountFormatter.string(fromByteCount: savedBytes, countStyle: .file))"
             }
+            // Immediately add the compressed copy to the persistent library so it ALWAYS stays
+            // reachable in the grid — even after compressing other presets or switching the
+            // display's wallpaper. This is what prevents compressed files from "disappearing".
+            store.addMediaToLibrary(url: out)
             pendingCompressedURL = out
             showUseCompressedAlert = true
         } catch VideoCompressor.CompressionError.cancelled {
@@ -797,94 +875,53 @@ struct MonitorDetailPanel: View {
 
 } // end MonitorDetailPanel
 
-// MARK: - Height preference key (used by SettingsSection for smooth animation)
+// MARK: - Settings Group
+// A consistently styled visual container for a logical group of related controls.
+//
+// Design goals:
+// - All cards share the same minHeight so short boxes (Slideshow empty state,
+//   Advanced) scale visually with the taller ones (Display, Visual Effects, etc.).
+// - Strong consistent rhythm (header style, padding, internal spacing).
+// - Content stays top-aligned; extra space goes below via Spacer.
+// - No collapse/expand — everything is always visible and scrollable in one container.
 
-private struct NaturalHeightKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
-}
-
-// MARK: - Settings Section Helper
-
-private struct SettingsSection<Content: View>: View {
+private struct SettingsGroup<Content: View>: View {
     let icon: String
     let title: String
-    var startExpanded: Bool = true
-
-    @State private var expanded: Bool
-    /// Measured natural height of the content — gives SwiftUI a concrete value to animate.
-    /// Using .infinity as the target height prevents smooth animation because SwiftUI
-    /// can't interpolate from 0 to an unknown value.
-    @State private var naturalHeight: CGFloat = 0
-    @State private var hasMeasured = false
 
     @ViewBuilder let content: () -> Content
 
-    init(icon: String, title: String, startExpanded: Bool = true, @ViewBuilder content: @escaping () -> Content) {
-        self.icon = icon
-        self.title = title
-        self.startExpanded = startExpanded
-        self._expanded = State(initialValue: startExpanded)
-        self.content = content
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Button {
-                withAnimation(.easeInOut(duration: 0.22)) { expanded.toggle() }
-            } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: icon)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 16)
-                    Text(title)
-                        .font(.subheadline.weight(.medium))
-                    Spacer()
-                    Image(systemName: "chevron.down")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                        .rotationEffect(.degrees(expanded ? 0 : -90))
-                        .animation(.easeInOut(duration: 0.22), value: expanded)
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-
-            VStack(alignment: .leading, spacing: 12) {
-                content()
+            // Consistent header treatment across all groups (strong visual rhythm)
+            HStack(spacing: 8) {
+                Image(systemName: icon)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 16)
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
             }
             .padding(.horizontal, 14)
-            .padding(.top, 2)
-            .padding(.bottom, 14)
-            // Probe: measure the content's natural height without affecting layout
-            .background(
-                GeometryReader { geo in
-                    Color.clear.preference(key: NaturalHeightKey.self, value: geo.size.height)
-                }
-            )
-            .onPreferenceChange(NaturalHeightKey.self) { h in
-                guard h > 0 else { return }
-                if !hasMeasured {
-                    // First measurement: apply without animation (section just appeared)
-                    naturalHeight = h
-                    hasMeasured = true
-                } else if abs(naturalHeight - h) > 1 {
-                    // Content size changed (e.g., conditional sub-rows appeared/disappeared)
-                    withAnimation(.easeInOut(duration: 0.15)) { naturalHeight = h }
-                }
+            .padding(.top, 11)
+            .padding(.bottom, 6)
+
+            // Content area.
+            // We give the whole group a minHeight so that even the shorter boxes
+            // (Slideshow in empty state, Advanced) participate in the same visual
+            // scaling as the taller ones (Display, Visual Effects, etc.).
+            // Content stays top-aligned via the spacer.
+            VStack(alignment: .leading, spacing: 10) {
+                content()
+                Spacer(minLength: 0)
             }
-            // Animate between 0 and the measured concrete height — both are numbers SwiftUI can interpolate
-            .frame(height: expanded ? naturalHeight : 0, alignment: .top)
-            .clipped()
-            .opacity(expanded ? 1 : 0)
-            .allowsHitTesting(expanded)
-            .animation(.easeInOut(duration: 0.22), value: expanded)
+            .padding(.horizontal, 14)
+            .padding(.bottom, 13)
         }
+        .frame(minHeight: 155)
         .background(Color(NSColor.controlBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.separator, lineWidth: 0.5))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.separator, lineWidth: 0.6))
     }
 }
 

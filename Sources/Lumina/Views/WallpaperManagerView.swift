@@ -87,7 +87,7 @@ struct WallpaperManagerView: View {
             Divider()
             footerBar
         }
-        .frame(minWidth: 980, minHeight: 680)
+        .frame(minWidth: 980, minHeight: 780)
         .tint(themeManager.current.color)
         .onAppear { autoSelectFirstMonitor() }
     }
@@ -225,9 +225,29 @@ struct WallpaperManagerView: View {
             // Monitor header
             HStack(spacing: 10) {
                 if let monitor = currentTargetMonitor {
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text("Configuring").font(.caption).foregroundStyle(.tertiary)
-                        Text(monitorLabel(for: monitor)).font(.subheadline.bold())
+                    HStack(spacing: 8) {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("Configuring").font(.caption).foregroundStyle(.tertiary)
+                            Text(monitorLabel(for: monitor)).font(.subheadline.bold())
+                        }
+
+                        // Prominent "pinned" status — best practice for surfacing
+                        // important persistence state at the top of the context.
+                        if let assignment = store.assignment(for: monitor.id),
+                           assignment.keepOnStartup {
+                            HStack(spacing: 4) {
+                                Image(systemName: "pin.fill")
+                                    .font(.caption2.weight(.bold))
+                                Text("Pinned")
+                                    .font(.caption2.weight(.semibold))
+                            }
+                            .foregroundStyle(.yellow)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 2)
+                            .background(.yellow.opacity(0.15))
+                            .clipShape(Capsule())
+                            .help("This wallpaper will automatically restore when Lumina launches")
+                        }
                     }
                 } else {
                     Text("No Display Selected").font(.subheadline).foregroundStyle(.secondary)

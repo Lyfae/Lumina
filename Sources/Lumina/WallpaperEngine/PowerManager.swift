@@ -27,6 +27,7 @@ public enum WallpaperPlaybackPolicy: Equatable, Sendable {
     }
 }
 
+@MainActor
 @Observable
 public final class PowerManager {
     public private(set) var currentPolicy: WallpaperPlaybackPolicy = .normal
@@ -48,7 +49,10 @@ public final class PowerManager {
         didSet { recomputePolicy() }
     }
 
-    private var observers: [NSObjectProtocol] = []
+    // Appended once on the main actor during init; read once in deinit. Excluded from
+    // Observation (internal state) and marked nonisolated(unsafe) so the (nonisolated) deinit
+    // can remove them — the access pattern (init-on-main, read-once-at-dealloc) is race-free.
+    @ObservationIgnored nonisolated(unsafe) private var observers: [NSObjectProtocol] = []
 
     public init() {
         observeSystemNotifications()
@@ -101,7 +105,8 @@ public final class PowerManager {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            self?.updatePolicy()
+            // queue: .main guarantees main-thread delivery, so assumeIsolated is safe.
+            MainActor.assumeIsolated { self?.updatePolicy() }
         })
 
         // Thermal state changes (very important on Apple Silicon laptops)
@@ -110,7 +115,7 @@ public final class PowerManager {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            self?.updatePolicy()
+            MainActor.assumeIsolated { self?.updatePolicy() }
         })
 
         // Battery level / power source (optional future refinement)

@@ -35,7 +35,7 @@ public struct MonitorAssignment: Codable, Equatable {
     public var grayscale: Bool = false
     public var loopMode: LoopMode = .loop
 
-    public enum LoopMode: String, Codable, CaseIterable {
+    public enum LoopMode: String, Codable, CaseIterable, Sendable {
         case loop, once, bounce
         var label: String {
             switch self {

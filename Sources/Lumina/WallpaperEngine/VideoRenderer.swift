@@ -125,6 +125,10 @@ public final class AVVideoRenderer: @unchecked Sendable {
     private var loopFadeDuration: Double = 1.5
     private var loopBoundaryObserver: Any?
 
+    // MARK: - Loop Mode (loop / once / bounce)
+    private var loopMode: MonitorAssignment.LoopMode = .loop
+    private var endTimeObserver: NSObjectProtocol?
+
     // MARK: - Brightness
     private var brightnessLayer: CALayer?
 
@@ -494,6 +498,27 @@ public final class AVVideoRenderer: @unchecked Sendable {
         registerLoopBoundaryObserver()
     }
 
+    /// Changes the end-of-playback behavior for the current (or next) video.
+    /// .loop   → seamless AVPlayerLooper (current default)
+    /// .once   → play to end, then visually go black (no looping)
+    /// .bounce → forward then reverse (ping-pong) using rate reversal
+    public func setLoopMode(_ mode: MonitorAssignment.LoopMode) {
+        guard mode != loopMode else { return }
+        loopMode = mode
+
+        // If we have active video content, reconfigure it now with the new strategy.
+        // For slideshows the mode is ignored (they have their own cycling).
+        if !isSlideshow, let url = loadedURL, mediaKind == .video {
+            let wasPlaying = (player?.rate ?? 0) > 0.01
+            // Full cleanup is safe here (we are in video mode, not slideshow).
+            // It removes player+looper+observers; loadVideo will rebuild.
+            cleanup()
+            // Recreate using the (newly stored) loopMode
+            loadVideo(url: url)
+            if wasPlaying { play() }
+        }
+    }
+
     private func registerLoopBoundaryObserver() {
         // Remove any existing observers first
         if let observer = loopBoundaryObserver {
@@ -647,6 +672,11 @@ public final class AVVideoRenderer: @unchecked Sendable {
         itemStatusObserver = nil
         loadStatusObserver = nil
 
+        if let obs = endTimeObserver {
+            NotificationCenter.default.removeObserver(obs)
+            endTimeObserver = nil
+        }
+
         // Remove brightness overlay
         brightnessLayer?.removeFromSuperlayer()
         brightnessLayer = nil
@@ -760,10 +790,19 @@ public final class AVVideoRenderer: @unchecked Sendable {
         queuePlayer.preventsDisplaySleepDuringVideoPlayback = false
         queuePlayer.allowsExternalPlayback = false
 
-        let playerLooper = AVPlayerLooper(player: queuePlayer, templateItem: item)
-
         self.player = queuePlayer
-        self.looper = playerLooper
+
+        // Mode-aware looping setup (the heart of the "Loop Mode" dropdown)
+        switch loopMode {
+        case .loop:
+            let playerLooper = AVPlayerLooper(player: queuePlayer, templateItem: item)
+            self.looper = playerLooper
+
+        case .once, .bounce:
+            // No looper — we handle end ourselves for one-shot or ping-pong
+            self.looper = nil
+            attachEndOfItemHandler(for: item, player: queuePlayer, mode: loopMode)
+        }
 
         if let pl = playerLayer {
             pl.player = queuePlayer
@@ -771,9 +810,64 @@ public final class AVVideoRenderer: @unchecked Sendable {
             setScaling(currentScaling)
         }
 
-        // Re-register loop boundary observer for the new content
-        if loopFadeEnabled {
+        // Re-register loop boundary observer for the new content (crossfade at loop points only makes sense for .loop)
+        if loopFadeEnabled && loopMode == .loop {
             registerLoopBoundaryObserver()
+        }
+    }
+
+    private func attachEndOfItemHandler(for item: AVPlayerItem, player: AVQueuePlayer, mode: MonitorAssignment.LoopMode) {
+        // Clean previous
+        if let obs = endTimeObserver {
+            NotificationCenter.default.removeObserver(obs)
+            endTimeObserver = nil
+        }
+
+        endTimeObserver = NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemDidPlayToEndTime,
+            object: item,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+
+            switch mode {
+            case .once:
+                // Play to end → visually black the display (as documented in the model)
+                player.pause()
+                // Gentle fade to black instead of hard cut
+                CATransaction.begin()
+                CATransaction.setAnimationDuration(0.6)
+                self.playerLayer?.opacity = 0.0
+                CATransaction.commit()
+
+            case .bounce:
+                // Reverse direction
+                player.seek(to: .zero) { _ in
+                    player.rate = -1.0   // play backwards
+                }
+                // When we hit the beginning while reversing, flip back to forward
+                self.installReverseBoundaryFlip(player: player, item: item)
+
+            case .loop:
+                break // should never happen here
+            }
+        }
+    }
+
+    private func installReverseBoundaryFlip(player: AVQueuePlayer, item: AVPlayerItem) {
+        // Remove any prior boundary observer for reverse
+        // (We reuse the same pattern as loop crossfade observers)
+        // For simplicity we add a time observer near t=0 while rate is negative.
+        // Lightweight periodic check while reversing. We intentionally do *not* capture
+        // the observer token inside the closure (would be declared-before-use error).
+        // The timer is extremely short-lived and will be released after the flip.
+        let interval = CMTime(seconds: 0.05, preferredTimescale: 600)
+        _ = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak player] time in
+            guard let p = player, p.rate < 0 else { return }
+            if time.seconds <= 0.05 {
+                p.rate = 1.0
+                // The observer will naturally be deallocated shortly after rate changes.
+            }
         }
     }
 
@@ -823,6 +917,8 @@ public final class AVVideoRenderer: @unchecked Sendable {
         }
         layer.isHidden = false
         layer.frame = superlayer.bounds
+        // Match the backing scale so the display-resolution image maps 1:1 (crisp on Retina).
+        layer.contentsScale = superlayer.contentsScale
 
         if kind == .animatedImage {
             applyGIFAnimation(url: url, to: layer, autoPlay: autoPlay)

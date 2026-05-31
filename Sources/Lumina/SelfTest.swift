@@ -289,7 +289,11 @@ final class OcclusionTestDelegate: NSObject, NSApplicationDelegate {
         if ok { passed += 1; print("  ✓ \(name)") } else { failed += 1; print("  ✗ \(name)") }
     }
     private func after(_ s: Double, _ work: @escaping () -> Void) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + s, execute: work)
+        // Test-only helper; main-thread delivery is guaranteed by DispatchQueue.main.
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(s * 1_000_000_000))
+            work()
+        }
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {

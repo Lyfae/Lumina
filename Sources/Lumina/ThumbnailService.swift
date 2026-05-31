@@ -79,20 +79,20 @@ actor ThumbnailService {
             }
         }
 
-        let asset = AVAsset(url: url)
+        let asset = AVURLAsset(url: url)
         let generator = AVAssetImageGenerator(asset: asset)
         generator.appliesPreferredTrackTransform = true
         generator.maximumSize = maxSize
 
-        let duration = asset.duration
+        let durationSeconds = (try? await asset.load(.duration))?.seconds ?? 0
         let preferredTime: CMTime
 
-        if let t = normalizedTime, duration.seconds > 0.1 {
+        if let t = normalizedTime, durationSeconds > 0.1 {
             let clamped = max(0.0, min(1.0, t))
-            preferredTime = CMTime(seconds: duration.seconds * clamped, preferredTimescale: 600)
-        } else if duration.seconds > 1.0 {
+            preferredTime = CMTime(seconds: durationSeconds * clamped, preferredTimescale: 600)
+        } else if durationSeconds > 1.0 {
             // Default to ~15% for a nicer representative frame
-            preferredTime = CMTime(seconds: duration.seconds * 0.15, preferredTimescale: 600)
+            preferredTime = CMTime(seconds: durationSeconds * 0.15, preferredTimescale: 600)
         } else {
             preferredTime = .zero
         }
@@ -111,26 +111,24 @@ actor ThumbnailService {
     }
 
     private func generateImageThumbnail(url: URL, maxSize: CGSize) -> NSImage? {
-        guard let image = NSImage(contentsOf: url) else { return nil }
+        // Decode a downsampled thumbnail directly via ImageIO — never loads the full-resolution
+        // image into memory (a big win when the library has large photos / GIFs).
+        let didStartAccess = url.startAccessingSecurityScopedResource()
+        defer { if didStartAccess { url.stopAccessingSecurityScopedResource() } }
 
-        let originalSize = image.size
-        let aspect = originalSize.width / originalSize.height
-
-        var targetSize = maxSize
-        if aspect > 1 {
-            targetSize.height = maxSize.width / aspect
-        } else {
-            targetSize.width = maxSize.height * aspect
+        let maxPixel = Int((max(maxSize.width, maxSize.height) * 2).rounded())  // ~retina
+        if let source = CGImageSourceCreateWithURL(url as CFURL, nil) {
+            let options: [CFString: Any] = [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceShouldCacheImmediately: true,
+                kCGImageSourceThumbnailMaxPixelSize: maxPixel
+            ]
+            if let cg = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) {
+                return NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
+            }
         }
-
-        let thumbnail = NSImage(size: targetSize)
-        thumbnail.lockFocus()
-        image.draw(in: NSRect(origin: .zero, size: targetSize),
-                   from: NSRect(origin: .zero, size: originalSize),
-                   operation: .copy,
-                   fraction: 1.0)
-        thumbnail.unlockFocus()
-
-        return thumbnail
+        // Fallback for anything ImageIO can't open.
+        return NSImage(contentsOf: url)
     }
 }

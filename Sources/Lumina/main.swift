@@ -326,6 +326,7 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         renderer.setLoopFade(enabled: assignment.loopFadeEnabled,
                              duration: assignment.loopFadeDuration,
                              easing: assignment.loopFadeEasing)
+        renderer.setLoopMode(assignment.loopMode)
     }
 
     // MARK: - Display Reconfiguration
@@ -855,6 +856,15 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
             assignment.loopFadeEasing = easing
             assignmentStore.updateAssignment(assignment)
         }
+    }
+
+    /// Reconfigures the looping strategy (loop / once / bounce) on the running renderer.
+    func applyLoopModeToMonitor(monitorID: String, mode: MonitorAssignment.LoopMode) {
+        guard let index = monitorIndex(for: monitorID), index < renderers.count else {
+            print("Could not find renderer for monitor \(monitorID) when applying loop mode")
+            return
+        }
+        renderers[index].setLoopMode(mode)
     }
 
     /// Applies a brightness adjustment live to the renderer for this monitor.
