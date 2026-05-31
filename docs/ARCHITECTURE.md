@@ -18,10 +18,17 @@ This document describes the high-level architecture of Lumina, a native macOS li
 - Hosts the `AssignmentStore` and coordinates between the manager and the engine.
 
 ### 2. Wallpaper Engine (`WallpaperEngine/`)
-- `DesktopWallpaperWindow`: Borderless, non-activating windows placed at the desktop window level.
-- `VideoRenderer` (and future `ImageRenderer`): Handles playback and layer hosting using `AVPlayerLayer`.
-- `PowerManager`: Observes system power/thermal state and decides when to pause or throttle.
-- `FullscreenDetector`: Uses `CGWindowList` to detect when a fullscreen app is active.
+- `DesktopWallpaperWindow`: Borderless, non-activating windows placed at the desktop window level. Supports live `updateFrame` for display reconfiguration.
+- `AVVideoRenderer`: The single per-display renderer. Dispatches by `MediaType`:
+  - **Video** → `AVQueuePlayer` + `AVPlayerLooper` (seamless loops, hardware decode).
+  - **Static image** → `CALayer` contents, decoded at display resolution via ImageIO.
+  - **Animated GIF** → ImageIO frames driven by a discrete `CAKeyframeAnimation`.
+  - **Slideshow** → owns a `SlideshowEngine` that cycles images on the host layer.
+  - All paths share scaling, crop (pure `expandedVideoFrame` / `imageContentsRect` transforms), opacity, brightness, color correction, and loop-fade.
+- `SlideshowEngine`: Timer-driven image playlist with crossfade transitions.
+- `PowerManager`: Observes system power/thermal/low-power state and decides the global playback policy (normal / throttled / paused). No polling — notification-driven.
+- **Occlusion-based per-display pausing** (in `LuminaApp`): native `NSWindow` occlusion (`didChangeOcclusionStateNotification` + launch seed + app-activation/space-change re-checks) pauses only the display a fullscreen app actually covers. This replaced the old `CGWindowList`-polling `FullscreenDetector` (kept in-tree as a revert fallback, no longer wired).
+- `VideoCompressor`: Optional transcoding to lighter resolutions; outputs are permanent (never auto-deleted).
 
 ### 3. Wallpaper Manager (SwiftUI)
 - Located in `Views/`.
@@ -49,13 +56,28 @@ This document describes the high-level architecture of Lumina, a native macOS li
 6. `LuminaApp` applies the assignment to the corresponding `AVVideoRenderer`.
 7. On next launch, `AssignmentStore` restores assignments where `keepOnStartup == true`.
 
+## Display Reconfiguration
+
+`LuminaApp.reconcileDisplays()` (debounced behind `didChangeScreenParameters` and wake-from-sleep)
+keeps the window/renderer set in sync with the live display set, keyed by `CGDirectDisplayID`:
+displays still present are reused (geometry refreshed via `updateFrame` / `relayout`), newly attached
+displays get fresh surfaces with their in-session assignment restored, and removed displays are torn
+down (including their occlusion observers). This is what makes hot-plug / dock / rearrange reliable.
+
+## Testing
+
+`Lumina --self-test` runs a headless suite (`SelfTest.swift`) validating the rendering/decoding
+pipeline, downsampling, GIF decode, persistence round-trip + schema resilience, and crop geometry —
+no WindowServer required. On-screen compositing and `NSWindow` occlusion still need a real session
+to verify; use the **⌘D Debug status** (per-display occlusion + what each display renders) for that.
+
 ## Future Directions
 
-- Unified media renderer (images + video + future procedural content)
-- Live preview inside the manager
+- Web / shader / procedural wallpapers
 - Drag-to-crop editor with real-time feedback
-- Transitions between wallpapers
-- Playlist / multi-file support per monitor
+- Audio-reactive effects
+- Per-monitor effects/crop applied to slideshow images
+- Decoder release on sustained global pause (memory) if measured worthwhile
 
 ## Technology Choices
 

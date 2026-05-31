@@ -6,3 +6,22 @@ DerivedData/
 .swiftpm/configuration/registries.json
 .swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
 .netrc
+
+# Distribution / packaging artifacts (DMG, staged app bundles, build logs)
+dist/
+*.dmg
+dmg-staging/
+build.log
+*.log
+
+# SwiftPM resolved dependencies (if using)
+Package.resolved
+
+# macOS / Xcode noise
+*.xcuserstate
+*.xcscmblueprint
+.swiftpm/xcode/package.xcworkspace/xcuserdata/
+
+# Local test media or user data (never commit personal wallpapers)
+# UserMedia/
+# Thumbnails/  (if ever cached locally outside build)

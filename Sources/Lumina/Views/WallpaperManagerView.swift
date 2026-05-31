@@ -1,223 +1,696 @@
 import SwiftUI
 import AppKit
 
-/// The main view for Lumina's Wallpaper Manager.
-/// Designed with clarity, visual hierarchy, and forgiveness in mind.
-/// Suitable for both casual and power users.
-struct WallpaperManagerView: View {
-    @ObservedObject var store: WallpaperManagerStore
-    
-    // Selection state for side panel
-    @State private var selectedMonitorID: String? = nil
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            
-            // Header
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Wallpaper Manager")
-                        .font(.title)
-                        .fontWeight(.semibold)
-                    Text("Assign and customize wallpapers for each of your displays")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                
-                Button("Refresh Displays") {
-                    store.refreshDisplays()
-                    selectedMonitorID = nil
-                }
-                .buttonStyle(.bordered)
-            }
-            
-            // Persistence Toggle (as a clear config option)
-            HStack {
-                Toggle("Remember these assignments when Lumina starts", isOn: $store.persistAssignments)
-                    .onChange(of: store.persistAssignments) { _, newValue in
-                        store.savePersistencePreference(newValue)
-                    }
-                Spacer()
-            }
-            .padding(.vertical, 4)
-            
-            Divider()
-            
-            // Main Content: Spatial Layout + Side Panel
-            HStack(spacing: 0) {
-                
-                // Left: Visual Physical Monitor Layout
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Your Physical Setup")
-                        .font(.headline)
-                    
-                    let layout = store.getMonitorLayout()
-                    
-                    if layout.monitors.isEmpty {
-                        ContentUnavailableView("No Displays Detected", systemImage: "display")
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    } else {
-                        MonitorLayoutView(layout: layout, selectedMonitorID: $selectedMonitorID)
-                            .frame(maxWidth: .infinity)
-                    }
-                    
-                    Text("Click a monitor to configure it")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: 420)
-                .padding(.trailing, 16)
-                
-                Divider()
-                
-                // Right: Side Panel (Detail View)
-                VStack {
-                    if let selectedID = selectedMonitorID,
-                       let monitor = store.monitors.first(where: { $0.id == selectedID }) {
-                        
-                        MonitorDetailPanel(
-                            monitor: monitor,
-                            store: store,
-                            onClose: { selectedMonitorID = nil }
-                        )
-                    } else {
-                        // Empty state for side panel
-                        VStack(spacing: 12) {
-                            Spacer()
-                            Image(systemName: "display")
-                                .font(.system(size: 48))
-                                .foregroundStyle(.secondary)
-                            Text("Select a monitor")
-                                .font(.title3)
-                                .foregroundStyle(.secondary)
-                            Text("Click on one of your displays on the left to assign a wallpaper and customize its settings.")
-                                .multilineTextAlignment(.center)
-                                .foregroundStyle(.secondary)
-                                .frame(maxWidth: 280)
-                            Spacer()
-                        }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    }
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.leading, 16)
-            }
-            
-            Spacer(minLength: 12)
-            
-            // Footer
-            HStack {
-                Text("Lumina • Early Access")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-                Spacer()
-                Button("Close") {
-                    NSApp.keyWindow?.close()
-                }
-                .buttonStyle(.bordered)
-            }
+// MARK: - Library Filter
+
+private enum LibraryFilter: String, CaseIterable, Identifiable {
+    case all, videos, images, gifs, favorites
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .all: return "All"
+        case .videos: return "Video"
+        case .images: return "Image"
+        case .gifs: return "GIF"
+        case .favorites: return "Starred"
         }
-        .padding(20)
-        .frame(minWidth: 720, minHeight: 520)
+    }
+    var icon: String {
+        switch self {
+        case .all: return "square.grid.2x2"
+        case .videos: return "play.rectangle"
+        case .images: return "photo"
+        case .gifs: return "photo.stack"
+        case .favorites: return "star.fill"
+        }
+    }
+    var helpText: String {
+        switch self {
+        case .all:       return "Show all wallpapers in your library"
+        case .videos:    return "Show only video wallpapers"
+        case .images:    return "Show only static images"
+        case .gifs:      return "Show only animated GIFs"
+        case .favorites: return "Show wallpapers you have starred"
+        }
     }
 }
 
-// MARK: - Bento Style Monitor Card
+// MARK: - Main View
 
-struct MonitorBentoCard: View {
-    let monitor: MonitorInfo
-    let onChooseVideo: () -> Void
-    let onClear: () -> Void
-    
+/// The main view for Lumina's Wallpaper Manager.
+/// Designed with clarity, visual hierarchy, and forgiveness in mind.
+struct WallpaperManagerView: View {
+    @ObservedObject var store: WallpaperManagerStore
+
+    // Selection state is owned higher up so it can be shared with the floating physical setup window
+    @Binding var selectedMonitorID: String?
+
+    @StateObject private var themeManager = ThemeManager.shared
+    @StateObject private var audioManager = AmbientAudioManager.shared
+    @StateObject private var favoritesManager = FavoritesManager.shared
+
+    @State private var searchQuery: String = ""
+    @State private var selectedFilter: LibraryFilter = .all
+    @State private var showQueue: Bool = false
+
+    // MARK: - Computed
+
+    private var filteredMedia: [WallpaperManagerStore.RecentMedia] {
+        var items = store.recentMedia
+        switch selectedFilter {
+        case .all: break
+        case .videos: items = items.filter { $0.mediaType == .video }
+        case .images: items = items.filter { $0.mediaType == .image }
+        case .gifs:   items = items.filter { $0.mediaType == .animatedImage }
+        case .favorites: items = items.filter { favoritesManager.isFavorite($0.id) }
+        }
+        if !searchQuery.isEmpty {
+            items = items.filter { $0.displayName.localizedCaseInsensitiveContains(searchQuery) }
+        }
+        return items
+    }
+
+    // Currently targeted monitor — prefer the store as single source of truth
+    private var currentTargetMonitor: MonitorInfo? {
+        let id = store.selectedMonitorID ?? selectedMonitorID
+        guard let id else { return nil }
+        return store.monitors.first { $0.id == id }
+    }
+
+    // MARK: - Body
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Header
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(monitor.name)
-                        .font(.headline)
-                        .lineLimit(1)
-                    Text(monitor.resolution)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                
-                Spacer()
-                
-                if monitor.isPrimary {
-                    Text("Primary")
-                        .font(.caption2)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(.blue.opacity(0.15))
-                        .foregroundStyle(.blue)
-                        .clipShape(Capsule())
+        VStack(spacing: 0) {
+            headerBar
+            Divider()
+            mainContent
+            Divider()
+            footerBar
+        }
+        .frame(minWidth: 980, minHeight: 680)
+        .tint(themeManager.current.color)
+        .onAppear { autoSelectFirstMonitor() }
+    }
+
+    // MARK: - Header Bar
+
+    private var headerBar: some View {
+        HStack(spacing: 12) {
+            HStack(spacing: 6) {
+                Image(systemName: "water.waves")
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(themeManager.current.color)
+                Text("Lumina Studio")
+                    .font(.title3.bold())
+            }
+            Spacer()
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass").foregroundStyle(.tertiary).font(.caption)
+                TextField("Search library…", text: $searchQuery)
+                    .textFieldStyle(.plain).font(.callout)
+            }
+            .padding(.horizontal, 10).padding(.vertical, 6)
+            .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+            .frame(width: 200)
+
+            Button {
+                store.setSyncPlayback(true)
+                store.syncAllRenderersNow()
+            } label: {
+                Label("Sync Displays", systemImage: "arrow.triangle.2.circlepath")
+                    .font(.caption)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .help("Lock all wallpaper videos to the same playback position")
+        }
+        .padding(.horizontal, 20).padding(.vertical, 14)
+        .background(.bar)
+    }
+
+    // MARK: - Main Two-Column Content
+
+    private var mainContent: some View {
+        HStack(spacing: 0) {
+            libraryColumn
+            Divider()
+            configurationColumn
+        }
+        .frame(maxHeight: .infinity)
+    }
+
+    // MARK: - Library Column (left)
+
+    private var libraryColumn: some View {
+        VStack(spacing: 0) {
+            // Filter tabs — full-area hit targets with underline selection indicator
+            HStack(spacing: 0) {
+                ForEach(LibraryFilter.allCases) { filter in
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.15)) { selectedFilter = filter }
+                    } label: {
+                        VStack(spacing: 3) {
+                            Image(systemName: filter.icon).font(.callout)
+                            Text(filter.label).font(.caption2)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .contentShape(Rectangle())
+                        .foregroundStyle(selectedFilter == filter ? themeManager.current.color : .secondary)
+                        .background(
+                            selectedFilter == filter
+                                ? themeManager.current.color.opacity(0.08)
+                                : Color.clear
+                        )
+                        .overlay(alignment: .bottom) {
+                            if selectedFilter == filter {
+                                Rectangle()
+                                    .fill(themeManager.current.color)
+                                    .frame(height: 2)
+                            }
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .help(filter.helpText)
                 }
             }
-            
-            // Preview / Status Area
-            Group {
-                if let videoName = monitor.assignedVideoName {
-                    HStack {
-                        Image(systemName: "play.rectangle.fill")
-                            .foregroundStyle(.secondary)
-                        Text(videoName)
-                            .font(.callout)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                        Spacer()
-                    }
-                    .padding(10)
-                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+            .background(.quaternary.opacity(0.4))
+
+            Divider()
+
+            // Grid
+            ScrollView {
+                if filteredMedia.isEmpty {
+                    emptyLibraryView
                 } else {
-                    Text("No wallpaper assigned")
-                        .font(.callout)
-                        .foregroundStyle(.tertiary)
-                        .frame(maxWidth: .infinity, alignment: .center)
-                        .padding(.vertical, 12)
-                        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 155), spacing: 10)], spacing: 10) {
+                        ForEach(filteredMedia) { recent in
+                            let isCurrent = isCurrentWallpaper(recent: recent)
+                            WallpaperGridItem(
+                                recent: recent,
+                                isSelected: isCurrent,
+                                isFavorite: favoritesManager.isFavorite(recent.id),
+                                onApply: { applyRecentToSelected(recent: recent) },
+                                onFavorite: { favoritesManager.toggle(recent.id) },
+                                onRemove: { store.removeFromLibrary(id: recent.id) }
+                            )
+                        }
+                    }
+                    .padding(12)
                 }
             }
-            
-            // Actions
-            HStack(spacing: 8) {
-                Button("Choose Video") {
-                    onChooseVideo()
+            .frame(maxHeight: .infinity)
+
+            // Bottom toolbar
+            HStack(spacing: 10) {
+                Button { addMediaToLibrary() } label: {
+                    Label("Add to Library", systemImage: "plus.circle.fill").font(.caption)
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
-                
-                if monitor.assignedVideoName != nil {
-                    Button("Clear", role: .destructive) {
-                        onClear()
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                }
-                
+                .buttonStyle(.borderless)
                 Spacer()
-                
-                // Future settings menu
-                Menu {
-                    Button("Scaling: Fill (Crop)") {}
-                    Button("Scaling: Fit") {}
-                    Button("Scaling: Stretch") {}
-                    Divider()
-                    Button("Crop...") {}
-                    Button("Playback Speed...") {}
-                } label: {
-                    Image(systemName: "slider.horizontal.3")
+                Text("\(filteredMedia.count) item\(filteredMedia.count == 1 ? "" : "s")")
+                    .font(.caption2).foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 14).padding(.vertical, 10)
+            .background(.bar)
+        }
+        .frame(width: 400)
+        .background(Color(NSColor.controlBackgroundColor))
+    }
+
+    // MARK: - Configuration Column (right)
+
+    private var configurationColumn: some View {
+        VStack(spacing: 0) {
+            // Monitor header
+            HStack(spacing: 10) {
+                if let monitor = currentTargetMonitor {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Configuring").font(.caption).foregroundStyle(.tertiary)
+                        Text(monitorLabel(for: monitor)).font(.subheadline.bold())
+                    }
+                } else {
+                    Text("No Display Selected").font(.subheadline).foregroundStyle(.secondary)
                 }
-                .menuStyle(.borderlessButton)
-                .controlSize(.small)
+                Spacer()
+                Button {
+                    NotificationCenter.default.post(name: .togglePhysicalSetupWindow, object: nil)
+                } label: {
+                    Label("Switch Display", systemImage: "display.2").font(.caption)
+                }
+                .buttonStyle(.bordered).controlSize(.small)
+            }
+            .padding(.horizontal, 16).padding(.vertical, 10)
+            .background(.bar)
+
+            Divider()
+
+            if let monitor = currentTargetMonitor {
+                ScrollView {
+                    MonitorDetailPanel(monitor: monitor, store: store, showHeader: false)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                Spacer()
+                VStack(spacing: 14) {
+                    Image(systemName: "display.2").font(.system(size: 44)).foregroundStyle(.quaternary)
+                    Text("Choose a display to configure").font(.title3).foregroundStyle(.secondary)
+                    Button("Choose Display…") {
+                        NotificationCenter.default.post(name: .togglePhysicalSetupWindow, object: nil)
+                    }.buttonStyle(.borderedProminent)
+                }
+                .frame(maxWidth: .infinity)
+                Spacer()
             }
         }
-        .padding(14)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
-        .overlay(
-            RoundedRectangle(cornerRadius: 14)
-                .stroke(Color.primary.opacity(0.06), lineWidth: 1)
-        )
+        .frame(maxWidth: .infinity)
+    }
+
+    // MARK: - Footer Bar
+
+    private var footerBar: some View {
+        VStack(spacing: 0) {
+            // Queue panel — collapsible above the controls row
+            if !audioManager.library.isEmpty && showQueue {
+                Divider()
+                queuePanel
+            }
+
+            // Audio controls row
+            HStack(spacing: 8) {
+                // Transport
+                Group {
+                    Button { audioManager.previousTrack() } label: {
+                        Image(systemName: "backward.end.fill").font(.caption)
+                    }
+                    .help("Previous track")
+                    .disabled(audioManager.library.count < 2)
+
+                    Button { audioManager.seek(by: -10) } label: {
+                        Image(systemName: "gobackward.10").font(.caption)
+                    }
+                    .help("Skip back 10 seconds")
+                    .disabled(audioManager.trackURL == nil)
+
+                    Button { audioManager.toggle() } label: {
+                        Image(systemName: audioManager.isPlaying ? "pause.circle.fill" : "play.circle.fill")
+                            .font(.title3)
+                            .foregroundStyle(audioManager.trackURL != nil ? themeManager.current.color : .secondary)
+                    }
+                    .help(audioManager.isPlaying ? "Pause" : "Play")
+                    .disabled(audioManager.trackURL == nil)
+
+                    Button { audioManager.seek(by: 10) } label: {
+                        Image(systemName: "goforward.10").font(.caption)
+                    }
+                    .help("Skip forward 10 seconds")
+                    .disabled(audioManager.trackURL == nil)
+
+                    Button { audioManager.nextTrack() } label: {
+                        Image(systemName: "forward.end.fill").font(.caption)
+                    }
+                    .help("Next track")
+                    .disabled(audioManager.library.count < 2)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+
+                // Track name
+                Text(audioManager.trackName)
+                    .font(.caption2).lineLimit(1).truncationMode(.middle)
+                    .frame(maxWidth: 110)
+
+                // Progress track
+                if audioManager.duration > 0 {
+                    Text(formatAudioTime(audioManager.currentTime))
+                        .font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
+                        .frame(width: 34, alignment: .trailing)
+                    Slider(
+                        value: Binding(
+                            get: { audioManager.currentTime },
+                            set: { audioManager.seekToTime($0) }
+                        ),
+                        in: 0...max(audioManager.duration, 1)
+                    )
+                    .frame(width: 90)
+                    .controlSize(.mini)
+                    .help("Seek")
+                    Text(formatAudioTime(audioManager.duration))
+                        .font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
+                        .frame(width: 34, alignment: .leading)
+                }
+
+                // Volume
+                Image(systemName: audioManager.volume < 0.01 ? "speaker.slash" : "speaker.wave.1")
+                    .font(.caption2).foregroundStyle(.secondary)
+                Slider(value: Binding(get: { audioManager.volume }, set: { audioManager.setVolume($0) }), in: 0...1)
+                    .frame(width: 56).controlSize(.mini).help("Ambient audio volume")
+
+                Spacer()
+
+                // Library management
+                Button("Add Track…") { audioManager.chooseTrack() }
+                    .buttonStyle(.bordered).controlSize(.small)
+                    .help("Add audio tracks to your music library")
+
+                if audioManager.trackURL != nil {
+                    Button { audioManager.clearTrack() } label: {
+                        Image(systemName: "xmark.circle").foregroundStyle(.secondary)
+                    }.buttonStyle(.plain).help("Stop and clear current track")
+                }
+
+                // Queue toggle
+                Button {
+                    withAnimation(.easeInOut(duration: 0.18)) { showQueue.toggle() }
+                } label: {
+                    Image(systemName: "list.bullet.rectangle")
+                        .font(.caption)
+                        .foregroundStyle(showQueue ? themeManager.current.color : .secondary)
+                }
+                .buttonStyle(.plain)
+                .help(showQueue ? "Hide queue" : "Show music queue")
+
+                Divider().frame(height: 20)
+
+                // Accent colour dots
+                HStack(spacing: 5) {
+                    ForEach(AccentTheme.allCases) { theme in
+                        Button { themeManager.set(theme) } label: {
+                            Circle()
+                                .fill(theme == .system ? AnyShapeStyle(Color.secondary.opacity(0.6)) : AnyShapeStyle(theme.color))
+                                .frame(width: 13, height: 13)
+                                .overlay(Circle().strokeBorder(themeManager.current == theme ? Color.primary : Color.clear, lineWidth: 2))
+                        }
+                        .buttonStyle(.plain).help(theme.label)
+                    }
+                }
+
+                Divider().frame(height: 20)
+                Button("Close") { NSApp.keyWindow?.close() }.buttonStyle(.bordered).controlSize(.small)
+            }
+            .padding(.horizontal, 16).padding(.vertical, 10)
+        }
+    }
+
+    // MARK: - Music Queue Panel
+
+    @ViewBuilder private var queuePanel: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("Queue")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("Clear All") { audioManager.clearLibrary() }
+                    .font(.caption2)
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .disabled(audioManager.library.isEmpty)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 6)
+
+            List {
+                ForEach(Array(audioManager.library.enumerated()), id: \.element.id) { idx, track in
+                    let isActive = audioManager.trackURL == track.url
+                    HStack(spacing: 8) {
+                        // Now-playing indicator
+                        if isActive {
+                            Image(systemName: audioManager.isPlaying ? "speaker.wave.2.fill" : "pause.fill")
+                                .font(.system(size: 10))
+                                .foregroundStyle(themeManager.current.color)
+                                .frame(width: 14)
+                        } else {
+                            Text("\(idx + 1)")
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(.tertiary)
+                                .frame(width: 14)
+                        }
+
+                        Text(track.name)
+                            .font(.caption)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .foregroundStyle(isActive ? themeManager.current.color : .primary)
+
+                        Spacer()
+
+                        Text(formatQueueDuration(track))
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(.tertiary)
+
+                        Button {
+                            audioManager.removeFromLibrary(track: track)
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 12))
+                                .foregroundStyle(.tertiary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(.vertical, 2)
+                    .listRowBackground(
+                        isActive ? themeManager.current.color.opacity(0.08) : Color.clear
+                    )
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        audioManager.selectTrack(track)
+                        if !audioManager.isPlaying { audioManager.play() }
+                    }
+                }
+                .onMove { audioManager.moveTrack(from: $0, to: $1) }
+            }
+            .listStyle(.plain)
+            .frame(height: min(CGFloat(audioManager.library.count) * 30 + 8, 130))
+        }
+        .background(Color(NSColor.controlBackgroundColor))
+    }
+
+    private func formatQueueDuration(_ track: AmbientAudioManager.AudioTrack) -> String {
+        guard track.duration > 0 else { return "" }
+        let s = Int(track.duration)
+        return String(format: "%d:%02d", s / 60, s % 60)
+    }
+
+    // MARK: - Empty Library View
+
+    @ViewBuilder private var emptyLibraryView: some View {
+        VStack(spacing: 14) {
+            Image(systemName: selectedFilter == .favorites ? "star" : "photo.badge.plus")
+                .font(.system(size: 40)).foregroundStyle(.quaternary)
+            Text(selectedFilter == .favorites ? "No favorites yet" :
+                 searchQuery.isEmpty ? "Library is empty" : "No results for \"\(searchQuery)\"")
+                .font(.callout).foregroundStyle(.secondary)
+            if searchQuery.isEmpty && selectedFilter == .all {
+                Button("Add to Library") { addMediaToLibrary() }.buttonStyle(.borderedProminent)
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 200)
+        .padding(40)
+    }
+
+    // MARK: - Helpers (preserved verbatim from original)
+
+    private func autoSelectFirstMonitor() {
+        if store.selectedMonitorID == nil && selectedMonitorID == nil,
+           let first = store.monitors.first {
+            selectedMonitorID = first.id
+            store.selectedMonitorID = first.id
+        }
+    }
+
+    private func monitorLabel(for monitor: MonitorInfo) -> String {
+        if let index = store.monitors.firstIndex(where: { $0.id == monitor.id }) {
+            return "S\(index + 1) • \(monitor.name)"
+        }
+        return monitor.name
+    }
+
+    /// Returns whether this recent item is the one currently assigned to the active target display.
+    private func isCurrentWallpaper(recent: WallpaperManagerStore.RecentMedia) -> Bool {
+        let targetID = store.selectedMonitorID ?? selectedMonitorID
+        guard let targetID,
+              let assignment = store.assignment(for: targetID),
+              let currentPath = assignment.filePath else {
+            return false
+        }
+        let expandedCurrent = (currentPath as NSString).expandingTildeInPath
+        return expandedCurrent == recent.url.path || expandedCurrent == recent.id
+    }
+
+    // Apply a recent wallpaper to the currently targeted display
+    private func applyRecentToSelected(recent: WallpaperManagerStore.RecentMedia) {
+        let targetID = store.selectedMonitorID ?? selectedMonitorID ?? store.monitors.first?.id
+        guard let targetID else {
+            NSSound.beep()
+            return
+        }
+        if selectedMonitorID != targetID { selectedMonitorID = targetID }
+        if store.selectedMonitorID != targetID { store.selectedMonitorID = targetID }
+        store.applyRecentMedia(to: targetID, url: recent.url)
+    }
+
+    private func formatAudioTime(_ seconds: Double) -> String {
+        let s = Int(max(0, seconds))
+        return String(format: "%d:%02d", s / 60, s % 60)
+    }
+
+    private func addMediaToLibrary() {
+        let panel = NSOpenPanel()
+        panel.title = "Add wallpaper to library"
+        panel.message = "This adds the file to your collection on the left so you can easily re-use it on any display. It will not change what is currently playing."
+        panel.allowedContentTypes = [.movie, .image, .gif]
+        panel.canChooseFiles = true
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        store.addMediaToLibrary(url: url)
+    }
+}
+
+// MARK: - Wallpaper Grid Item
+
+struct WallpaperGridItem: View {
+    let recent: WallpaperManagerStore.RecentMedia
+    let isSelected: Bool
+    let isFavorite: Bool
+    let onApply: () -> Void
+    let onFavorite: () -> Void
+    var onRemove: (() -> Void)? = nil
+
+    @State private var thumbnail: NSImage?
+    @State private var isLoading = true
+    @State private var loadFailed = false
+    @State private var isHovered = false
+
+    var body: some View {
+        ZStack(alignment: .bottomLeading) {
+            // Thumbnail
+            thumbnailContent
+                .frame(width: 155, height: 87)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+
+            // Type badge (bottom-leading)
+            typeBadge
+                .padding(5)
+
+            // Hover overlay
+            if isHovered {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(.black.opacity(0.45))
+                    .frame(width: 155, height: 87)
+                    .overlay(
+                        HStack(spacing: 12) {
+                            Button { onApply() } label: {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .font(.title2).foregroundStyle(.white)
+                            }.buttonStyle(.plain).help("Set as Wallpaper")
+
+                            Button { onFavorite() } label: {
+                                Image(systemName: isFavorite ? "star.fill" : "star")
+                                    .font(.title3)
+                                    .foregroundStyle(isFavorite ? Color.yellow : .white)
+                            }.buttonStyle(.plain).help("Favorite")
+                        }
+                    )
+                    .transition(.opacity)
+            }
+
+            // Selection indicator
+            if isSelected {
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(Color.accentColor, lineWidth: 3)
+                    .frame(width: 155, height: 87)
+                    .overlay(alignment: .topTrailing) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 15))
+                            .foregroundStyle(Color.accentColor)
+                            .background(Circle().fill(Color.black).padding(2))
+                            .padding(5)
+                    }
+            } else {
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
+                    .frame(width: 155, height: 87)
+            }
+
+            // Favorite star (always visible if favorited and not hovered)
+            if isFavorite && !isHovered {
+                Image(systemName: "star.fill")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Color.yellow)
+                    .padding(5)
+                    .frame(width: 155, height: 87, alignment: .topTrailing)
+            }
+        }
+        .onHover { isHovered = $0 }
+        .onTapGesture { onApply() }
+        .overlay(alignment: .bottom) {
+            Text(recent.displayName)
+                .font(.caption2)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .frame(width: 155, alignment: .leading)
+                .offset(y: 18)
+        }
+        .padding(.bottom, 18)
+        .contextMenu {
+            Button { onApply() } label: {
+                Label("Set as Wallpaper", systemImage: "photo.on.rectangle")
+            }
+            Button { onFavorite() } label: {
+                Label(
+                    isFavorite ? "Remove from Favorites" : "Add to Favorites",
+                    systemImage: isFavorite ? "star.slash" : "star"
+                )
+            }
+            Divider()
+            Button(role: .destructive) { onRemove?() } label: {
+                Label("Remove from Library", systemImage: "trash")
+            }
+            .disabled(onRemove == nil)
+        }
+        .task { await loadThumbnail() }
+    }
+
+    @ViewBuilder private var thumbnailContent: some View {
+        if let thumb = thumbnail {
+            Image(nsImage: thumb).resizable().aspectRatio(16/9, contentMode: .fill)
+        } else if isLoading {
+            Color.gray.opacity(0.15).overlay(ProgressView().scaleEffect(0.6))
+        } else {
+            Color.gray.opacity(0.12).overlay(
+                VStack(spacing: 4) {
+                    Image(systemName: recent.mediaType == .video ? "video.slash" : "photo")
+                        .font(.title3).foregroundStyle(.secondary)
+                    Text("No preview").font(.caption2).foregroundStyle(.tertiary)
+                }
+            )
+        }
+    }
+
+    @ViewBuilder private var typeBadge: some View {
+        let (icon, color): (String, Color) = {
+            switch recent.mediaType {
+            case .video: return ("play.fill", .blue)
+            case .animatedImage: return ("photo.stack.fill", .green)
+            case .image: return ("photo.fill", .gray)
+            default: return ("questionmark", .gray)
+            }
+        }()
+        Image(systemName: icon)
+            .font(.system(size: 9, weight: .bold))
+            .foregroundStyle(.white)
+            .padding(4)
+            .background(color.opacity(0.8), in: RoundedRectangle(cornerRadius: 4))
+    }
+
+    private func loadThumbnail() async {
+        isLoading = true; loadFailed = false
+        nonisolated(unsafe) let mt = recent.mediaType
+        let img = await ThumbnailService.shared.smallThumbnail(for: recent.url, mediaType: mt)
+        await MainActor.run {
+            thumbnail = img; isLoading = false; loadFailed = (img == nil)
+        }
     }
 }

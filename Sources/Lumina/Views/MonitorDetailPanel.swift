@@ -2,201 +2,893 @@ import SwiftUI
 import AppKit
 
 /// Side panel that appears when a user selects a monitor in the layout.
-/// Contains live preview + all per-monitor settings.
+/// Contains live preview + all per-monitor settings, organized into collapsible sections.
 struct MonitorDetailPanel: View {
     let monitor: MonitorInfo
     @ObservedObject var store: WallpaperManagerStore
-    
-    var onClose: () -> Void
-    
+
+    var onClose: () -> Void = {}
+    var showHeader: Bool = true
+
+    // Preview resize state
+    @State private var previewHeight: CGFloat = 220
+    @State private var previewOpacity: Double = 1.0
+
     // Local state for settings (synced with store)
     @State private var selectedScaling: VideoScaling = .fill
     @State private var keepOnStartup: Bool = false
     @State private var playbackSpeed: Double = 1.0
-    
-    // Note: We currently get assignment data via the monitor model or by asking the app delegate.
-    // The previous computed property was removed because WallpaperManagerStore does not yet expose assignment(for:).
-    
+    @State private var localCropRect: CGRect = CGRect(x: 0, y: 0, width: 1, height: 1)
+    @State private var videoPreviewTime: Double = 0.15
+    @State private var loopFadeEnabled: Bool = false
+    @State private var loopFadeDuration: Double = 1.5
+    @State private var loopFadeEasing: MonitorAssignment.FadeEasing = .easeInOut
+    @State private var brightness: Double = 0.0
+    @State private var slideshowItems: [String] = []
+    @State private var slideshowInterval: Double = 10.0
+    @State private var slideshowTransition: MonitorAssignment.SlideshowTransition = .fade
+
+    // Compressor
+    @StateObject private var compressor = VideoCompressor.shared
+
+    // Compression UI state
+    @State private var selectedPreset: VideoCompressor.QualityPreset = .fullHD
+    @State private var videoInfo: VideoCompressor.VideoInfo = .init()
+    @State private var showCompressError: Bool = false
+    @State private var compressErrorMessage: String = ""
+    @State private var showUseCompressedAlert: Bool = false
+    @State private var pendingCompressedURL: URL? = nil
+
+    // New visual effect state
+    @State private var opacity: Double = 1.0
+    @State private var saturation: Double = 1.0
+    @State private var hue: Double = 0.0
+    @State private var grayscale: Bool = false
+    @State private var audioVolume: Double = 0.0
+    @State private var loopMode: MonitorAssignment.LoopMode = .loop
+
+    // MARK: - Computed
+
+    private var assignment: MonitorAssignment? {
+        store.assignment(for: monitor.id)
+    }
+
+    private var scalingDescription: String {
+        switch selectedScaling {
+        case .fit:     return "Full video visible with letterbox/pillarbox bars."
+        case .fill:    return "Video crops to fill the screen — edges may be cut off."
+        case .stretch: return "Video stretches to cover the screen — may look distorted."
+        }
+    }
+
+    // MARK: - Body
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            
-            // Header with close button
-            HStack {
-                VStack(alignment: .leading) {
-                    Text(monitor.name)
-                        .font(.title2)
-                        .fontWeight(.semibold)
-                    Text(monitor.resolution)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                Button(action: onClose) {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.title2)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 0) {
+            if showHeader {
+                headerSection
+                Divider()
             }
-            
-            Divider()
-            
-            // Live Preview Area (Placeholder for now)
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Live Preview")
-                    .font(.headline)
-                
-                // This is where a real live preview of the wallpaper would go.
-                // For now it shows a visual representation of what would be on screen.
-                ZStack {
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(Color.black.opacity(0.9))
-                        .frame(height: 220)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 12)
-                                .stroke(Color.white.opacity(0.15), lineWidth: 1)
-                        )
-                    
-                    if let videoName = monitor.assignedVideoName {
-                        VStack(spacing: 8) {
-                            Image(systemName: "play.rectangle.fill")
-                                .font(.system(size: 42))
-                            Text("Live Preview")
-                                .font(.headline)
-                            Text(videoName)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
+
+            livePreviewSection
+
+            ScrollView {
+                VStack(spacing: 10) {
+
+                    // Playback section (video and animated image only)
+                    if assignment?.mediaType == .video || assignment?.mediaType == .animatedImage {
+                        SettingsSection(icon: "play.fill", title: "Playback") {
+                            playbackContent
                         }
-                        .foregroundStyle(.white)
-                    } else {
-                        VStack(spacing: 8) {
-                            Image(systemName: "display")
-                                .font(.system(size: 42))
-                            Text("No wallpaper assigned")
-                                .font(.headline)
+                    }
+
+                    // Display section
+                    SettingsSection(icon: "display", title: "Display") {
+                        displayContent
+                    }
+
+                    // Visual Effects section
+                    SettingsSection(icon: "wand.and.stars", title: "Visual Effects") {
+                        visualEffectsContent
+                    }
+
+                    // Performance / compression (video only)
+                    if assignment?.mediaType == .video, let _ = assignment?.filePath {
+                        SettingsSection(icon: "speedometer", title: "Performance", startExpanded: false) {
+                            performanceContent
                         }
-                        .foregroundStyle(.white.opacity(0.6))
+                    }
+
+                    // Advanced section
+                    SettingsSection(icon: "gearshape.2", title: "Advanced", startExpanded: false) {
+                        advancedContent
+                    }
+
+                    // Slideshow section — always available so it's discoverable. Adding images
+                    // here turns this display into an auto-cycling image slideshow.
+                    SettingsSection(icon: "photo.on.rectangle.angled", title: "Slideshow",
+                                    startExpanded: !slideshowItems.isEmpty) {
+                        slideshowContent
                     }
                 }
+                .padding(12)
             }
-            
+            .frame(maxHeight: .infinity)
+
             Divider()
-            
-            // Settings
-            VStack(alignment: .leading, spacing: 18) {
-                Text("Settings for this Display")
-                    .font(.headline)
-                
-                // Scaling
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Scaling Mode")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                    
-                    Picker("Scaling", selection: $selectedScaling) {
-                        ForEach(VideoScaling.allCases, id: \.self) { scaling in
-                            Text(scaling.displayName).tag(scaling)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                }
-                
-                // Playback Speed
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        Text("Playback Speed")
-                        Spacer()
-                        Text(String(format: "%.2fx", playbackSpeed))
-                            .monospacedDigit()
-                    }
+
+            actionButtons
+                .padding(16)
+        }
+        .onAppear { loadCurrentValues() }
+        .onChange(of: monitor.id) { _, _ in loadCurrentValues() }
+    }
+
+    // MARK: - Header (optional)
+
+    private var headerSection: some View {
+        HStack {
+            VStack(alignment: .leading) {
+                Text(monitor.name)
+                    .font(.title2)
+                    .fontWeight(.semibold)
+                Text(monitor.resolution)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
-                    
-                    Slider(value: $playbackSpeed, in: 0.25...4.0, step: 0.25)
+            }
+            Spacer()
+            Button(action: onClose) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.title2)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+        }
+        .padding(20)
+    }
+
+    // MARK: - Live Preview
+
+    private var livePreviewSection: some View {
+        VStack(spacing: 0) {
+            if let a = assignment {
+                WallpaperPreview(
+                    assignment: a,
+                    liveCropRect: localCropRect,
+                    liveScaling: selectedScaling,
+                    targetAspect: 16.0 / 9.0,
+                    isLivePlayback: true,
+                    previewTime: nil
+                )
+                .frame(maxWidth: .infinity)
+                .frame(height: previewHeight)
+                .cornerRadius(10)
+                .opacity(previewOpacity)
+                .padding(.horizontal, 12)
+                .padding(.top, 12)
+            } else {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(Color.black.opacity(0.7))
+                        .frame(maxWidth: .infinity)
+                        .frame(height: previewHeight)
+                    VStack(spacing: 8) {
+                        Image(systemName: "display").font(.system(size: 36))
+                        Text("No wallpaper assigned").font(.callout)
+                    }
+                    .foregroundStyle(.white.opacity(0.6))
                 }
-                
-                // Keep on Startup (wired to store)
-                Toggle(isOn: $keepOnStartup) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Keep this wallpaper on startup")
-                        Text("This monitor will automatically restore this video and its settings when Lumina launches.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                .padding(.horizontal, 12)
+                .padding(.top, 12)
+            }
+
+            // Drag resize handle
+            HStack {
+                Spacer()
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(Color.secondary.opacity(0.35))
+                    .frame(width: 32, height: 4)
+                Spacer()
+            }
+            .frame(height: 18)
+            .contentShape(Rectangle())
+            .onHover { hovering in
+                if hovering { NSCursor.resizeUpDown.push() } else { NSCursor.pop() }
+            }
+            .gesture(
+                DragGesture(minimumDistance: 1)
+                    .onChanged { drag in
+                        previewHeight = max(140, min(500, previewHeight + drag.translation.height))
+                    }
+            )
+        }
+    }
+
+    // MARK: - Playback Section Content
+
+    private var playbackContent: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            // Playback Speed
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text("Playback Speed").font(.subheadline).foregroundStyle(.secondary)
+                    Spacer()
+                    Text(String(format: "%.2fx", playbackSpeed))
+                        .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                }
+                Slider(value: $playbackSpeed, in: 0.25...4.0, step: 0.25)
+                    .onChange(of: playbackSpeed) { _, v in store.setPlaybackSpeed(for: monitor, speed: v) }
+            }
+
+            // Loop Crossfade (video only)
+            if assignment?.mediaType == .video {
+                Toggle("Fade at loop point", isOn: $loopFadeEnabled)
+                    .toggleStyle(.switch)
+                    .font(.subheadline)
+                    .onChange(of: loopFadeEnabled) { _, v in
+                        store.setLoopFade(for: monitor, enabled: v, duration: loopFadeDuration)
+                    }
+
+                if loopFadeEnabled {
+                    VStack(alignment: .leading, spacing: 8) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text("Fade Duration")
+                                    .font(.subheadline).foregroundStyle(.secondary)
+                                Spacer()
+                                Text("\(Int(loopFadeDuration * 1000))ms")
+                                    .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                            }
+                            // 0–5000ms in 50ms steps (100 increments)
+                            Slider(value: $loopFadeDuration, in: 0.0...5.0, step: 0.05)
+                        }
+                        .help("Total crossfade duration at each loop point (0ms = instant cut, 5000ms = slow fade)")
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Easing").font(.subheadline).foregroundStyle(.secondary)
+                            Picker("Easing", selection: $loopFadeEasing) {
+                                ForEach(MonitorAssignment.FadeEasing.allCases, id: \.self) { e in
+                                    Text(e.label).tag(e)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+                        }
+                        .help("Controls how the opacity ramps in and out during the fade")
+
+                        HStack(spacing: 8) {
+                            Button("Preview") { previewFadeInPreview() }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                                .help("Simulate this fade in the preview above")
+
+                            Button("Apply to Wallpaper") {
+                                store.setLoopFade(for: monitor, enabled: loopFadeEnabled,
+                                                  duration: loopFadeDuration, easing: loopFadeEasing)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.small)
+                            .help("Apply the current fade settings to the live desktop wallpaper")
+                        }
                     }
                 }
-                .toggleStyle(.switch)
-                .onChange(of: keepOnStartup) { _, newValue in
-                    store.setKeepOnStartup(for: monitor, enabled: newValue)
+            }
+
+            // Volume
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text("Volume").font(.subheadline).foregroundStyle(.secondary)
+                    Spacer()
+                    Text(audioVolume < 0.01 ? "Muted" : String(format: "%.0f%%", audioVolume * 100))
+                        .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                 }
-                
-                // Crop (Coming in next iteration)
-                VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Image(systemName: audioVolume < 0.01 ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                        .foregroundStyle(.secondary).font(.caption)
+                    Slider(value: $audioVolume, in: 0...1)
+                        .onChange(of: audioVolume) { _, v in store.setVolume(for: monitor, volume: v) }
+                }
+            }
+        }
+    }
+
+    // MARK: - Display Section Content
+
+    private var displayContent: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            // Scaling Mode
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Scaling Mode").font(.subheadline).foregroundStyle(.secondary)
+                Picker("Scaling", selection: $selectedScaling) {
+                    Text("Fit").tag(VideoScaling.fit)
+                        .help("Letterbox: shows full video with black bars on sides/top")
+                    Text("Fill").tag(VideoScaling.fill)
+                        .help("Crop to fill: video fills the screen, edges may be cropped")
+                    Text("Stretch").tag(VideoScaling.stretch)
+                        .help("Stretch: video fills screen, may appear distorted")
+                }
+                .pickerStyle(.segmented)
+                .onChange(of: selectedScaling) { _, v in store.setScaling(for: monitor, scaling: v) }
+                Text(scalingDescription)
+                    .font(.caption2).foregroundStyle(.tertiary)
+                    .animation(.easeInOut(duration: 0.15), value: selectedScaling)
+            }
+
+            // Crop / Zoom editor
+            if assignment != nil {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Crop / Zoom").font(.subheadline).foregroundStyle(.secondary)
+
+                    let currentAssignment = store.assignment(for: monitor.id)
+                    CropRectangle(
+                        cropRect: $localCropRect,
+                        onChange: { newRect in
+                            localCropRect = newRect
+                            store.setCropRect(for: monitor, cropRect: newRect)
+                        },
+                        assignment: currentAssignment,
+                        previewTime: currentAssignment?.mediaType == .video ? videoPreviewTime : nil
+                    )
+                    .frame(height: 160)
+                    .padding(.vertical, 2)
+
                     HStack {
-                        Text("Crop / Zoom")
-                        Spacer()
-                        Button("Edit Crop…") {
-                            // Will open a draggable crop rectangle editor with live preview
+                        Button("Reset to Full") {
+                            localCropRect = CGRect(x: 0, y: 0, width: 1, height: 1)
+                            store.setCropRect(for: monitor, cropRect: localCropRect)
                         }
                         .buttonStyle(.bordered)
                         .controlSize(.small)
+
+                        Spacer()
+
+                        Text("Drag to move • Drag corners to resize")
+                            .font(.caption2).foregroundStyle(.tertiary)
                     }
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    
-                    Text("Select which part of the media to show on this screen (drag-to-crop coming soon).")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
                 }
             }
-            
-            Spacer()
-            
-            // Bottom Actions
-            HStack {
-                Button("Choose Different Media…") {
-                    store.chooseVideo(for: monitor)
-                }
-                .buttonStyle(.borderedProminent)
-                
-                if monitor.assignedVideoName != nil {
-                    Button("Clear Wallpaper", role: .destructive) {
-                        store.clearAssignment(for: monitor)
-                    }
-                    .buttonStyle(.bordered)
-                }
-                
-                Spacer()
-                
-                Button("Done") {
-                    onClose()
-                }
-                .buttonStyle(.borderedProminent)
-            }
-        }
-        .padding(20)
-        .onAppear {
-            loadCurrentValues()
-        }
-        .onChange(of: monitor.id) { _, _ in
-            loadCurrentValues()
         }
     }
-    
-    private func loadCurrentValues() {
-        if let assignment = store.assignment(for: monitor.id) {
-            selectedScaling = assignment.scaling
-            keepOnStartup = assignment.keepOnStartup
-            playbackSpeed = assignment.playbackSpeed
-        } else {
-            // Defaults for new assignments
-            selectedScaling = .fill
-            keepOnStartup = true
-            playbackSpeed = 1.0
+
+    // MARK: - Visual Effects Section Content
+
+    private var visualEffectsContent: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            // Brightness
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text("Brightness").font(.subheadline).foregroundStyle(.secondary)
+                    Spacer()
+                    Text(String(format: "%+.2f", brightness))
+                        .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                }
+                Slider(value: $brightness, in: -0.5...0.5, step: 0.05)
+                    .onChange(of: brightness) { _, v in store.setBrightness(for: monitor, brightness: v) }
+            }
+
+            // Opacity
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text("Opacity").font(.subheadline).foregroundStyle(.secondary)
+                    Spacer()
+                    Text(String(format: "%.0f%%", opacity * 100))
+                        .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                }
+                Slider(value: $opacity, in: 0...1)
+                    .onChange(of: opacity) { _, v in store.setOpacity(for: monitor, opacity: v) }
+            }
+
+            // Saturation
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text("Saturation").font(.subheadline).foregroundStyle(.secondary)
+                    Spacer()
+                    Text(String(format: "%.1f", saturation))
+                        .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                }
+                Slider(value: $saturation, in: 0...2)
+                    .onChange(of: saturation) { _, v in
+                        store.setColorCorrection(for: monitor, saturation: v, hue: hue, grayscale: grayscale)
+                    }
+            }
+
+            // Hue Rotation
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text("Hue").font(.subheadline).foregroundStyle(.secondary)
+                    Spacer()
+                    Text(String(format: "%.0f°", hue))
+                        .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                }
+                Slider(value: $hue, in: -180...180)
+                    .onChange(of: hue) { _, v in
+                        store.setColorCorrection(for: monitor, saturation: saturation, hue: v, grayscale: grayscale)
+                    }
+            }
+
+            // Grayscale
+            Toggle("Grayscale", isOn: $grayscale)
+                .toggleStyle(.switch)
+                .onChange(of: grayscale) { _, v in
+                    store.setColorCorrection(for: monitor, saturation: saturation, hue: hue, grayscale: v)
+                }
         }
+    }
+
+    // MARK: - Advanced Section Content
+
+    private var advancedContent: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Toggle(isOn: $keepOnStartup) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Keep this wallpaper on startup")
+                    Text("This monitor will automatically restore this wallpaper when Lumina launches.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .toggleStyle(.switch)
+            .onChange(of: keepOnStartup) { _, newValue in
+                store.setKeepOnStartup(for: monitor, enabled: newValue)
+                if !newValue {
+                    (store.appDelegate as? LuminaApp)?.clearRenderer(for: monitor.id)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Loop Mode").font(.subheadline).foregroundStyle(.secondary)
+                Picker("Loop Mode", selection: $loopMode) {
+                    ForEach(MonitorAssignment.LoopMode.allCases, id: \.self) { mode in
+                        Text(mode.label).tag(mode)
+                            .help(mode.modeDescription)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .onChange(of: loopMode) { _, _ in }
+                Text(loopMode.modeDescription)
+                    .font(.caption2).foregroundStyle(.tertiary)
+                    .animation(.easeInOut(duration: 0.15), value: loopMode)
+            }
+        }
+    }
+
+    // MARK: - Slideshow Section Content
+
+    private var slideshowContent: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if slideshowItems.isEmpty {
+                Text("Add two or more images to cycle through them automatically on this display.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                HStack {
+                    Text("^[\(slideshowItems.count) image](inflect: true)")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Clear All") {
+                        slideshowItems.removeAll()
+                        store.setSlideshowItems(for: monitor, items: slideshowItems)
+                    }
+                    .font(.caption2)
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                }
+
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(slideshowItems, id: \.self) { path in
+                            HStack(spacing: 4) {
+                                Text((path as NSString).lastPathComponent)
+                                    .font(.caption2)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                                Button {
+                                    slideshowItems.removeAll { $0 == path }
+                                    store.setSlideshowItems(for: monitor, items: slideshowItems)
+                                } label: {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background(Color.gray.opacity(0.15))
+                            .cornerRadius(6)
+                        }
+                    }
+                    .padding(.horizontal, 2)
+                }
+                .frame(height: 28)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("Interval").font(.subheadline).foregroundStyle(.secondary)
+                        Spacer()
+                        Text(String(format: "%.0fs", slideshowInterval))
+                            .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                    }
+                    Slider(value: $slideshowInterval, in: 3...60, step: 1)
+                        .onChange(of: slideshowInterval) { _, v in
+                            store.setSlideshowInterval(for: monitor, interval: v)
+                        }
+                }
+
+                Picker("Transition", selection: $slideshowTransition) {
+                    ForEach(MonitorAssignment.SlideshowTransition.allCases, id: \.self) { t in
+                        Text(t.rawValue.capitalized).tag(t)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .onChange(of: slideshowTransition) { _, v in
+                    store.setSlideshowTransition(for: monitor, transition: v)
+                }
+
+                Text("Slideshow images fill the screen (aspect-fill). Per-monitor crop and color effects above don't apply while a slideshow is running.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+
+            Button("Add Images…") {
+                let panel = NSOpenPanel()
+                panel.title = "Add images to slideshow"
+                panel.allowedContentTypes = [.image]
+                panel.canChooseFiles = true
+                panel.allowsMultipleSelection = true
+                guard panel.runModal() == .OK else { return }
+                let newPaths = panel.urls.map { $0.path }
+                slideshowItems.append(contentsOf: newPaths.filter { !slideshowItems.contains($0) })
+                store.setSlideshowItems(for: monitor, items: slideshowItems)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
+    }
+
+    // MARK: - Action Buttons
+
+    private var actionButtons: some View {
+        HStack {
+            Button("Choose Different Media…") {
+                store.chooseVideo(for: monitor)
+            }
+            .buttonStyle(.borderedProminent)
+
+            if monitor.assignedVideoName != nil {
+                Button("Clear Wallpaper", role: .destructive) {
+                    store.clearAssignment(for: monitor)
+                }
+                .buttonStyle(.bordered)
+            }
+
+            Spacer()
+
+            Button("Reset Settings") {
+                resetToDefaults()
+            }
+            .buttonStyle(.bordered)
+            .help("Reset all display settings (scaling, effects, crop, speed) to their defaults")
+
+            if showHeader {
+                Button("Done") { onClose() }
+                    .buttonStyle(.borderedProminent)
+            }
+        }
+    }
+
+    /// Simulates the loop crossfade in the live preview panel so the user can
+    /// see the duration and easing before committing to the desktop wallpaper.
+    private func previewFadeInPreview() {
+        guard loopFadeDuration > 0 else { return }
+        let half = loopFadeDuration / 2.0
+        let curve = Animation.timingCurve(
+            loopFadeEasing == .easeIn || loopFadeEasing == .easeInOut ? 0.42 : 0,
+            0,
+            loopFadeEasing == .easeOut || loopFadeEasing == .easeInOut ? 0.58 : 1,
+            1,
+            duration: half
+        )
+        withAnimation(curve) { previewOpacity = 0 }
+        DispatchQueue.main.asyncAfter(deadline: .now() + half) {
+            withAnimation(curve) { previewOpacity = 1 }
+        }
+    }
+
+    private func resetToDefaults() {
+        var t = Transaction(); t.disablesAnimations = true
+        withTransaction(t) {
+            selectedScaling = .fill
+            playbackSpeed = 1.0
+            localCropRect = CGRect(x: 0, y: 0, width: 1, height: 1)
+            loopFadeEnabled = false
+            loopFadeDuration = 1.5
+            loopFadeEasing = .easeInOut
+            brightness = 0.0
+            opacity = 1.0
+            saturation = 1.0
+            hue = 0.0
+            grayscale = false
+            audioVolume = 0.0
+            loopMode = .loop
+        }
+        store.setScaling(for: monitor, scaling: .fill)
+        store.setPlaybackSpeed(for: monitor, speed: 1.0)
+        store.setCropRect(for: monitor, cropRect: CGRect(x: 0, y: 0, width: 1, height: 1))
+        store.setLoopFade(for: monitor, enabled: false, duration: 1.5, easing: .easeInOut)
+        store.setBrightness(for: monitor, brightness: 0.0)
+        store.setOpacity(for: monitor, opacity: 1.0)
+        store.setColorCorrection(for: monitor, saturation: 1.0, hue: 0.0, grayscale: false)
+        store.setVolume(for: monitor, volume: 0.0)
+    }
+
+    // MARK: - Load Current Values
+
+    private func loadCurrentValues() {
+        // Disable SwiftUI animations so slider/toggle values snap instantly
+        // when the user switches monitors — no distracting animated transitions.
+        var t = Transaction(); t.disablesAnimations = true
+        withTransaction(t) { _loadCurrentValuesInner() }
+    }
+
+    private func _loadCurrentValuesInner() {
+        if let a = store.assignment(for: monitor.id) {
+            selectedScaling = a.scaling
+            keepOnStartup = a.keepOnStartup
+            playbackSpeed = a.playbackSpeed
+            localCropRect = a.cropRect
+            loopFadeEnabled = a.loopFadeEnabled
+            loopFadeDuration = a.loopFadeDuration
+            loopFadeEasing = a.loopFadeEasing
+            brightness = a.brightness
+            slideshowItems = a.slideshowItems
+            slideshowInterval = a.slideshowInterval
+            slideshowTransition = a.slideshowTransition
+            opacity = a.opacity
+            saturation = a.saturation
+            hue = a.hue
+            grayscale = a.grayscale
+            audioVolume = a.audioVolume
+            loopMode = a.loopMode
+        } else {
+            selectedScaling = .fill
+            keepOnStartup = false
+            playbackSpeed = 1.0
+            localCropRect = CGRect(x: 0, y: 0, width: 1, height: 1)
+            loopFadeEnabled = false
+            loopFadeDuration = 1.5
+            loopFadeEasing = .easeInOut
+            brightness = 0.0
+            slideshowItems = []
+            slideshowInterval = 10.0
+            slideshowTransition = .fade
+            opacity = 1.0
+            saturation = 1.0
+            hue = 0.0
+            grayscale = false
+            audioVolume = 0.0
+            loopMode = .loop
+        }
+    }
+
+    // MARK: - Performance / Compression Content
+
+    @ViewBuilder private var performanceContent: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            // File info row
+            HStack(spacing: 16) {
+                infoChip(icon: "doc.fill",         label: videoInfo.fileSize)
+                infoChip(icon: "aspectratio.fill",  label: videoInfo.resolution)
+                infoChip(icon: "clock.fill",        label: videoInfo.duration)
+            }
+            .task(id: assignment?.filePath) {
+                guard let url = assignment.flatMap({ $0.resolvedURL() ?? $0.filePath.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) } }) else { return }
+                videoInfo = await compressor.loadInfo(for: url)
+            }
+
+            Divider()
+
+            // Preset picker
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Target Quality").font(.subheadline).foregroundStyle(.secondary)
+
+                Picker("", selection: $selectedPreset) {
+                    ForEach(VideoCompressor.QualityPreset.allCases) { preset in
+                        Text(preset.label).tag(preset)
+                    }
+                }
+                .pickerStyle(.segmented)
+
+                // Dynamic description + size estimate
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(selectedPreset.shortDescription)
+                        .font(.caption2).foregroundStyle(.tertiary)
+                    if videoInfo.fileSizeBytes > 0 {
+                        let est = Int64(Double(videoInfo.fileSizeBytes) * selectedPreset.estimatedSizeRatio)
+                        Text("Estimated output: ~\(ByteCountFormatter.string(fromByteCount: est, countStyle: .file))")
+                            .font(.caption2).foregroundStyle(.tertiary)
+                    }
+                }
+                .animation(.easeInOut(duration: 0.15), value: selectedPreset)
+            }
+
+            // Compress / progress / result
+            if compressor.isCompressing {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text(compressor.statusMessage)
+                            .font(.caption).foregroundStyle(.secondary)
+                        Spacer()
+                        Text(String(format: "%.0f%%", compressor.progress * 100))
+                            .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                    }
+                    ProgressView(value: compressor.progress)
+                    Button("Cancel") { compressor.cancel() }
+                        .buttonStyle(.bordered).controlSize(.small)
+                        .foregroundStyle(.red)
+                }
+            } else {
+                HStack(spacing: 10) {
+                    Button {
+                        Task { await runCompression() }
+                    } label: {
+                        Label("Compress Video", systemImage: "arrow.down.circle.fill")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .help("Re-encode this video at the selected quality to reduce GPU load and file size")
+
+                    if let lastURL = compressor.lastCompressedURL {
+                        Button("Use Compressed") {
+                            pendingCompressedURL = lastURL
+                            showUseCompressedAlert = true
+                        }
+                        .buttonStyle(.bordered).controlSize(.small)
+                        .help("Switch this monitor to use the already-compressed version")
+                    }
+                }
+            }
+        }
+        .alert("Use Compressed Version?", isPresented: $showUseCompressedAlert, presenting: pendingCompressedURL) { url in
+            Button("Use Compressed") {
+                store.chooseVideoForMonitorID(monitorID: monitor.id, url: url)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { url in
+            Text("This will switch the wallpaper on this display to the compressed copy at \(url.lastPathComponent).")
+        }
+        .alert("Compression Failed", isPresented: $showCompressError) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(compressErrorMessage)
+        }
+    }
+
+    private func runCompression() async {
+        guard let url = assignment.flatMap({ $0.resolvedURL() ?? $0.filePath.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) } }) else { return }
+        do {
+            let out = try await compressor.compress(sourceURL: url, preset: selectedPreset)
+            // Reload file info for the compressed copy
+            let newInfo = await compressor.loadInfo(for: out)
+            let origBytes = videoInfo.fileSizeBytes
+            let savedBytes = origBytes - newInfo.fileSizeBytes
+            if savedBytes > 0 {
+                compressor.statusMessage = "Saved ~\(ByteCountFormatter.string(fromByteCount: savedBytes, countStyle: .file))"
+            }
+            pendingCompressedURL = out
+            showUseCompressedAlert = true
+        } catch VideoCompressor.CompressionError.cancelled {
+            // user cancelled — no alert needed
+        } catch {
+            compressErrorMessage = error.localizedDescription
+            showCompressError = true
+        }
+    }
+
+    @ViewBuilder private func infoChip(icon: String, label: String) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: icon).font(.system(size: 10)).foregroundStyle(.secondary)
+            Text(label).font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 8).padding(.vertical, 4)
+        .background(Color(NSColor.controlBackgroundColor).opacity(0.8), in: RoundedRectangle(cornerRadius: 6))
+        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color(NSColor.separatorColor).opacity(0.5), lineWidth: 0.5))
+    }
+
+} // end MonitorDetailPanel
+
+// MARK: - Height preference key (used by SettingsSection for smooth animation)
+
+private struct NaturalHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
+}
+
+// MARK: - Settings Section Helper
+
+private struct SettingsSection<Content: View>: View {
+    let icon: String
+    let title: String
+    var startExpanded: Bool = true
+
+    @State private var expanded: Bool
+    /// Measured natural height of the content — gives SwiftUI a concrete value to animate.
+    /// Using .infinity as the target height prevents smooth animation because SwiftUI
+    /// can't interpolate from 0 to an unknown value.
+    @State private var naturalHeight: CGFloat = 0
+    @State private var hasMeasured = false
+
+    @ViewBuilder let content: () -> Content
+
+    init(icon: String, title: String, startExpanded: Bool = true, @ViewBuilder content: @escaping () -> Content) {
+        self.icon = icon
+        self.title = title
+        self.startExpanded = startExpanded
+        self._expanded = State(initialValue: startExpanded)
+        self.content = content
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.22)) { expanded.toggle() }
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: icon)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 16)
+                    Text(title)
+                        .font(.subheadline.weight(.medium))
+                    Spacer()
+                    Image(systemName: "chevron.down")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .rotationEffect(.degrees(expanded ? 0 : -90))
+                        .animation(.easeInOut(duration: 0.22), value: expanded)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            VStack(alignment: .leading, spacing: 12) {
+                content()
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 2)
+            .padding(.bottom, 14)
+            // Probe: measure the content's natural height without affecting layout
+            .background(
+                GeometryReader { geo in
+                    Color.clear.preference(key: NaturalHeightKey.self, value: geo.size.height)
+                }
+            )
+            .onPreferenceChange(NaturalHeightKey.self) { h in
+                guard h > 0 else { return }
+                if !hasMeasured {
+                    // First measurement: apply without animation (section just appeared)
+                    naturalHeight = h
+                    hasMeasured = true
+                } else if abs(naturalHeight - h) > 1 {
+                    // Content size changed (e.g., conditional sub-rows appeared/disappeared)
+                    withAnimation(.easeInOut(duration: 0.15)) { naturalHeight = h }
+                }
+            }
+            // Animate between 0 and the measured concrete height — both are numbers SwiftUI can interpolate
+            .frame(height: expanded ? naturalHeight : 0, alignment: .top)
+            .clipped()
+            .opacity(expanded ? 1 : 0)
+            .allowsHitTesting(expanded)
+            .animation(.easeInOut(duration: 0.22), value: expanded)
+        }
+        .background(Color(NSColor.controlBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.separator, lineWidth: 0.5))
     }
 }
+
+// MARK: - VideoScaling display name extension
 
 extension VideoScaling {
     var displayName: String {

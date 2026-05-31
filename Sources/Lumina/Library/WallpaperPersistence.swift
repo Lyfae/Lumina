@@ -34,17 +34,9 @@ public struct WallpaperPersistence {
         }
     }
 
-    /// Attempts to restore the last video the user chose.
-    /// Returns a URL (security-scoped if possible).
-    ///
-    /// Behavior:
-    /// - Tries bookmark first.
-    /// - On any failure or staleness, automatically clears the bad bookmark.
-    /// - Falls back to the plain path saved during the last successful `saveLastVideo`.
-    /// - As a final prototype convenience, falls back to `~/Movies/Lumina Samples/demo.mp4`
-    ///   if it exists and nothing else is available.
+    /// Attempts to restore the last video the user explicitly saved.
+    /// Returns a security-scoped URL when possible, plain-path URL otherwise.
     public static func restoreLastVideo() -> URL? {
-        // Try bookmark first (preferred when valid)
         if let data = UserDefaults.standard.data(forKey: lastVideoBookmarkKey) {
             var isStale = false
             do {
@@ -56,9 +48,9 @@ public struct WallpaperPersistence {
                 )
 
                 if isStale {
-                    print("[Persistence] Bookmark is stale — clearing it and falling back.")
+                    print("[Persistence] Bookmark is stale — clearing.")
                     clearBookmarkOnly()
-                    return tryFallbackPath() ?? tryDemoPath()
+                    return tryFallbackPath()
                 }
 
                 if url.startAccessingSecurityScopedResource() {
@@ -68,18 +60,12 @@ public struct WallpaperPersistence {
                     clearBookmarkOnly()
                 }
             } catch {
-                print("[Persistence] Failed to resolve bookmark: \(error) — clearing bad bookmark data.")
+                print("[Persistence] Failed to resolve bookmark: \(error) — clearing.")
                 clearBookmarkOnly()
             }
         }
 
-        // Fallback to plain path (saved on every successful saveLastVideo)
-        if let url = tryFallbackPath() {
-            return url
-        }
-
-        // Prototype convenience fallback
-        return tryDemoPath()
+        return tryFallbackPath()
     }
 
     private static func tryFallbackPath() -> URL? {
@@ -99,17 +85,5 @@ public struct WallpaperPersistence {
 
     private static func clearBookmarkOnly() {
         UserDefaults.standard.removeObject(forKey: lastVideoBookmarkKey)
-    }
-
-    /// Prototype convenience: returns the standard demo video location if the file exists.
-    private static func tryDemoPath() -> URL? {
-        let demoPath = NSString(string: "~/Movies/Lumina Samples/demo.mp4").expandingTildeInPath
-        let url = URL(fileURLWithPath: demoPath)
-
-        if FileManager.default.fileExists(atPath: url.path) {
-            print("[Persistence] No saved video found — falling back to demo.mp4 for prototype convenience.")
-            return url
-        }
-        return nil
     }
 }

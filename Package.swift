@@ -26,12 +26,19 @@ let package = Package(
                 // "Defaults",
             ],
             path: "Sources/Lumina",
-            sources: ["."],   // All .swift under Sources/Lumina and subdirs
+            // SPM automatically discovers all .swift files. 
+            // Resources (custom Grok Imagine icons, future assets) are declared separately.
+            resources: [
+                .process("Resources")
+            ],
             swiftSettings: [
                 // Required for @main AppKit/SwiftUI apps in SPM executables.
-                // Tells the compiler this module provides its own main entry point
-                // via the @main attribute and should be treated as library code.
-                .unsafeFlags(["-parse-as-library"])
+                .unsafeFlags(["-parse-as-library"]),
+
+                // Relaxed concurrency during active development / Swift 6 migration.
+                // This eliminates the remaining data-race warnings from thumbnail loading
+                // without changing behavior. We can tighten this later.
+                .unsafeFlags(["-strict-concurrency=minimal"])
             ]
         ),
         .testTarget(

@@ -104,6 +104,19 @@ public final class DesktopWallpaperWindow: NSWindow {
         self.orderBack(nil)
     }
 
+    /// Repositions and resizes the window to match a screen's (possibly changed) frame.
+    /// Used during display reconfiguration (resolution change, arrangement change, dock/undock)
+    /// so the wallpaper surface keeps covering its display exactly.
+    public func updateFrame(to rect: NSRect) {
+        self.setFrame(rect, display: true)
+        // Keep the hosting content view in local (0,0) coordinates at the new size.
+        if let contentView {
+            contentView.frame = NSRect(origin: .zero, size: rect.size)
+        }
+        // Re-assert desktop ordering in case the reconfiguration disturbed layering.
+        showOnDesktop()
+    }
+
     /// Cleanly close and release the window (used on display removal or app termination).
     public func hideAndRelease() {
         self.orderOut(nil)

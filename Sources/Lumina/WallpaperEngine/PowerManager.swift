@@ -35,7 +35,18 @@ public final class PowerManager {
     public var pauseOnLowPowerMode: Bool = true
     public var pauseOnHighThermal: Bool = true
     public var throttleOnMediumThermal: Bool = true
-    public var respectFullscreenApps: Bool = true   // Will integrate with FullscreenDetector
+    public var respectFullscreenApps: Bool = true
+
+    // New: Performance profiles for users who want to tune the balance
+    public enum PerformanceProfile: String, CaseIterable {
+        case maximumBattery   // Most aggressive pausing/throttling
+        case balanced         // Default good experience
+        case highQuality      // Allow more playback, less aggressive saving
+    }
+
+    public var performanceProfile: PerformanceProfile = .balanced {
+        didSet { recomputePolicy() }
+    }
 
     private var observers: [NSObjectProtocol] = []
 
@@ -109,7 +120,7 @@ public final class PowerManager {
     private func updatePolicy() {
         let processInfo = ProcessInfo.processInfo
 
-        // Highest priority reasons first (most disruptive)
+        // Highest priority reasons first
         if pauseOnLowPowerMode && processInfo.isLowPowerModeEnabled {
             setPolicy(.paused(reason: .lowPowerMode))
             return
@@ -121,15 +132,31 @@ public final class PowerManager {
             return
         }
 
+        // Profile-aware throttling
+        let profile = performanceProfile
         if throttleOnMediumThermal && thermal == .fair {
-            setPolicy(.throttled(fps: 15))
+            let fps = profile == .maximumBattery ? 8 : (profile == .highQuality ? 20 : 15)
+            setPolicy(.throttled(fps: fps))
             return
         }
 
-        // Future: battery percentage check, user "critical only" mode, etc.
+        // Be much more lenient when the user is actively using Lumina's manager windows.
+        // This prevents the wallpaper video from freezing/pausing while configuring.
+        if luminaManagerWindowsAreActive {
+            setPolicy(.normal)
+            return
+        }
 
-        // Default happy path
         setPolicy(.normal)
+    }
+
+    // MARK: - Manager Window Awareness (to avoid pausing video while user is configuring)
+    private var luminaManagerWindowsAreActive: Bool = false
+
+    /// Call this from the manager windows when they become key or resign key.
+    public func setManagerWindowsActive(_ active: Bool) {
+        luminaManagerWindowsAreActive = active
+        updatePolicy()
     }
 
     private func setPolicy(_ newPolicy: WallpaperPlaybackPolicy) {
