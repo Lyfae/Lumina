@@ -40,9 +40,6 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: - UX / State (prototype enhancements for B + C)
     private var currentVideoURL: URL?
     private var currentWallpaperMenuItem: NSMenuItem!
-    private var lpmToggleMenuItem: NSMenuItem!
-    private var thermalToggleMenuItem: NSMenuItem!
-    private var fullscreenToggleMenuItem: NSMenuItem!
 
     // MARK: - UI
     private var statusItem: NSStatusItem!
@@ -79,6 +76,9 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Purge any legacy global-persistence keys so the app always starts clean (black displays).
         WallpaperPersistence.clearLastVideo()
+
+        // Apply the saved UI appearance (light / dark / match system) before any windows open.
+        AppearanceManager.shared.apply()
 
         setupStatusItem()
         setupPowerManager()
@@ -122,6 +122,21 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
             self.checkForNewVersionAndShowChangelogIfNeeded()
         }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        // Single teardown path for every exit (menu Quit, ⌘Q, logout, system shutdown):
+        // stop all playback and remove the desktop wallpaper windows so nothing lingers.
+        powerManager?.pauseManually()
+        for renderer in renderers {
+            renderer.cleanup()
+        }
+        for window in wallpaperWindows {
+            window.hideAndRelease()
+        }
+        renderers.removeAll()
+        wallpaperWindows.removeAll()
+        print("[Lumina] Shutdown complete — all renderers and wallpaper windows torn down.")
     }
 
     @objc private func wakeFromSleep() {
@@ -407,6 +422,16 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         for index in renderers.indices {
             applyEffectivePolicy(policy, toRendererAt: index)
         }
+    }
+
+    /// Re-evaluates the power policy AND re-applies it to every renderer. Called when the user
+    /// changes a power preference (toggle / profile) so the change takes effect immediately —
+    /// even when the recomputed policy value is unchanged (e.g. toggling "pause behind
+    /// fullscreen apps" only affects the per-display occlusion gating in applyEffectivePolicy,
+    /// which would otherwise never re-run).
+    func reapplyPowerPolicy() {
+        powerManager.recomputePolicy()
+        applyPolicyToRenderers(powerManager.currentPolicy)
     }
 
     /// Applies the global power policy to one renderer, except that an occluded display is
@@ -712,12 +737,17 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         updateCurrentWallpaperDisplay()
         updateStatusItem(for: powerManager.currentPolicy)
 
-        // Create or update the assignment with correct media type
+        // Create or update the assignment with correct media type.
+        // IMPORTANT: preserve the existing keep-on-startup choice. Brand-new assignments
+        // default to false (via MonitorAssignment), but re-applying media to an already-pinned
+        // monitor must NOT silently un-pin it — that was causing pinned wallpapers to vanish
+        // (come up black) after relaunch.
         var assignment = assignmentStore.assignment(for: monitorID) ?? MonitorAssignment(monitorIdentifier: monitorID)
         assignment.filePath = url.path
-        // Default is NOT to keep on startup. User must explicitly toggle "Keep this wallpaper on startup".
-        assignment.keepOnStartup = false
         assignment.mediaType = MediaType.from(url: url)
+        // One mode per monitor: choosing a single video/image ends any slideshow on this
+        // display (and frees its image cycling), so the two modes never run at once.
+        assignment.slideshowItems = []
         assignment.lastError = nil   // fresh load; recordLoadFailure will re-set this if it fails
         assignment.updateBookmark(from: url)
 
@@ -980,53 +1010,12 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         updateStatusItem(for: .normal)
 
+        // Minimal menu bar: open the app, or quit. Everything else (power toggles,
+        // performance profile, about/welcome/what's new) now lives in Settings inside
+        // Lumina Studio, so we don't duplicate it here.
         let menu = NSMenu()
-        menu.delegate = self   // For dynamic title updates on open (lightweight)
-
-        // Prominent current wallpaper status (disabled item, updated live)
-        let currentItem = NSMenuItem(title: "No video loaded — use Load Video…", action: nil, keyEquivalent: "")
-        currentItem.isEnabled = false
-        menu.addItem(currentItem)
-        self.currentWallpaperMenuItem = currentItem
-
+        menu.addItem(NSMenuItem(title: "Lumina Studio", action: #selector(openWallpaperManager), keyEquivalent: "m"))
         menu.addItem(NSMenuItem.separator())
-
-        // Main management UI - the Window Manager now controls most actions
-        menu.addItem(NSMenuItem(title: "Lumina Studio…", action: #selector(openWallpaperManager), keyEquivalent: "m"))
-        menu.addItem(NSMenuItem.separator())
-
-        // Simple power toggles (live state updated via delegate)
-        let lpmItem = NSMenuItem(title: "Pause on Low Power Mode", action: #selector(togglePauseOnLPM), keyEquivalent: "")
-        self.lpmToggleMenuItem = lpmItem
-        menu.addItem(lpmItem)
-
-        let thermalItem = NSMenuItem(title: "Pause on High Thermal", action: #selector(togglePauseOnThermal), keyEquivalent: "")
-        self.thermalToggleMenuItem = thermalItem
-        menu.addItem(thermalItem)
-
-        let fullscreenItem = NSMenuItem(title: "Pause on Fullscreen Apps", action: #selector(togglePauseOnFullscreen), keyEquivalent: "")
-        self.fullscreenToggleMenuItem = fullscreenItem
-        menu.addItem(fullscreenItem)
-
-        // Performance profiles submenu (great UX for power users and battery-conscious users)
-        let perfMenu = NSMenu()
-        for profile in PowerManager.PerformanceProfile.allCases {
-            let item = NSMenuItem(title: profileTitle(profile), action: #selector(selectPerformanceProfile(_:)), keyEquivalent: "")
-            item.representedObject = profile
-            item.state = (powerManager?.performanceProfile == profile) ? .on : .off
-            perfMenu.addItem(item)
-        }
-        let perfItem = NSMenuItem(title: "Performance Profile", action: nil, keyEquivalent: "")
-        perfItem.submenu = perfMenu
-        menu.addItem(perfItem)
-        menu.addItem(NSMenuItem.separator())
-
-        menu.addItem(NSMenuItem(title: "About / Status…", action: #selector(showAboutStatus), keyEquivalent: ""))
-        menu.addItem(NSMenuItem(title: "Welcome to Lumina", action: #selector(showWelcomeFromMenu), keyEquivalent: ""))
-        menu.addItem(NSMenuItem(title: "What's New in Lumina…", action: #selector(showWhatsNewFromMenu), keyEquivalent: ""))
-        menu.addItem(NSMenuItem(title: "Debug: Print Status to Console", action: #selector(printDebugStatus), keyEquivalent: "d"))
-        menu.addItem(NSMenuItem.separator())
-
         menu.addItem(NSMenuItem(title: "Quit Lumina", action: #selector(quit), keyEquivalent: "q"))
 
         statusItem.menu = menu
@@ -1202,83 +1191,14 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func quit() {
-        // Clean shutdown
-        for renderer in renderers {
-            renderer.cleanup()
-        }
-        for window in wallpaperWindows {
-            window.hideAndRelease()
-        }
-        // FullscreenDetector will be deallocated; it stops its own timer
+        // Ask AppKit to terminate; applicationWillTerminate performs the actual teardown so
+        // the same cleanup runs for menu Quit, ⌘Q, logout, and system shutdown alike.
         NSApplication.shared.terminate(nil)
-    }
-
-    // MARK: - NSMenuDelegate (for live-updating dynamic menu items like toggles + current name)
-
-    func menuNeedsUpdate(_ menu: NSMenu) {
-        // Update toggle checkmarks from live PowerManager state
-        lpmToggleMenuItem?.state = (powerManager?.pauseOnLowPowerMode ?? true) ? .on : .off
-        thermalToggleMenuItem?.state = (powerManager?.pauseOnHighThermal ?? true) ? .on : .off
-        fullscreenToggleMenuItem?.state = (powerManager?.respectFullscreenApps ?? true) ? .on : .off
-
-        // Update performance profile submenu checkmarks
-        if let perfItem = menu.items.first(where: { $0.title == "Performance Profile" }),
-           let submenu = perfItem.submenu {
-            for item in submenu.items {
-                if let profile = item.representedObject as? PowerManager.PerformanceProfile {
-                    item.state = (powerManager?.performanceProfile == profile) ? .on : .off
-                }
-            }
-        }
-
-        // Ensure current wallpaper display is fresh
-        updateCurrentWallpaperDisplay()
-    }
-
-    // MARK: - Simple Settings Toggles (B: minimal power preferences exposed in menu)
-
-    @objc private func togglePauseOnLPM() {
-        guard let pm = powerManager else { return }
-        pm.pauseOnLowPowerMode.toggle()
-        print("[Settings] Pause on Low Power Mode = \(pm.pauseOnLowPowerMode)")
-        pm.recomputePolicy()
-    }
-
-    @objc private func togglePauseOnThermal() {
-        guard let pm = powerManager else { return }
-        pm.pauseOnHighThermal.toggle()
-        print("[Settings] Pause on High Thermal = \(pm.pauseOnHighThermal)")
-        pm.recomputePolicy()
-    }
-
-    @objc private func togglePauseOnFullscreen() {
-        guard let pm = powerManager else { return }
-        pm.respectFullscreenApps.toggle()
-        print("[Settings] Respect Fullscreen Apps = \(pm.respectFullscreenApps)")
-        // Re-apply effective policy: turning this off should resume any display we paused
-        // for occlusion; turning it on should pause currently-covered displays.
-        pm.recomputePolicy()
-        applyPolicyToRenderers(pm.currentPolicy)
-    }
-
-    private func profileTitle(_ profile: PowerManager.PerformanceProfile) -> String {
-        switch profile {
-        case .maximumBattery: return "Maximum Battery Saving"
-        case .balanced:       return "Balanced (Recommended)"
-        case .highQuality:    return "High Quality Playback"
-        }
-    }
-
-    @objc private func selectPerformanceProfile(_ sender: NSMenuItem) {
-        guard let pm = powerManager,
-              let profile = sender.representedObject as? PowerManager.PerformanceProfile else { return }
-        pm.performanceProfile = profile
-        print("[Settings] Performance profile set to \(profile)")
     }
 
     // MARK: - About / Status (B) + Debug (C)
 
-    @objc private func showAboutStatus() {
+    @objc func showAboutStatus() {
         let loaded = currentVideoURL?.lastPathComponent ?? "None"
         let policyStr = describePolicy(powerManager?.currentPolicy ?? .normal)
         let lpm = powerManager?.pauseOnLowPowerMode ?? true
@@ -1320,17 +1240,6 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         } else if response == .alertThirdButtonReturn {
             openTestingDocInFinder()
         }
-    }
-
-    @objc private func showWelcomeFromMenu() {
-        // Explicitly show the first-run style education welcome screen.
-        // This is separate from version-specific "What's New" notes.
-        showWelcomeScreen(force: true)
-    }
-    
-    @objc private func showWhatsNewFromMenu() {
-        // Show the rich changelog / update notes for the current version.
-        showWhatsNew()
     }
 
     @objc private func printDebugStatus() {

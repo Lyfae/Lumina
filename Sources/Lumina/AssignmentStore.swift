@@ -49,7 +49,10 @@ final class AssignmentStore: ObservableObject {
 
         if assignment.monitorIdentifier.hasPrefix("library-import-") {
             saveLibraryItems()
-        } else if persistAssignments && assignment.keepOnStartup {
+        } else if assignment.keepOnStartup {
+            // A pinned wallpaper must always persist — that is the entire purpose of the
+            // "Keep this wallpaper on startup" toggle. It must work regardless of the separate
+            // global "Remember wallpapers on startup" preference (which gates the un-pinned UI).
             saveAssignments()
         }
     }

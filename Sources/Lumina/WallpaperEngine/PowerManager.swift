@@ -32,22 +32,48 @@ public enum WallpaperPlaybackPolicy: Equatable, Sendable {
 public final class PowerManager {
     public private(set) var currentPolicy: WallpaperPlaybackPolicy = .normal
 
-    // User-tunable aggressiveness (persisted later via Defaults or @AppStorage)
-    public var pauseOnLowPowerMode: Bool = true
-    public var pauseOnHighThermal: Bool = true
+    // User-tunable aggressiveness. The three user-facing toggles persist to UserDefaults
+    // (seeded from the stored value in init, written back when changed via the setters).
+    public var pauseOnLowPowerMode: Bool = true {
+        didSet { UserDefaults.standard.set(pauseOnLowPowerMode, forKey: Self.kPauseLowPower) }
+    }
+    public var pauseOnHighThermal: Bool = true {
+        didSet { UserDefaults.standard.set(pauseOnHighThermal, forKey: Self.kPauseThermal) }
+    }
     public var throttleOnMediumThermal: Bool = true
-    public var respectFullscreenApps: Bool = true
+    public var respectFullscreenApps: Bool = true {
+        didSet { UserDefaults.standard.set(respectFullscreenApps, forKey: Self.kRespectFullscreen) }
+    }
+
+    private static let kPauseLowPower      = "Lumina.Power.PauseOnLowPowerMode"
+    private static let kPauseThermal       = "Lumina.Power.PauseOnHighThermal"
+    private static let kRespectFullscreen  = "Lumina.Power.RespectFullscreenApps"
 
     // New: Performance profiles for users who want to tune the balance
-    public enum PerformanceProfile: String, CaseIterable {
+    public enum PerformanceProfile: String, CaseIterable, Identifiable {
         case maximumBattery   // Most aggressive pausing/throttling
         case balanced         // Default good experience
         case highQuality      // Allow more playback, less aggressive saving
+
+        public var id: String { rawValue }
+
+        public var label: String {
+            switch self {
+            case .maximumBattery: return "Max Battery"
+            case .balanced:       return "Balanced"
+            case .highQuality:    return "High Quality"
+            }
+        }
     }
 
     public var performanceProfile: PerformanceProfile = .balanced {
-        didSet { recomputePolicy() }
+        didSet {
+            UserDefaults.standard.set(performanceProfile.rawValue, forKey: Self.kPerformanceProfile)
+            recomputePolicy()
+        }
     }
+
+    private static let kPerformanceProfile = "Lumina.Power.PerformanceProfile"
 
     // Appended once on the main actor during init; read once in deinit. Excluded from
     // Observation (internal state) and marked nonisolated(unsafe) so the (nonisolated) deinit
@@ -55,6 +81,15 @@ public final class PowerManager {
     @ObservationIgnored nonisolated(unsafe) private var observers: [NSObjectProtocol] = []
 
     public init() {
+        // Seed user toggles from persisted preferences (default true when unset).
+        // `object(forKey:) == nil` distinguishes "never set" from an explicit false.
+        let ud = UserDefaults.standard
+        if ud.object(forKey: Self.kPauseLowPower) != nil     { pauseOnLowPowerMode = ud.bool(forKey: Self.kPauseLowPower) }
+        if ud.object(forKey: Self.kPauseThermal) != nil      { pauseOnHighThermal = ud.bool(forKey: Self.kPauseThermal) }
+        if ud.object(forKey: Self.kRespectFullscreen) != nil { respectFullscreenApps = ud.bool(forKey: Self.kRespectFullscreen) }
+        if let raw = ud.string(forKey: Self.kPerformanceProfile),
+           let profile = PerformanceProfile(rawValue: raw) { performanceProfile = profile }
+
         observeSystemNotifications()
         // Seed initial policy from current state
         updatePolicy()
@@ -137,10 +172,13 @@ public final class PowerManager {
             return
         }
 
-        // Profile-aware throttling
+        // Profile-aware throttling on moderate ("fair") thermal pressure.
+        // High Quality intentionally does NOT throttle here — it keeps full playback until
+        // the system reaches a serious/critical state (handled above). Max Battery throttles
+        // hardest; Balanced sits in between.
         let profile = performanceProfile
-        if throttleOnMediumThermal && thermal == .fair {
-            let fps = profile == .maximumBattery ? 8 : (profile == .highQuality ? 20 : 15)
+        if throttleOnMediumThermal && thermal == .fair && profile != .highQuality {
+            let fps = profile == .maximumBattery ? 8 : 15
             setPolicy(.throttled(fps: fps))
             return
         }

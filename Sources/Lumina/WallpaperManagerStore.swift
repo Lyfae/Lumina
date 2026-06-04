@@ -364,14 +364,17 @@ final class WallpaperManagerStore: ObservableObject {
     func setSlideshowItems(for monitor: MonitorInfo, items: [String]) {
         guard let central = appDelegate?.assignmentStore else { return }
 
-        if var assignment = central.assignment(for: monitor.id) {
-            assignment.slideshowItems = items
-            central.updateAssignment(assignment)
-        } else {
-            var newAssignment = MonitorAssignment(monitorIdentifier: monitor.id)
-            newAssignment.slideshowItems = items
-            central.updateAssignment(newAssignment)
+        var assignment = central.assignment(for: monitor.id) ?? MonitorAssignment(monitorIdentifier: monitor.id)
+        assignment.slideshowItems = items
+        // One mode per monitor: a non-empty slideshow means this display is a *still-image
+        // slideshow*, so drop any single video/image reference (the renderer also frees the
+        // video player) — no mp4 is kept loaded or restored.
+        if !items.isEmpty {
+            assignment.filePath = nil
+            assignment.bookmarkData = nil
+            assignment.mediaType = .image
         }
+        central.updateAssignment(assignment)
         appDelegate?.applySlideshowToMonitor(monitorID: monitor.id)
     }
 
@@ -505,7 +508,18 @@ final class WallpaperManagerStore: ObservableObject {
     func showCurrentChangelog() {
         appDelegate?.showWhatsNew()
     }
-    
+
+    /// Shows the About / Status panel (moved from the menu bar into Settings).
+    func showAboutStatus() {
+        appDelegate?.showAboutStatus()
+    }
+
+    /// Re-applies the power policy to all renderers after a power preference changes,
+    /// so Settings toggles/profile take effect on the live wallpaper immediately.
+    func reapplyPowerPolicy() {
+        appDelegate?.reapplyPowerPolicy()
+    }
+
     /// Forwards to the main app to synchronize all renderers (used by the "Sync Now" button).
     func syncAllRenderersNow() {
         appDelegate?.syncAllRenderers()

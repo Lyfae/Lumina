@@ -1,4 +1,49 @@
 import SwiftUI
+import AppKit
+
+// MARK: - Shared surface colors
+// Lumina's dark theme uses pure black (matching the Welcome / What's New screens)
+// rather than the system's gray `controlBackgroundColor`. These are appearance-adaptive
+// so the Light/Dark/Match-System setting keeps working: black-based in dark mode,
+// standard system surfaces in light mode.
+
+extension NSColor {
+    /// Window / column base. Pure black in dark mode, system window background in light.
+    static let luminaBase = NSColor(name: "LuminaBase") { appearance in
+        let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        return isDark ? .black : .windowBackgroundColor
+    }
+
+    /// Card / panel surface. A faintly-lifted near-black in dark mode (so cards stay
+    /// distinguishable against the black base via their border), light gray in light mode.
+    static let luminaCard = NSColor(name: "LuminaCard") { appearance in
+        let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        return isDark ? NSColor(white: 0.11, alpha: 1.0) : .controlBackgroundColor
+    }
+
+    /// Border / divider line. The system separator is nearly invisible on pure black, so in
+    /// dark mode we use a translucent white that reads clearly against both base and cards.
+    static let luminaBorder = NSColor(name: "LuminaBorder") { appearance in
+        let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        return isDark ? NSColor(white: 1.0, alpha: 0.18) : .separatorColor
+    }
+}
+
+extension Color {
+    static let luminaBase = Color(nsColor: .luminaBase)
+    static let luminaCard = Color(nsColor: .luminaCard)
+    static let luminaBorder = Color(nsColor: .luminaBorder)
+}
+
+/// A horizontal divider that stays clearly visible on Lumina's pure-black dark theme —
+/// the system `Divider()` all but disappears against black.
+struct LuminaDivider: View {
+    var body: some View {
+        Rectangle()
+            .fill(Color.luminaBorder)
+            .frame(height: 1)
+    }
+}
 
 enum AccentTheme: String, CaseIterable, Identifiable {
     case system, blue, purple, pink, red, orange, yellow, green, teal

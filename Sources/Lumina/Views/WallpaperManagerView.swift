@@ -48,10 +48,12 @@ struct WallpaperManagerView: View {
     @StateObject private var themeManager = ThemeManager.shared
     @StateObject private var audioManager = AmbientAudioManager.shared
     @StateObject private var favoritesManager = FavoritesManager.shared
+    @StateObject private var scaleManager = InterfaceScaleManager.shared
 
     @State private var searchQuery: String = ""
     @State private var selectedFilter: LibraryFilter = .all
     @State private var showQueue: Bool = false
+    @State private var showSettings: Bool = false
 
     // MARK: - Computed
 
@@ -80,6 +82,26 @@ struct WallpaperManagerView: View {
     // MARK: - Body
 
     var body: some View {
+        // Whole-interface zoom: lay the content out at (size / scale) logical points, then
+        // scale it back up to fill the window. Net effect is a true zoom where everything —
+        // text, icons, controls — grows together and the layout reflows accordingly.
+        GeometryReader { geo in
+            let scale = scaleManager.scale
+            let base = NSScreen.main?.backingScaleFactor ?? 2.0
+            coreContent
+                .frame(width: geo.size.width / scale, height: geo.size.height / scale)
+                .scaleEffect(scale, anchor: .topLeading)
+                // Render the content at the magnified backing resolution so text and icons
+                // stay crisp under scaleEffect instead of upscaling a 1× raster (blurry).
+                .environment(\.displayScale, base * scale)
+        }
+        .frame(minWidth: 980, minHeight: 780)
+        .background(Color.luminaBase)
+        .tint(themeManager.current.color)
+        .onAppear { autoSelectFirstMonitor() }
+    }
+
+    private var coreContent: some View {
         VStack(spacing: 0) {
             headerBar
             Divider()
@@ -87,9 +109,6 @@ struct WallpaperManagerView: View {
             Divider()
             footerBar
         }
-        .frame(minWidth: 980, minHeight: 780)
-        .tint(themeManager.current.color)
-        .onAppear { autoSelectFirstMonitor() }
     }
 
     // MARK: - Header Bar
@@ -123,9 +142,20 @@ struct WallpaperManagerView: View {
             .buttonStyle(.bordered)
             .controlSize(.small)
             .help("Lock all wallpaper videos to the same playback position")
+
+            Button {
+                showSettings = true
+            } label: {
+                Image(systemName: "gearshape.fill").font(.callout)
+            }
+            .buttonStyle(.borderless)
+            .help("Settings")
         }
         .padding(.horizontal, 20).padding(.vertical, 14)
         .background(.bar)
+        .sheet(isPresented: $showSettings) {
+            SettingsView(store: store, onClose: { showSettings = false })
+        }
     }
 
     // MARK: - Main Two-Column Content
@@ -133,7 +163,11 @@ struct WallpaperManagerView: View {
     private var mainContent: some View {
         HStack(spacing: 0) {
             libraryColumn
-            Divider()
+            // Prominent seam between the library and configuration columns. The system
+            // Divider all but vanishes on the pure-black theme, so use a clear border line.
+            Rectangle()
+                .fill(Color.luminaBorder)
+                .frame(width: 1)
             configurationColumn
         }
         .frame(maxHeight: .infinity)
@@ -215,7 +249,7 @@ struct WallpaperManagerView: View {
             .background(.bar)
         }
         .frame(width: 400)
-        .background(Color(NSColor.controlBackgroundColor))
+        .background(Color.luminaBase)
     }
 
     // MARK: - Configuration Column (right)
@@ -266,10 +300,10 @@ struct WallpaperManagerView: View {
             Divider()
 
             if let monitor = currentTargetMonitor {
-                ScrollView {
-                    MonitorDetailPanel(monitor: monitor, store: store, showHeader: false)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                // No outer ScrollView: the panel pins its preview + action bar and scrolls
+                // only the settings in between.
+                MonitorDetailPanel(monitor: monitor, store: store, showHeader: false)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 Spacer()
                 VStack(spacing: 14) {
@@ -390,20 +424,7 @@ struct WallpaperManagerView: View {
                 .buttonStyle(.plain)
                 .help(showQueue ? "Hide queue" : "Show music queue")
 
-                Divider().frame(height: 20)
-
-                // Accent colour dots
-                HStack(spacing: 5) {
-                    ForEach(AccentTheme.allCases) { theme in
-                        Button { themeManager.set(theme) } label: {
-                            Circle()
-                                .fill(theme == .system ? AnyShapeStyle(Color.secondary.opacity(0.6)) : AnyShapeStyle(theme.color))
-                                .frame(width: 13, height: 13)
-                                .overlay(Circle().strokeBorder(themeManager.current == theme ? Color.primary : Color.clear, lineWidth: 2))
-                        }
-                        .buttonStyle(.plain).help(theme.label)
-                    }
-                }
+                // Accent color now lives only in Settings (no longer duplicated here).
 
                 Divider().frame(height: 20)
                 Button("Close") { NSApp.keyWindow?.close() }.buttonStyle(.bordered).controlSize(.small)
@@ -483,7 +504,7 @@ struct WallpaperManagerView: View {
             .listStyle(.plain)
             .frame(height: min(CGFloat(audioManager.library.count) * 30 + 8, 130))
         }
-        .background(Color(NSColor.controlBackgroundColor))
+        .background(Color.luminaBase)
     }
 
     private func formatQueueDuration(_ track: AmbientAudioManager.AudioTrack) -> String {

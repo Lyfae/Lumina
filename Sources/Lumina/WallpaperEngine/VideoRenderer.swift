@@ -327,32 +327,37 @@ public final class AVVideoRenderer: @unchecked Sendable {
     // MARK: - VideoRenderer (legacy names kept for compatibility during transition)
 
     public func install(into view: NSView) {
-        guard view.wantsLayer else {
-            assertionFailure("Hosting view must have wantsLayer = true before installing AVVideoRenderer")
-            return
-        }
-
-        hostLayer = view.layer
-
-        if playerLayer == nil {
-            playerLayer = AVPlayerLayer()
-            // Apply the user's chosen scaling (or default .fill)
-            setScaling(currentScaling)
-        }
-
-        if let layer = playerLayer {
-            // Remove any previous (supports re-install into a different view)
-            layer.removeFromSuperlayer()
-            view.layer?.addSublayer(layer)
-            layer.frame = view.bounds
-
-            // Robustness: if load() was called before install(), attach the existing player now.
-            if let existingPlayer = player {
-                layer.player = existingPlayer
+        // NSView's layer/bounds/wantsLayer are main-actor isolated. This renderer is
+        // documented main-thread-only (see @unchecked Sendable note), and all callers
+        // install from the main thread, so assert isolation rather than hop threads.
+        MainActor.assumeIsolated {
+            guard view.wantsLayer else {
+                assertionFailure("Hosting view must have wantsLayer = true before installing AVVideoRenderer")
+                return
             }
 
-            // Re-apply crop geometry now that the layer has a real superlayer and bounds.
-            applyCurrentCrop()
+            hostLayer = view.layer
+
+            if playerLayer == nil {
+                playerLayer = AVPlayerLayer()
+                // Apply the user's chosen scaling (or default .fill)
+                setScaling(currentScaling)
+            }
+
+            if let layer = playerLayer {
+                // Remove any previous (supports re-install into a different view)
+                layer.removeFromSuperlayer()
+                view.layer?.addSublayer(layer)
+                layer.frame = view.bounds
+
+                // Robustness: if load() was called before install(), attach the existing player now.
+                if let existingPlayer = player {
+                    layer.player = existingPlayer
+                }
+
+                // Re-apply crop geometry now that the layer has a real superlayer and bounds.
+                applyCurrentCrop()
+            }
         }
     }
 

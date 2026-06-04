@@ -18,6 +18,14 @@ struct WallpaperPreview: View {
     /// Only used when `isLivePlayback == false` (for the crop scrubber)
     var previewTime: Double? = nil
 
+    // Live visual-effect overlays so the preview is true WYSIWYG (matches what "Apply to
+    // Wallpaper" will push to the desktop). Defaults are no-ops.
+    var brightness: Double = 0      // -0.5...0.5
+    var previewOpacity: Double = 1  // 0...1
+    var saturation: Double = 1      // 0...2
+    var hueDegrees: Double = 0      // -180...180
+    var grayscale: Bool = false
+
     @State private var thumbnail: NSImage?
     @State private var isLoading = false
     @State private var player: AVPlayer? = nil
@@ -42,22 +50,33 @@ struct WallpaperPreview: View {
                     )
 
                 if let assign = assignment {
-                    if isLivePlayback && assign.mediaType == .video {
-                        liveVideoView(assignment: assign, size: geometry.size)
-                    } else if let thumb = thumbnail {
-                        thumbnailView(thumb, assignment: assign, size: geometry.size)
-                    } else if isLoading {
-                        ProgressView()
-                            .tint(.white)
-                    } else {
-                        VStack(spacing: 8) {
-                            Image(systemName: "photo")
-                                .font(.system(size: 32))
-                            Text("Generating preview…")
-                                .font(.caption)
+                    Group {
+                        // Live video only for actual videos; images & GIFs use the thumbnail/image
+                        // path so the preview shows the picture, never a stale video frame.
+                        if isLivePlayback && assign.mediaType == .video {
+                            liveVideoView(assignment: assign, size: geometry.size)
+                        } else if let thumb = thumbnail {
+                            thumbnailView(thumb, assignment: assign, size: geometry.size)
+                        } else if isLoading {
+                            ProgressView()
+                                .tint(.white)
+                        } else {
+                            VStack(spacing: 8) {
+                                Image(systemName: "photo")
+                                    .font(.system(size: 32))
+                                Text("Generating preview…")
+                                    .font(.caption)
+                            }
+                            .foregroundStyle(.white.opacity(0.6))
                         }
-                        .foregroundStyle(.white.opacity(0.6))
                     }
+                    // WYSIWYG effect overlays — mirror the per-monitor adjustments so the preview
+                    // matches what gets pushed to the desktop on Apply.
+                    .saturation(saturation)
+                    .grayscale(grayscale ? 1 : 0)
+                    .hueRotation(.degrees(hueDegrees))
+                    .brightness(brightness)
+                    .opacity(previewOpacity)
                 } else {
                     VStack(spacing: 8) {
                         Image(systemName: "display")
