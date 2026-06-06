@@ -520,11 +520,6 @@ final class WallpaperManagerStore: ObservableObject {
         appDelegate?.reapplyPowerPolicy()
     }
 
-    /// Forwards to the main app to synchronize all renderers (used by the "Sync Now" button).
-    func syncAllRenderersNow() {
-        appDelegate?.syncAllRenderers()
-    }
-    
     // MARK: - Playback Sync Setting
     
     private let syncPlaybackKey = "Lumina.SyncPlaybackAcrossDisplays"
@@ -537,10 +532,9 @@ final class WallpaperManagerStore: ObservableObject {
     func setSyncPlayback(_ enabled: Bool) {
         syncPlaybackAcrossDisplays = enabled
         UserDefaults.standard.set(enabled, forKey: syncPlaybackKey)
-        
-        // Immediately apply the change to the engine if possible
-        if enabled {
-            appDelegate?.syncAllRenderers()
-        }
+
+        // Drive the engine: an immediate hard sync plus the continuous drift watcher when on,
+        // or tear the watcher down when off.
+        appDelegate?.setPlaybackSyncEnabled(enabled)
     }
 }

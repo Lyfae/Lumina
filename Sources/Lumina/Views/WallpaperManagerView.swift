@@ -122,8 +122,9 @@ struct WallpaperManagerView: View {
             .frame(width: 200)
 
             Button {
+                // Enables the setting and performs an immediate hard sync; the continuous
+                // drift watcher then keeps the displays aligned.
                 store.setSyncPlayback(true)
-                store.syncAllRenderersNow()
             } label: {
                 Label("Sync Displays", systemImage: "arrow.triangle.2.circlepath")
                     .font(.caption)

@@ -424,6 +424,14 @@ public final class AVVideoRenderer: @unchecked Sendable {
         return player.currentTime().seconds
     }
 
+    /// Duration of the currently playing item, or 0 if unknown/indefinite.
+    /// Used by the sync coordinator to measure drift across a looping boundary.
+    public func currentItemDuration() -> TimeInterval {
+        guard let d = player?.currentItem?.duration, d.isNumeric else { return 0 }
+        let seconds = d.seconds
+        return seconds.isFinite && seconds > 0 ? seconds : 0
+    }
+
     public func clear() {
         if let slideshow {
             MainActor.assumeIsolated { slideshow.teardown() }

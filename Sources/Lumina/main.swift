@@ -33,6 +33,9 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Display IDs whose wallpaper window is currently occluded (covered by a fullscreen app
     /// or other windows). Those renderers are paused for power until they become visible again.
     private var occludedDisplayIDs: Set<CGDirectDisplayID> = []
+    /// Periodically re-aligns video playback positions while "Sync playback across displays"
+    /// is on, correcting the small drift that accumulates between independent AVQueuePlayers.
+    private var syncDriftTimer: Timer?
     
     // New per-monitor state management (Phase 1+)
     let assignmentStore = AssignmentStore()   // Made internal so WallpaperManagerStore can access it
@@ -128,6 +131,7 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Single teardown path for every exit (menu Quit, ⌘Q, logout, system shutdown):
         // stop all playback and remove the desktop wallpaper windows so nothing lingers.
         powerManager?.pauseManually()
+        stopDriftWatcher()
         for renderer in renderers {
             renderer.cleanup()
         }
@@ -216,9 +220,10 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
             print("No per-monitor wallpapers set to keep on startup. Starting clean (black).")
         }
 
-        // If the user has "Sync playback across displays" enabled, align them on launch
+        // If the user has "Sync playback across displays" enabled, align them on launch and
+        // start the continuous drift watcher so they stay aligned.
         if UserDefaults.standard.bool(forKey: "Lumina.SyncPlaybackAcrossDisplays") {
-            syncAllRenderers()
+            setPlaybackSyncEnabled(true)
         }
 
         updateCurrentWallpaperDisplay()
@@ -522,7 +527,68 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         print("[Lumina] Synced \(activeRenderers.count) renderer(s) to \(String(format: "%.2f", referenceTime))s")
     }
-    
+
+    /// Turns continuous playback sync on or off. When on, performs an immediate hard sync and
+    /// then starts a low-frequency drift watcher; when off, stops the watcher. The setting's
+    /// persistence is owned by the store — this only drives the engine.
+    func setPlaybackSyncEnabled(_ enabled: Bool) {
+        if enabled {
+            syncAllRenderers()
+            startDriftWatcher()
+        } else {
+            stopDriftWatcher()
+        }
+    }
+
+    /// Maximum tolerated drift before we re-seek. Below this, players are perceptually in sync
+    /// and re-seeking would cause a visible hitch, so we leave them alone.
+    private static let syncDriftToleranceSeconds: TimeInterval = 0.15
+
+    private func startDriftWatcher() {
+        stopDriftWatcher()
+        // 3s cadence keeps overhead negligible while bounding worst-case visible skew.
+        let timer = Timer(timeInterval: 3.0, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.correctDriftIfNeeded() }
+        }
+        // .common so it keeps firing during window resizing / menu tracking.
+        RunLoop.main.add(timer, forMode: .common)
+        syncDriftTimer = timer
+    }
+
+    private func stopDriftWatcher() {
+        syncDriftTimer?.invalidate()
+        syncDriftTimer = nil
+    }
+
+    /// Measures loop-aware drift between active video renderers and hard-syncs only when it
+    /// exceeds the tolerance. Paused/occluded renderers (rate 0) are skipped so we don't fight
+    /// the power policy or restart playback the user deliberately stopped.
+    private func correctDriftIfNeeded() {
+        let active = renderers.filter { $0.isLoaded && $0.currentPlaybackRate > 0 }
+        guard active.count >= 2 else { return }
+
+        let reference = active[0].currentPlaybackTime()
+        // Loop period from the reference item; used to measure distance across the wrap boundary.
+        let period = active[0].currentItemDuration()
+
+        let maxDrift = active.dropFirst().reduce(0.0) { worst, r in
+            max(worst, circularDrift(reference, r.currentPlaybackTime(), period: period))
+        }
+
+        if maxDrift > Self.syncDriftToleranceSeconds {
+            print("[Lumina] Drift \(String(format: "%.3f", maxDrift))s exceeds tolerance — re-syncing")
+            syncAllRenderers()
+        }
+    }
+
+    /// Shortest distance between two positions on a loop of length `period`. Falls back to the
+    /// plain absolute difference when the period is unknown (0).
+    private func circularDrift(_ a: TimeInterval, _ b: TimeInterval, period: TimeInterval) -> TimeInterval {
+        let raw = abs(a - b)
+        guard period > 0 else { return raw }
+        return min(raw, period - raw)
+    }
+
     /// Immediately clears the renderer for a specific monitor (makes that display go black).
     /// Used when the user turns off "Keep on startup" for instant feedback.
     func clearRenderer(for monitorID: String) {
