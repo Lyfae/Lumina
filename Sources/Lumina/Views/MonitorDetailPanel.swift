@@ -411,6 +411,7 @@ struct MonitorDetailPanel: View {
                         .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                 }
                 Slider(value: $playbackSpeed, in: 0.25...4.0, step: 0.25)
+                    .controlSize(.large)
             }
 
             // Loop Crossfade (video only)
@@ -521,6 +522,7 @@ struct MonitorDetailPanel: View {
                         .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                 }
                 Slider(value: $brightness, in: -0.5...0.5, step: 0.05)
+                    .controlSize(.large)
             }
 
             // Opacity
@@ -532,6 +534,7 @@ struct MonitorDetailPanel: View {
                         .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                 }
                 Slider(value: $opacity, in: 0...1)
+                    .controlSize(.large)
             }
 
             // Saturation
@@ -543,6 +546,7 @@ struct MonitorDetailPanel: View {
                         .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                 }
                 Slider(value: $saturation, in: 0...2)
+                    .controlSize(.large)
             }
 
             // Hue Rotation
@@ -554,6 +558,7 @@ struct MonitorDetailPanel: View {
                         .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                 }
                 Slider(value: $hue, in: -180...180)
+                    .controlSize(.large)
             }
 
             // Grayscale
@@ -631,34 +636,9 @@ struct MonitorDetailPanel: View {
 
     private var actionButtons: some View {
         VStack(spacing: 10) {
-            HStack {
-                Button("Choose Media…") {
-                    store.chooseVideo(for: monitor)
-                }
-                .buttonStyle(.bordered)
-
-                if monitor.assignedVideoName != nil {
-                    Button("Clear", role: .destructive) {
-                        store.clearAssignment(for: monitor)
-                    }
-                    .buttonStyle(.bordered)
-                }
-
-                Spacer()
-
-                Button("Reset") {
-                    resetToDefaults()
-                }
-                .buttonStyle(.bordered)
-                .help("Reset the staged display settings to their defaults (preview only — Apply to commit)")
-
-                if showHeader {
-                    Button("Done") { onClose() }
-                        .buttonStyle(.bordered)
-                }
-            }
-
             // Prominent commit: pushes the staged (previewed) settings to the live desktop.
+            // Media is assigned by clicking an item in the Library on the left — there's no
+            // separate "Choose Media" here (it duplicated the library flow).
             Button {
                 applyToWallpaper()
             } label: {
@@ -672,6 +652,31 @@ struct MonitorDetailPanel: View {
             .controlSize(.large)
             .disabled(!hasUnappliedChanges || assignment == nil)
             .help("Push the previewed settings to the live desktop wallpaper")
+
+            HStack(spacing: 10) {
+                if monitor.assignedVideoName != nil {
+                    Button("Clear Wallpaper", role: .destructive) {
+                        store.clearAssignment(for: monitor)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+
+                Spacer()
+
+                Button("Reset Adjustments") {
+                    resetToDefaults()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help("Reset the staged display settings to their defaults (preview only — Apply to commit)")
+
+                if showHeader {
+                    Button("Done") { onClose() }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                }
+            }
         }
     }
 

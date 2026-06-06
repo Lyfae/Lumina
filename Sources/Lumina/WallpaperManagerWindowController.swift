@@ -1,13 +1,16 @@
 import AppKit
 import SwiftUI
+import Combine
 
 /// Hosts the SwiftUI-based Wallpaper Manager view.
 /// Also manages the separate floating Physical Setup window.
 final class WallpaperManagerWindowController: NSWindowController {
-    
+
     private let store = WallpaperManagerStore()
     private var physicalSetupWindow: PhysicalSetupWindowController?
     private weak var appDelegate: LuminaApp?
+    private var sizeCancellable: AnyCancellable?
+    private var didApplyInitialSize = false
     
     @State private var selectedMonitorID: String? = nil   // Shared selection between windows
     
@@ -66,8 +69,35 @@ final class WallpaperManagerWindowController: NSWindowController {
             name: NSWindow.didResignKeyNotification,
             object: window
         )
+
+        // Apply the user's chosen window resolution, and resize live when they change it in
+        // Settings. `$size.sink` delivers the current value immediately on subscribe, which
+        // performs the initial sizing (without animation).
+        sizeCancellable = WindowSizeManager.shared.$size.sink { [weak self] size in
+            self?.applyWindowSize(size)
+        }
     }
-    
+
+    /// Resizes the window to a native resolution, keeping it centred on its current screen.
+    private func applyWindowSize(_ size: CGSize) {
+        guard let window = self.window else { return }
+        let animate = didApplyInitialSize
+        didApplyInitialSize = true
+
+        var frame = window.frame
+        let center = CGPoint(x: frame.midX, y: frame.midY)
+        frame.size = size
+        frame.origin = CGPoint(x: (center.x - size.width / 2).rounded(),
+                               y: (center.y - size.height / 2).rounded())
+
+        // Keep the window fully on-screen after the resize.
+        if let visible = window.screen?.visibleFrame ?? NSScreen.main?.visibleFrame {
+            frame.origin.x = min(max(frame.origin.x, visible.minX), visible.maxX - size.width)
+            frame.origin.y = min(max(frame.origin.y, visible.minY), visible.maxY - size.height)
+        }
+        window.setFrame(frame, display: true, animate: animate)
+    }
+
     @objc private func windowDidBecomeKey() {
         appDelegate?.powerManager?.setManagerWindowsActive(true)
         // Aggressively resume normal playback when user is in the manager

@@ -63,23 +63,59 @@ final class AppearanceManager: ObservableObject {
     }
 }
 
-/// Whole-interface zoom for the Studio window. Multiplies the logical layout size so all
-/// text, icons, and controls scale together — useful on high-DPI displays where the default
-/// UI feels small. Persisted across launches.
+/// Controls the Studio window's size by picking a native resolution preset. Resizing the
+/// real window (rather than geometrically zooming the content) keeps the UI perfectly crisp
+/// at every size. Presets run from a comfortable minimum up to the largest the current
+/// display can show. Persisted across launches.
 @MainActor
-final class InterfaceScaleManager: ObservableObject {
-    static let shared = InterfaceScaleManager()
-    private let key = "Lumina.InterfaceScale"
+final class WindowSizeManager: ObservableObject {
+    static let shared = WindowSizeManager()
+    private let key = "Lumina.WindowSize"
 
-    static let minScale: Double = 0.8
-    static let maxScale: Double = 2.0
+    /// Width:height the presets keep, tuned for the two-column layout.
+    static let aspect: CGFloat = 1100.0 / 860.0
+    static let minWidth: CGFloat = 1000
 
-    @Published var scale: Double = 1.0 {
-        didSet { UserDefaults.standard.set(scale, forKey: key) }
+    @Published var size: CGSize {
+        didSet {
+            UserDefaults.standard.set("\(Int(size.width))x\(Int(size.height))", forKey: key)
+        }
     }
 
     private init() {
-        let saved = UserDefaults.standard.double(forKey: key)   // 0 when never set
-        scale = saved >= Self.minScale ? min(saved, Self.maxScale) : 1.0
+        if let saved = UserDefaults.standard.string(forKey: key) {
+            let parts = saved.split(separator: "x").compactMap { Double($0) }
+            if parts.count == 2 {
+                size = CGSize(width: parts[0], height: parts[1])
+                return
+            }
+        }
+        size = CGSize(width: 1100, height: 860)
+    }
+
+    /// Native window-size presets that fit the given screen, smallest → largest.
+    func presets(for screen: NSScreen?) -> [CGSize] {
+        let vf = (screen ?? NSScreen.main)?.visibleFrame.size ?? CGSize(width: 1680, height: 1050)
+        let aspect = Self.aspect
+        let marginW = vf.width - 24
+        let marginH = vf.height - 24
+
+        var result: [CGSize] = []
+        var w = Self.minWidth
+        while w <= marginW {
+            let h = (w / aspect).rounded()
+            if h <= marginH { result.append(CGSize(width: w, height: h)) }
+            w += 200
+        }
+
+        // Always offer a "largest that fits this display" option.
+        let maxW = min(marginW, marginH * aspect).rounded()
+        let maxSize = CGSize(width: maxW, height: (maxW / aspect).rounded())
+        if let last = result.last {
+            if abs(last.width - maxSize.width) > 40 { result.append(maxSize) }
+        } else {
+            result.append(maxSize)
+        }
+        return result
     }
 }

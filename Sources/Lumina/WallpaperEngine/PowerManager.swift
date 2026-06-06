@@ -183,10 +183,20 @@ public final class PowerManager {
             return
         }
 
-        // Be much more lenient when the user is actively using Lumina's manager windows.
-        // This prevents the wallpaper video from freezing/pausing while configuring.
+        // While the user is actively configuring in the manager, always play at full quality
+        // so the preview/desktop look right (overrides the Max Battery baseline below).
         if luminaManagerWindowsAreActive {
             setPolicy(.normal)
+            return
+        }
+
+        // Baseline per profile when there's no thermal/power pressure. This is what makes the
+        // profile observably "do something" in everyday use:
+        //   • Max Battery  → cap the wallpaper to ~30 fps-equivalent (halves decode/GPU work).
+        //   • Balanced     → full quality.
+        //   • High Quality → full quality.
+        if profile == .maximumBattery {
+            setPolicy(.throttled(fps: 30))
             return
         }
 

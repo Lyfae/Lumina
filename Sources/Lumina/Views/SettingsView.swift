@@ -12,7 +12,7 @@ struct SettingsView: View {
 
     @StateObject private var themeManager = ThemeManager.shared
     @StateObject private var appearanceManager = AppearanceManager.shared
-    @StateObject private var scaleManager = InterfaceScaleManager.shared
+    @StateObject private var sizeManager = WindowSizeManager.shared
 
     // Launch-at-login mirrors the system service status.
     @State private var launchAtLogin: Bool = false
@@ -106,26 +106,30 @@ struct SettingsView: View {
             LuminaDivider()
 
             settingRow(
-                title: "Interface scale",
-                subtitle: "Zoom the whole Studio window — useful on high-resolution displays."
+                title: "Window size",
+                subtitle: "Pick a native resolution for the Studio window — crisp at every size, up to the largest your display supports."
             ) {
-                HStack(spacing: 10) {
-                    Image(systemName: "textformat.size.smaller").foregroundStyle(.secondary)
-                    Slider(
-                        value: Binding(
-                            get: { scaleManager.scale },
-                            set: { scaleManager.scale = $0 }
-                        ),
-                        in: InterfaceScaleManager.minScale...InterfaceScaleManager.maxScale
-                    )
-                    Image(systemName: "textformat.size.larger").foregroundStyle(.secondary)
-                    Text("\(Int(scaleManager.scale * 100))%")
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                        .frame(width: 42, alignment: .trailing)
+                Picker("", selection: Binding(
+                    get: { sizeManager.size },
+                    set: { sizeManager.size = $0 }
+                )) {
+                    ForEach(sizeOptions, id: \.self) { s in
+                        Text("\(Int(s.width)) × \(Int(s.height))").tag(s)
+                    }
                 }
+                .labelsHidden()
+                .frame(maxWidth: 220)
             }
         }
+    }
+
+    /// Window-size presets for the current display, always including the active selection.
+    private var sizeOptions: [CGSize] {
+        var opts = sizeManager.presets(for: NSScreen.main)
+        if !opts.contains(where: { $0 == sizeManager.size }) {
+            opts.insert(sizeManager.size, at: 0)
+        }
+        return opts
     }
 
     // MARK: - General

@@ -48,7 +48,6 @@ struct WallpaperManagerView: View {
     @StateObject private var themeManager = ThemeManager.shared
     @StateObject private var audioManager = AmbientAudioManager.shared
     @StateObject private var favoritesManager = FavoritesManager.shared
-    @StateObject private var scaleManager = InterfaceScaleManager.shared
 
     @State private var searchQuery: String = ""
     @State private var selectedFilter: LibraryFilter = .all
@@ -82,23 +81,13 @@ struct WallpaperManagerView: View {
     // MARK: - Body
 
     var body: some View {
-        // Whole-interface zoom: lay the content out at (size / scale) logical points, then
-        // scale it back up to fill the window. Net effect is a true zoom where everything —
-        // text, icons, controls — grows together and the layout reflows accordingly.
-        GeometryReader { geo in
-            let scale = scaleManager.scale
-            let base = NSScreen.main?.backingScaleFactor ?? 2.0
-            coreContent
-                .frame(width: geo.size.width / scale, height: geo.size.height / scale)
-                .scaleEffect(scale, anchor: .topLeading)
-                // Render the content at the magnified backing resolution so text and icons
-                // stay crisp under scaleEffect instead of upscaling a 1× raster (blurry).
-                .environment(\.displayScale, base * scale)
-        }
-        .frame(minWidth: 980, minHeight: 780)
-        .background(Color.luminaBase)
-        .tint(themeManager.current.color)
-        .onAppear { autoSelectFirstMonitor() }
+        // The window is sized to a chosen native resolution (see Settings → Window size),
+        // so the UI always lays out at native scale — crisp, never the blurry geometric zoom.
+        coreContent
+            .frame(minWidth: 980, minHeight: 780)
+            .background(Color.luminaBase)
+            .tint(themeManager.current.color)
+            .onAppear { autoSelectFirstMonitor() }
     }
 
     private var coreContent: some View {
