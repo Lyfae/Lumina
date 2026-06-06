@@ -12,6 +12,10 @@ final class AmbientAudioManager: NSObject, ObservableObject {
     @Published var loops: Bool = true
     @Published var currentTime: Double = 0
     @Published var duration: Double = 0
+    /// When on, a floating now-playing widget appears while the Studio window is minimized.
+    @Published var showWidgetWhenMinimized: Bool = true {
+        didSet { UserDefaults.standard.set(showWidgetWhenMinimized, forKey: widgetKey) }
+    }
     /// Persistent library of audio tracks the user has added
     @Published private(set) var library: [AudioTrack] = []
 
@@ -30,12 +34,14 @@ final class AmbientAudioManager: NSObject, ObservableObject {
     private let loopsKey         = "Lumina.AmbientAudio.Loops"
     private let libraryKey       = "Lumina.AmbientAudio.Library"
     private let durationCacheKey = "Lumina.AmbientAudio.Durations"
+    private let widgetKey        = "Lumina.AmbientAudio.ShowWidgetWhenMinimized"
 
     private override init() {
         super.init()
         let savedVolume = UserDefaults.standard.double(forKey: volumeKey).clamped(to: 0...1)
         volume = savedVolume == 0 ? 0.5 : savedVolume
         loops = UserDefaults.standard.object(forKey: loopsKey) as? Bool ?? true
+        showWidgetWhenMinimized = UserDefaults.standard.object(forKey: widgetKey) as? Bool ?? true
         loadLibrary()
         if let path = UserDefaults.standard.string(forKey: trackURLKey) {
             let url = URL(fileURLWithPath: path)

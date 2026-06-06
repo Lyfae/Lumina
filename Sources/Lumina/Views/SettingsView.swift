@@ -12,7 +12,7 @@ struct SettingsView: View {
 
     @StateObject private var themeManager = ThemeManager.shared
     @StateObject private var appearanceManager = AppearanceManager.shared
-    @StateObject private var sizeManager = WindowSizeManager.shared
+    @StateObject private var audioManager = AmbientAudioManager.shared
 
     // Launch-at-login mirrors the system service status.
     @State private var launchAtLogin: Bool = false
@@ -102,34 +102,7 @@ struct SettingsView: View {
                     }
                 }
             }
-
-            LuminaDivider()
-
-            settingRow(
-                title: "Window size",
-                subtitle: "Pick a native resolution for the Studio window — crisp at every size, up to the largest your display supports."
-            ) {
-                Picker("", selection: Binding(
-                    get: { sizeManager.size },
-                    set: { sizeManager.size = $0 }
-                )) {
-                    ForEach(sizeOptions, id: \.self) { s in
-                        Text("\(Int(s.width)) × \(Int(s.height))").tag(s)
-                    }
-                }
-                .labelsHidden()
-                .frame(maxWidth: 220)
-            }
         }
-    }
-
-    /// Window-size presets for the current display, always including the active selection.
-    private var sizeOptions: [CGSize] {
-        var opts = sizeManager.presets(for: NSScreen.main)
-        if !opts.contains(where: { $0 == sizeManager.size }) {
-            opts.insert(sizeManager.size, at: 0)
-        }
-        return opts
     }
 
     // MARK: - General
@@ -162,6 +135,17 @@ struct SettingsView: View {
                 isOn: Binding(
                     get: { store.syncPlaybackAcrossDisplays },
                     set: { store.setSyncPlayback($0) }
+                )
+            )
+
+            LuminaDivider()
+
+            toggleRow(
+                title: "Show music widget when minimized",
+                subtitle: "Pop a floating now-playing mini-player when you minimize the Studio window.",
+                isOn: Binding(
+                    get: { audioManager.showWidgetWhenMinimized },
+                    set: { audioManager.showWidgetWhenMinimized = $0 }
                 )
             )
         }

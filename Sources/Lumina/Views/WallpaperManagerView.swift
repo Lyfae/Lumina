@@ -81,10 +81,11 @@ struct WallpaperManagerView: View {
     // MARK: - Body
 
     var body: some View {
-        // The window is sized to a chosen native resolution (see Settings → Window size),
-        // so the UI always lays out at native scale — crisp, never the blurry geometric zoom.
+        // Adaptive: the view fills whatever size the user resizes the window to. We only set a
+        // floor so the two-column layout never collapses (mirrors the window's contentMinSize).
         coreContent
-            .frame(minWidth: 980, minHeight: 780)
+            .frame(minWidth: 960, minHeight: 720)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Color.luminaBase)
             .tint(themeManager.current.color)
             .onAppear { autoSelectFirstMonitor() }
@@ -320,107 +321,156 @@ struct WallpaperManagerView: View {
                 queuePanel
             }
 
-            // Audio controls row
-            HStack(spacing: 8) {
-                // Transport
-                Group {
-                    Button { audioManager.previousTrack() } label: {
-                        Image(systemName: "backward.end.fill").font(.caption)
+            // Now-playing bar — larger, roomier, adaptive (the progress track absorbs
+            // any extra width as the window grows).
+            HStack(spacing: 16) {
+                nowPlayingArtwork
+
+                // Title + subtitle
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(nowPlayingTitle)
+                        .font(.system(size: 14, weight: .semibold))
+                        .lineLimit(1).truncationMode(.tail)
+                        .foregroundStyle(audioManager.trackURL != nil ? .primary : .secondary)
+                    Text("Ambient Audio")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                .frame(minWidth: 120, idealWidth: 170, maxWidth: 220, alignment: .leading)
+
+                // Transport — bigger, evenly spaced controls
+                HStack(spacing: 18) {
+                    transportIcon("backward.end.fill", size: 15, help: "Previous track") {
+                        audioManager.previousTrack()
                     }
-                    .help("Previous track")
                     .disabled(audioManager.library.count < 2)
 
-                    Button { audioManager.seek(by: -10) } label: {
-                        Image(systemName: "gobackward.10").font(.caption)
+                    transportIcon("gobackward.10", size: 15, help: "Skip back 10 seconds") {
+                        audioManager.seek(by: -10)
                     }
-                    .help("Skip back 10 seconds")
                     .disabled(audioManager.trackURL == nil)
 
                     Button { audioManager.toggle() } label: {
                         Image(systemName: audioManager.isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                            .font(.title3)
+                            .font(.system(size: 34))
                             .foregroundStyle(audioManager.trackURL != nil ? themeManager.current.color : .secondary)
                     }
+                    .buttonStyle(.plain)
                     .help(audioManager.isPlaying ? "Pause" : "Play")
                     .disabled(audioManager.trackURL == nil)
 
-                    Button { audioManager.seek(by: 10) } label: {
-                        Image(systemName: "goforward.10").font(.caption)
+                    transportIcon("goforward.10", size: 15, help: "Skip forward 10 seconds") {
+                        audioManager.seek(by: 10)
                     }
-                    .help("Skip forward 10 seconds")
                     .disabled(audioManager.trackURL == nil)
 
-                    Button { audioManager.nextTrack() } label: {
-                        Image(systemName: "forward.end.fill").font(.caption)
+                    transportIcon("forward.end.fill", size: 15, help: "Next track") {
+                        audioManager.nextTrack()
                     }
-                    .help("Next track")
                     .disabled(audioManager.library.count < 2)
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
 
-                // Track name
-                Text(audioManager.trackName)
-                    .font(.caption2).lineLimit(1).truncationMode(.middle)
-                    .frame(maxWidth: 110)
-
-                // Progress track
+                // Progress — expands to fill available width
                 if audioManager.duration > 0 {
-                    Text(formatAudioTime(audioManager.currentTime))
-                        .font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
-                        .frame(width: 34, alignment: .trailing)
-                    Slider(
-                        value: Binding(
-                            get: { audioManager.currentTime },
-                            set: { audioManager.seekToTime($0) }
-                        ),
-                        in: 0...max(audioManager.duration, 1)
-                    )
-                    .frame(width: 90)
-                    .controlSize(.mini)
-                    .help("Seek")
-                    Text(formatAudioTime(audioManager.duration))
-                        .font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
-                        .frame(width: 34, alignment: .leading)
+                    HStack(spacing: 8) {
+                        Text(formatAudioTime(audioManager.currentTime))
+                            .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                            .frame(width: 38, alignment: .trailing)
+                        Slider(
+                            value: Binding(
+                                get: { audioManager.currentTime },
+                                set: { audioManager.seekToTime($0) }
+                            ),
+                            in: 0...max(audioManager.duration, 1)
+                        )
+                        .help("Seek")
+                        Text(formatAudioTime(audioManager.duration))
+                            .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                            .frame(width: 38, alignment: .leading)
+                    }
+                    .frame(maxWidth: .infinity)
+                } else {
+                    Spacer(minLength: 12)
                 }
 
                 // Volume
-                Image(systemName: audioManager.volume < 0.01 ? "speaker.slash" : "speaker.wave.1")
-                    .font(.caption2).foregroundStyle(.secondary)
-                Slider(value: Binding(get: { audioManager.volume }, set: { audioManager.setVolume($0) }), in: 0...1)
-                    .frame(width: 56).controlSize(.mini).help("Ambient audio volume")
+                HStack(spacing: 8) {
+                    Image(systemName: audioManager.volume < 0.01 ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                        .font(.system(size: 13)).foregroundStyle(.secondary)
+                        .frame(width: 18, alignment: .leading)
+                    Slider(value: Binding(get: { audioManager.volume }, set: { audioManager.setVolume($0) }), in: 0...1)
+                        .frame(width: 84).help("Ambient audio volume")
+                }
 
-                Spacer()
+                Divider().frame(height: 26)
 
-                // Library management
-                Button("Add Track…") { audioManager.chooseTrack() }
-                    .buttonStyle(.bordered).controlSize(.small)
-                    .help("Add audio tracks to your music library")
+                // Library actions
+                Button { audioManager.chooseTrack() } label: {
+                    Label("Add Track", systemImage: "plus.circle.fill").font(.callout)
+                }
+                .buttonStyle(.borderless)
+                .help("Add audio tracks to your music library")
 
                 if audioManager.trackURL != nil {
-                    Button { audioManager.clearTrack() } label: {
-                        Image(systemName: "xmark.circle").foregroundStyle(.secondary)
-                    }.buttonStyle(.plain).help("Stop and clear current track")
+                    transportIcon("xmark.circle.fill", size: 16, help: "Stop and clear current track") {
+                        audioManager.clearTrack()
+                    }
                 }
 
-                // Queue toggle
-                Button {
+                transportIcon(
+                    "list.bullet.rectangle",
+                    size: 16,
+                    active: showQueue,
+                    help: showQueue ? "Hide queue" : "Show music queue"
+                ) {
                     withAnimation(.easeInOut(duration: 0.18)) { showQueue.toggle() }
-                } label: {
-                    Image(systemName: "list.bullet.rectangle")
-                        .font(.caption)
-                        .foregroundStyle(showQueue ? themeManager.current.color : .secondary)
                 }
-                .buttonStyle(.plain)
-                .help(showQueue ? "Hide queue" : "Show music queue")
-
-                // Accent color now lives only in Settings (no longer duplicated here).
-
-                Divider().frame(height: 20)
-                Button("Close") { NSApp.keyWindow?.close() }.buttonStyle(.bordered).controlSize(.small)
             }
-            .padding(.horizontal, 16).padding(.vertical, 10)
+            .padding(.horizontal, 20).padding(.vertical, 14)
         }
+    }
+
+    /// Small rounded album-art tile used in the now-playing bar.
+    private var nowPlayingArtwork: some View {
+        RoundedRectangle(cornerRadius: 10, style: .continuous)
+            .fill(
+                LinearGradient(
+                    colors: [themeManager.current.color.opacity(0.9),
+                             themeManager.current.color.opacity(0.5)],
+                    startPoint: .topLeading, endPoint: .bottomTrailing
+                )
+            )
+            .frame(width: 46, height: 46)
+            .overlay(
+                Image(systemName: audioManager.isPlaying ? "waveform" : "music.note")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(.white)
+            )
+            .opacity(audioManager.trackURL != nil ? 1 : 0.5)
+    }
+
+    private var nowPlayingTitle: String {
+        guard audioManager.trackURL != nil else { return "No track selected" }
+        let stem = (audioManager.trackName as NSString).deletingPathExtension
+        return stem.isEmpty ? audioManager.trackName : stem
+    }
+
+    /// A flat icon button for the now-playing bar with a consistent hit target.
+    private func transportIcon(
+        _ symbol: String,
+        size: CGFloat,
+        active: Bool = false,
+        help: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: size, weight: .medium))
+                .foregroundStyle(active ? themeManager.current.color : .secondary)
+                .frame(width: 26, height: 26)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(help)
     }
 
     // MARK: - Music Queue Panel

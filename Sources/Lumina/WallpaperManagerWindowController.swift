@@ -1,6 +1,5 @@
 import AppKit
 import SwiftUI
-import Combine
 
 /// Hosts the SwiftUI-based Wallpaper Manager view.
 /// Also manages the separate floating Physical Setup window.
@@ -9,26 +8,31 @@ final class WallpaperManagerWindowController: NSWindowController {
     private let store = WallpaperManagerStore()
     private var physicalSetupWindow: PhysicalSetupWindowController?
     private weak var appDelegate: LuminaApp?
-    private var sizeCancellable: AnyCancellable?
-    private var didApplyInitialSize = false
-    
+
+    /// Floating now-playing mini-player shown while the Studio window is minimized
+    /// (when the user has enabled "Show music widget when minimized").
+    private var musicWidget: NowPlayingWidgetController?
+
     @State private var selectedMonitorID: String? = nil   // Shared selection between windows
-    
+
     init(appDelegate: LuminaApp) {
         self.appDelegate = appDelegate
         store.appDelegate = appDelegate
-        
+
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 980, height: 680),
+            contentRect: NSRect(x: 0, y: 0, width: 1180, height: 840),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
-        
+
         window.title = "Lumina Studio"
+        // Adaptive: the user can freely resize the window; we only enforce a sensible floor
+        // so the two-column layout never collapses. The chosen size persists across launches.
+        window.contentMinSize = NSSize(width: 960, height: 720)
         window.center()
         window.setFrameAutosaveName("Lumina.WallpaperManager")
-        
+
         super.init(window: window)
         
         // Host main SwiftUI view (now acts as a control hub)
@@ -70,32 +74,32 @@ final class WallpaperManagerWindowController: NSWindowController {
             object: window
         )
 
-        // Apply the user's chosen window resolution, and resize live when they change it in
-        // Settings. `$size.sink` delivers the current value immediately on subscribe, which
-        // performs the initial sizing (without animation).
-        sizeCancellable = WindowSizeManager.shared.$size.sink { [weak self] size in
-            self?.applyWindowSize(size)
-        }
+        // Pop the floating now-playing widget when the window is minimized (if enabled),
+        // and dismiss it again when the window is restored.
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(windowWillMiniaturize),
+            name: NSWindow.willMiniaturizeNotification,
+            object: window
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(windowDidDeminiaturize),
+            name: NSWindow.didDeminiaturizeNotification,
+            object: window
+        )
     }
 
-    /// Resizes the window to a native resolution, keeping it centred on its current screen.
-    private func applyWindowSize(_ size: CGSize) {
-        guard let window = self.window else { return }
-        let animate = didApplyInitialSize
-        didApplyInitialSize = true
+    // MARK: - Music widget on minimize
 
-        var frame = window.frame
-        let center = CGPoint(x: frame.midX, y: frame.midY)
-        frame.size = size
-        frame.origin = CGPoint(x: (center.x - size.width / 2).rounded(),
-                               y: (center.y - size.height / 2).rounded())
+    @objc private func windowWillMiniaturize() {
+        guard AmbientAudioManager.shared.showWidgetWhenMinimized else { return }
+        if musicWidget == nil { musicWidget = NowPlayingWidgetController() }
+        musicWidget?.show()
+    }
 
-        // Keep the window fully on-screen after the resize.
-        if let visible = window.screen?.visibleFrame ?? NSScreen.main?.visibleFrame {
-            frame.origin.x = min(max(frame.origin.x, visible.minX), visible.maxX - size.width)
-            frame.origin.y = min(max(frame.origin.y, visible.minY), visible.maxY - size.height)
-        }
-        window.setFrame(frame, display: true, animate: animate)
+    @objc private func windowDidDeminiaturize() {
+        musicWidget?.hide()
     }
 
     @objc private func windowDidBecomeKey() {
