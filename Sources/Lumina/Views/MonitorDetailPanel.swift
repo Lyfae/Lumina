@@ -175,6 +175,14 @@ struct MonitorDetailPanel: View {
         store.setLoopMode(for: monitor, mode: loopMode)
         store.setLoopFade(for: monitor, enabled: loopFadeEnabled,
                           duration: loopFadeDuration, easing: loopFadeEasing)
+
+        // `hasUnappliedChanges` is derived from the assignment, which lives in the separate
+        // AssignmentStore. The setters above mutate that store but don't publish a change on
+        // `store` (the @ObservedObject driving this view), so without this nudge the panel
+        // wouldn't re-render and the "Apply" bar would stay green/active even though the
+        // changes are now applied. Forcing a publish re-evaluates the dirty state → the bar
+        // correctly fades to "Applied — Up to Date".
+        store.objectWillChange.send()
     }
 
     // MARK: - Header (optional)

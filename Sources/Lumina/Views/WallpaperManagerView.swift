@@ -123,16 +123,16 @@ struct WallpaperManagerView: View {
             .frame(width: 200)
 
             Button {
-                // Enables the setting and performs an immediate hard sync; the continuous
-                // drift watcher then keeps the displays aligned.
-                store.setSyncPlayback(true)
+                // Simple, on-demand alignment: restart every matching video/GIF wallpaper
+                // together so displays that drifted (or started at different times) line up.
+                store.restartDisplaysInSync()
             } label: {
                 Label("Sync Displays", systemImage: "arrow.triangle.2.circlepath")
                     .font(.caption)
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
-            .help("Lock all wallpaper videos to the same playback position")
+            .help("Restart all matching video/GIF wallpapers together so they play in sync")
 
             Button {
                 showSettings = true

@@ -520,8 +520,14 @@ final class WallpaperManagerStore: ObservableObject {
         appDelegate?.reapplyPowerPolicy()
     }
 
+    /// One-shot "Sync Displays": restart all matching video/GIF wallpapers together so they
+    /// play in lockstep. Used by the header button — the simple, on-demand alignment.
+    func restartDisplaysInSync() {
+        appDelegate?.restartDisplaysInSync()
+    }
+
     // MARK: - Playback Sync Setting
-    
+
     private let syncPlaybackKey = "Lumina.SyncPlaybackAcrossDisplays"
     
     private func loadSyncPlaybackSetting() {

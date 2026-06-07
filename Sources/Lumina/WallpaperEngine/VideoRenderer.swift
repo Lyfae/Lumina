@@ -77,6 +77,9 @@ public final class AVVideoRenderer: @unchecked Sendable {
     private var imageLayer: CALayer?
     private weak var hostLayer: CALayer?
     private var mediaKind: MediaType = .video
+    /// The current GIF keyframe animation, retained so it can be restarted in lockstep with
+    /// other displays (see `restartInSync`). nil for non-GIF media.
+    private var gifAnimation: CAKeyframeAnimation?
 
     // MARK: - Slideshow support
     private var slideshow: SlideshowEngine?
@@ -419,6 +422,28 @@ public final class AVVideoRenderer: @unchecked Sendable {
         }
     }
 
+    /// Restarts this renderer's media from the beginning, aligned to a shared start instant so
+    /// the same wallpaper on multiple displays plays in lockstep. Videos use a frame-precise
+    /// host-clock start; GIFs re-anchor their keyframe animation to a common layer time. A
+    /// deliberately paused video is left alone (we don't want a "sync" to silently un-pause it).
+    public func restartInSync(videoHostTime: CMTime, layerBeginTime: CFTimeInterval) {
+        if let player {
+            guard player.rate > 0 else { return }
+            syncStart(to: 0, atHostTime: videoHostTime)
+            return
+        }
+
+        guard mediaKind == .animatedImage,
+              let layer = imageLayer,
+              let restarted = gifAnimation?.copy() as? CAKeyframeAnimation else { return }
+
+        restarted.beginTime = layer.convertTime(layerBeginTime, from: nil)
+        layer.speed = 1
+        layer.timeOffset = 0
+        layer.removeAnimation(forKey: "gif")
+        layer.add(restarted, forKey: "gif")
+    }
+
     public func currentPlaybackTime() -> TimeInterval {
         guard let player else { return 0 }
         return player.currentTime().seconds
@@ -439,6 +464,7 @@ public final class AVVideoRenderer: @unchecked Sendable {
         slideshow = nil
         player?.replaceCurrentItem(with: nil)
         imageLayer?.removeAnimation(forKey: "gif")
+        gifAnimation = nil
         imageLayer?.contents = nil
         imageLayer?.isHidden = true
         loadedURL = nil
@@ -1022,6 +1048,7 @@ public final class AVVideoRenderer: @unchecked Sendable {
         animation.isRemovedOnCompletion = false
         layer.contents = frames.last
         layer.add(animation, forKey: "gif")
+        gifAnimation = animation   // retained so the displays can be restarted in sync
 
         if !autoPlay { pauseLayerAnimation(layer) }
     }

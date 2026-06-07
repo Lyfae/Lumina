@@ -528,6 +528,24 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         print("[Lumina] Synced \(activeRenderers.count) renderer(s) to \(String(format: "%.2f", referenceTime))s")
     }
 
+    /// One-shot "Sync Displays": restarts every active video/GIF wallpaper from the beginning
+    /// at a shared start instant, so the same media on multiple monitors plays in lockstep.
+    /// This is the simple, on-demand fix for "they drifted / started at different times."
+    func restartDisplaysInSync() {
+        let active = renderers.filter { $0.isLoaded }
+        guard !active.isEmpty else { return }
+
+        // A small shared lead so every renderer is armed before the common start moment.
+        let layerBegin = CACurrentMediaTime() + 0.1
+        let videoHostTime = CMTimeAdd(CMClockGetTime(CMClockGetHostTimeClock()),
+                                      CMTime(value: 10, timescale: 100))   // ~100 ms
+
+        for renderer in active {
+            renderer.restartInSync(videoHostTime: videoHostTime, layerBeginTime: layerBegin)
+        }
+        print("[Lumina] Restarted \(active.count) renderer(s) in sync")
+    }
+
     /// Turns continuous playback sync on or off. When on, performs an immediate hard sync and
     /// then starts a low-frequency drift watcher; when off, stops the watcher. The setting's
     /// persistence is owned by the store — this only drives the engine.

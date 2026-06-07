@@ -152,7 +152,13 @@ ENT
     "$APP_BUNDLE"
   ok "Signed"
 else
-  echo "  (skipping code signing — set SIGN_IDENTITY env var to enable)"
+  # Ad-hoc sign so the app has a stable code identity. This is required for
+  # SMAppService (Launch at login) to work even without a Developer ID, and avoids
+  # the unsigned-binary failures that silently break login-item registration.
+  step "Ad-hoc signing (no Developer ID set)"
+  codesign --force --sign - --timestamp=none "$APP_BUNDLE" \
+    && ok "Ad-hoc signed (Launch at login will work locally)" \
+    || echo "  (ad-hoc signing failed — Launch at login may not register)"
 fi
 
 # ── 4. Create DMG ─────────────────────────────────────────────────────────────
