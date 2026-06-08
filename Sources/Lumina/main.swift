@@ -544,6 +544,20 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
             renderer.restartInSync(videoHostTime: videoHostTime, layerBeginTime: layerBegin)
         }
         print("[Lumina] Restarted \(active.count) renderer(s) in sync")
+
+        // Verification: sample the video positions once playback has settled and report the
+        // spread between displays, so the alignment is observable rather than a guess.
+        let videoRenderers = active.filter { $0.currentItemDuration() > 0 }
+        guard videoRenderers.count >= 2 else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
+            let times = videoRenderers.map { $0.currentPlaybackTime() }
+            guard let lo = times.min(), let hi = times.max() else { return }
+            let spreadMs = (hi - lo) * 1000
+            let positions = times.map { String(format: "%.3f", $0) }.joined(separator: ", ")
+            print(String(format: "[Lumina] Sync check: %d videos at [%@]s — spread %.0f ms %@",
+                         videoRenderers.count, positions, spreadMs,
+                         spreadMs < 50 ? "✅ aligned" : "⚠️ drifting"))
+        }
     }
 
     /// Turns continuous playback sync on or off. When on, performs an immediate hard sync and

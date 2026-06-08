@@ -411,15 +411,22 @@ public final class AVVideoRenderer: @unchecked Sendable {
         player.seek(to: cmTime, toleranceBefore: .zero, toleranceAfter: .zero)
     }
 
-    /// Seeks to `time` then schedules playback to begin at a shared host-clock instant.
-    /// Call this on all renderers with the same `hostTime` to achieve frame-precise sync.
+    /// Schedules playback to seek to `time` and begin at a shared host-clock instant.
+    /// Call this on every renderer with the same `hostTime` to achieve frame-precise sync.
+    ///
+    /// Uses the atomic `setRate(_:time:atHostTime:)` form rather than a separate async seek:
+    /// AVPlayer only honors the host-time scheduling when (a) the player is paused at the
+    /// moment of the call, and (b) a *valid* item time is supplied so the seek and the
+    /// timed rate-change happen as one operation. The previous code seeked first and passed
+    /// `.invalid`, which raced (each seek completion fired at a different instant) and was
+    /// issued while the player was still playing — so the shared start time was ignored and
+    /// the two displays drifted.
     public func syncStart(to time: TimeInterval, atHostTime hostTime: CMTime) {
         guard let player else { return }
         let cmTime = CMTime(seconds: max(0, time), preferredTimescale: 600)
-        player.seek(to: cmTime, toleranceBefore: .zero, toleranceAfter: .zero) { [weak player] _ in
-            guard let player else { return }
-            player.setRate(1.0, time: .invalid, atHostTime: hostTime)
-        }
+        let rate = Float(userPlaybackSpeed > 0 ? userPlaybackSpeed : 1.0)
+        player.pause()
+        player.setRate(rate, time: cmTime, atHostTime: hostTime)
     }
 
     /// Restarts this renderer's media from the beginning, aligned to a shared start instant so
