@@ -19,11 +19,6 @@ struct SettingsView: View {
     /// Non-nil when a login-item register/unregister attempt failed; drives an explanatory alert.
     @State private var loginItemError: String?
 
-    /// Login items require a code-signed `.app` bundle. When Lumina is run as the bare SwiftPM
-    /// binary (e.g. `.build/debug/Lumina`) there's no bundle identifier and `SMAppService`
-    /// cannot register anything — so we surface that instead of silently failing.
-    private var loginItemSupported: Bool { Bundle.main.bundleIdentifier != nil }
-
     // PowerManager toggles. PowerManager isn't observable, so we mirror its values
     // in local state and write changes straight back through `store.appDelegate`.
     @State private var pauseOnLowPower: Bool = true
@@ -125,12 +120,9 @@ struct SettingsView: View {
         SettingsCard(icon: "gearshape.2.fill", title: "General") {
             toggleRow(
                 title: "Launch at login",
-                subtitle: loginItemSupported
-                    ? "Start Lumina automatically when you sign in."
-                    : "Available once Lumina runs as an installed app (Lumina.app), not the raw dev binary.",
+                subtitle: "Start Lumina automatically when you sign in.",
                 isOn: $launchAtLogin
             )
-            .disabled(!loginItemSupported)
             .onChange(of: launchAtLogin) { _, newValue in setLaunchAtLogin(newValue) }
 
             LuminaDivider()
@@ -307,14 +299,6 @@ struct SettingsView: View {
     }
 
     private func setLaunchAtLogin(_ enabled: Bool) {
-        // Guard the dev-binary case explicitly — SMAppService throws an opaque error there.
-        guard loginItemSupported else {
-            launchAtLogin = false
-            loginItemError = "Launch at login needs the installed Lumina.app. You’re running the "
-                + "raw development binary, which has no app bundle for macOS to register."
-            return
-        }
-
         do {
             if enabled {
                 try SMAppService.mainApp.register()
@@ -331,9 +315,7 @@ struct SettingsView: View {
             // Revert the toggle to reflect the real (unchanged) status and explain why.
             let status = SMAppService.mainApp.status
             launchAtLogin = (status == .enabled || status == .requiresApproval)
-            loginItemError = "macOS reported: \(error.localizedDescription)\n\n"
-                + "Login items require a signed app. If you built Lumina yourself, make sure "
-                + "you’re launching the bundled Lumina.app (ad-hoc signing is enough)."
+            loginItemError = "macOS reported: \(error.localizedDescription)"
         }
     }
 }

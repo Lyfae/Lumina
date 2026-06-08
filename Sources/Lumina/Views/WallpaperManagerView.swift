@@ -338,7 +338,17 @@ struct WallpaperManagerView: View {
                 .frame(minWidth: 120, idealWidth: 170, maxWidth: 220, alignment: .leading)
 
                 // Transport — bigger, evenly spaced controls
-                HStack(spacing: 18) {
+                HStack(spacing: 16) {
+                    // Loop toggle — highlights when repeat is on.
+                    transportIcon(
+                        "repeat",
+                        size: 14,
+                        active: audioManager.loops,
+                        help: audioManager.loops ? "Looping on — track repeats" : "Looping off"
+                    ) {
+                        audioManager.setLoops(!audioManager.loops)
+                    }
+
                     transportIcon("backward.end.fill", size: 15, help: "Previous track") {
                         audioManager.previousTrack()
                     }
@@ -363,10 +373,16 @@ struct WallpaperManagerView: View {
                     }
                     .disabled(audioManager.trackURL == nil)
 
-                    transportIcon("forward.end.fill", size: 15, help: "Next track") {
-                        audioManager.nextTrack()
+                    // Skip to next track — always available when a track is loaded; with a single
+                    // track it restarts from the top so the control is never a dead end.
+                    transportIcon("forward.end.fill", size: 15, help: "Skip to next track") {
+                        if audioManager.library.count >= 2 {
+                            audioManager.nextTrack()
+                        } else {
+                            audioManager.seekToTime(0)
+                        }
                     }
-                    .disabled(audioManager.library.count < 2)
+                    .disabled(audioManager.trackURL == nil)
                 }
 
                 // Progress — expands to fill available width
