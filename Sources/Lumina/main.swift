@@ -112,18 +112,9 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         LuminaLog.app.info("Lumina started (menu-bar only). Use the menu bar icon → Wallpaper Manager (⌘M)")
 
-        // Show onboarding on first launch (unless user chose "never show again").
-        // We also re-check when the Wallpaper Manager opens so it feels tied to the manager experience.
-        if !UserDefaults.standard.bool(forKey: "Lumina.HasShownOnboarding") {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                self.showOnboarding()
-            }
-        }
-        
-        // Version / changelog check (runs on every launch, cheap)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
-            self.checkForNewVersionAndShowChangelogIfNeeded()
-        }
+        // Onboarding / Welcome screen is now only shown the very first time the user
+        // explicitly opens "Lumina Studio" from the menu bar (see openWallpaperManager + maybeShowOnboardingForManager).
+        // Release notes are only shown when the user explicitly clicks "What's New".
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -670,11 +661,12 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         wallpaperManagerWindow?.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
         
-        // Tie onboarding to the Wallpaper Manager experience (as requested)
+        // Show the welcome/onboarding screen only on the very first explicit launch of Lumina Studio
+        // from the menu bar. After that, it is not shown again automatically.
         self.maybeShowOnboardingForManager()
         
-        // Also check for changelog / new version notes when the user opens the manager
-        self.checkForNewVersionAndShowChangelogIfNeeded()
+        // Release notes ("What's New") are no longer shown automatically.
+        // They are only shown when the user explicitly clicks a "What's New" button.
         
         // Automatically open the Choose Display window so the user can pick a screen first
         wallpaperManagerWindow?.openChooseDisplayWindowIfNeeded()
@@ -714,12 +706,15 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     
     /// Called from WallpaperManagerWindowController when the manager opens.
-    /// Shows onboarding (if not permanently dismissed) in the context of using the manager.
+    /// Shows the welcome/onboarding screen **only the first time** the user launches
+    /// "Lumina Studio" from the menu bar. After that it is never shown automatically again.
     func maybeShowOnboardingForManager() {
         if !UserDefaults.standard.bool(forKey: "Lumina.HasShownOnboarding") {
             // Small delay so the manager window has time to appear first
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
                 self.showOnboarding()
+                // Mark as shown so it only appears on the very first explicit Studio launch.
+                UserDefaults.standard.set(true, forKey: "Lumina.HasShownOnboarding")
             }
         }
     }
@@ -739,8 +734,7 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     
     /// Presents the rich SwiftUI "What's New" window for the current version.
-    /// Used both for automatic update notifications and when the user explicitly
-    /// clicks "Welcome & What's New".
+    /// Only shown when the user explicitly clicks a "What's New" button (no longer auto-shown on launch or manager open).
     func showWhatsNew() {
         let version = currentVersion
         
@@ -790,23 +784,15 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     
     private let lastShownChangelogKey = "Lumina.LastShownChangelogVersion"
     
-    /// Checks if this is a new version since the user last saw a changelog.
-    /// Call this on launch and/or when opening the manager.
+    /// Records that the user has seen the current version's release notes.
+    /// This is called from explicit "What's New" UI so that future manual clicks
+    /// can optionally behave differently if needed. We no longer auto-show release notes.
     func checkForNewVersionAndShowChangelogIfNeeded() {
         let lastShown = UserDefaults.standard.string(forKey: lastShownChangelogKey) ?? "0.0"
         
-        // Simple string compare works well enough for semver during early releases (1.0, 1.1, 1.2, etc.)
         if currentVersion != lastShown {
-            LuminaLog.app.info("New version detected: \(currentVersion) (previously saw \(lastShown))")
-            
-            // Mark as seen so we only show once per version
+            LuminaLog.app.info("New version detected: \(currentVersion) (previously saw \(lastShown)). Release notes will only be shown if the user explicitly clicks 'What's New'.")
             UserDefaults.standard.set(currentVersion, forKey: lastShownChangelogKey)
-            
-            // Show the changelog to the user automatically on first launch of a new release.
-            // This is the key future-proof behavior you asked for.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-                self.showWhatsNew()
-            }
         }
     }
 
