@@ -779,7 +779,7 @@ public final class AVVideoRenderer: @unchecked Sendable {
     public func load(assignment: MonitorAssignment, autoPlay: Bool = true) {
         guard let url = assignment.resolvedURL() ??
                         (assignment.filePath.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) }) else {
-            print("[AVVideoRenderer] Could not resolve URL from assignment")
+            LuminaLog.wallpaper.error("Could not resolve URL from assignment")
             return
         }
         load(url: url, autoPlay: autoPlay)
@@ -833,7 +833,7 @@ public final class AVVideoRenderer: @unchecked Sendable {
             let error = item.error
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
-                print("[AVVideoRenderer] Failed to load \(failedURL.lastPathComponent): \(error?.localizedDescription ?? "unknown error")")
+                LuminaLog.wallpaper.error("Failed to load \(failedURL.lastPathComponent): \(error?.localizedDescription ?? "unknown error")")
                 self.clear()
                 self.onLoadFailure?(failedURL, error)
             }
@@ -947,7 +947,7 @@ public final class AVVideoRenderer: @unchecked Sendable {
                             kenBurnsEnabled: Bool = true) {
         cleanup()
         guard let host = hostLayer ?? playerLayer?.superlayer else {
-            print("[AVVideoRenderer] No host layer available for slideshow")
+            LuminaLog.wallpaper.warning("No host layer available for slideshow")
             return
         }
         mediaKind = .image           // image-like: power policy shouldn't drive the AVPlayer
@@ -978,7 +978,7 @@ public final class AVVideoRenderer: @unchecked Sendable {
 
         // Ensure an image layer exists, attached to the same superlayer as the video layer.
         guard let superlayer = playerLayer?.superlayer ?? hostLayer else {
-            print("[AVVideoRenderer] No host layer available for image content")
+            LuminaLog.wallpaper.warning("No host layer available for image content")
             return
         }
         let layer = imageLayer ?? CALayer()
@@ -1004,7 +1004,7 @@ public final class AVVideoRenderer: @unchecked Sendable {
                       let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) {
                 layer.contents = cg   // fallback for anything ImageIO can't open
             } else {
-                print("[AVVideoRenderer] Failed to decode image at \(url.path)")
+                LuminaLog.wallpaper.error("Failed to decode image at \(url.path)")
             }
         }
 

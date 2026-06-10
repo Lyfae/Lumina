@@ -13,24 +13,22 @@
   <img src="https://img.shields.io/badge/platform-macOS%2015%2B-blue" alt="macOS 15+">
   <img src="https://img.shields.io/badge/Swift-6-orange" alt="Swift 6">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT">
-  <img src="https://img.shields.io/badge/Dock%20icon-none-lightgrey" alt="Menu-bar only">
+  <img src="https://img.shields.io/badge/status-production-lightgreen" alt="Production Ready">
 </p>
 
 ---
 
-Lumina Studio brings cinematic live wallpapers to the Mac — completely native, completely free, and built to run 24/7 without draining your battery. Set live video wallpapers, animated GIFs, or image slideshows on every display independently, then tune every detail from a single polished interface.
+Lumina Studio brings cinematic live wallpapers to the Mac — completely native, completely free, and built to run 24/7 without draining your battery. Set live video wallpapers, animated GIFs, or image slideshows on every display independently.
 
 ---
 
 ## Install
 
-**Easiest — download the DMG:**
+**Recommended — Download the DMG:**
 
-1. Go to [Releases](https://github.com/Lyfae/Lumina/releases) and download `Lumina-x.y.z.dmg`
-2. Open the DMG, drag **Lumina** into **Applications**
-3. Launch Lumina — look for its icon in the menu bar
-
-> Lumina is a menu-bar app. No Dock icon, no bloat.
+1. Go to [Releases](https://github.com/Lyfae/Lumina/releases) and download the latest `Lumina-x.y.z.dmg`
+2. Open the DMG and drag **Lumina** into **Applications**
+3. Launch Lumina — it appears in the menu bar
 
 **Build from source:**
 
@@ -38,187 +36,84 @@ Lumina Studio brings cinematic live wallpapers to the Mac — completely native,
 git clone https://github.com/Lyfae/Lumina.git
 cd Lumina
 swift build -c release --arch arm64
-./scripts/build-dmg.sh          # produces dist/Lumina-1.0.0.dmg
+./scripts/build-dmg.sh          # produces dist/Lumina-x.y.z.dmg
 ```
 
-Requirements: macOS 15+, Xcode Command Line Tools, Swift 6
-
-**Self-test (headless, no display required):**
-
-```bash
-swift build
-.build/debug/Lumina --self-test   # 27 checks
-```
+Requirements: macOS 15+, Xcode Command Line Tools, Swift 6.
 
 ---
 
 ## Quick Start
 
 1. Click the Lumina icon in the menu bar → **Lumina Studio** (`⌘M`)
-2. Click **Switch Display** and pick a monitor in the physical layout window
-3. Click **Add to Library** and choose a video or image
-4. Click any thumbnail to **preview** it on the selected display
-5. Tune brightness, crop, speed, and effects in the right panel
-6. Click **Apply to Wallpaper** to commit staged edits to the live desktop
-
----
-
-## Lumina Studio
-
-Lumina Studio is a resizable two-column control hub. The window remembers its size across launches and enforces a sensible minimum (960 × 720) so the layout never collapses.
-
-| Area | What it does |
-|---|---|
-| **Library (left)** | Filterable grid of all wallpapers you've used — All / Video / Image / GIF / ★ Starred. Search by filename. Click to preview; hover for quick actions. |
-| **Configuration (right)** | Live WYSIWYG preview, per-monitor settings, and the **Apply to Wallpaper** commit bar. |
-| **Footer** | Ambient audio transport, volume, seek bar, and collapsible music queue. |
-| **Header** | Search, **Sync Displays**, and **Settings** (gear icon). |
-
-### Preview → Apply workflow
-
-Edits in the right panel are **staged** — they update the live preview immediately but do not touch the desktop until you commit.
-
-- The preview is resizable (drag the handle below it)
-- Crop editing happens inline on the preview (crop button, top-right)
-- **Apply to Wallpaper** turns green when there are uncommitted changes
-- **Reset Adjustments** reverts staged values without touching the desktop
-- **Keep this wallpaper on startup** (promoted toggle under the preview) pins the assignment for relaunch
-
-### Settings sheet
-
-Opened from the gear icon in the header. Covers app-wide preferences — distinct from per-monitor wallpaper settings.
-
-| Section | Options |
-|---|---|
-| **Appearance** | Theme (Match System / Light / Dark), 9 accent colors |
-| **General** | Launch at login, remember wallpapers on startup, sync playback across displays, show music widget when minimized |
-| **Battery & Performance** | Pause in Low Power Mode, pause when running hot, pause behind fullscreen apps, performance profile (Maximum Battery / Balanced / High Quality) |
-| **About & Help** | About & Status, Welcome, What's New |
-
-### Slideshow builder
-
-Configure a still-image slideshow per display from the **Slideshow** section in the right panel.
-
-- **Drag & drop** images onto the queue canvas
-- Pick images from your Library strip or via **Add Images…**
-- Reorder by dragging rows in the queue
-- Set interval (3 s – 60 s) and transition (Fade / Cut)
-- **Ken Burns effect** — slow cinematic pan & zoom on each image (on by default)
-- **Save & Play** commits immediately to the desktop
-
-### Floating now-playing widget
-
-When **Show music widget when minimized** is enabled in Settings, minimizing Lumina Studio pops a floating mini-player in the top-right corner. It mirrors the footer transport controls for ambient audio and can be dismissed independently.
-
-### Theme & accessibility
-
-- **Dark theme** uses pure black (`luminaBase`) and near-black cards (`luminaCard`) with high-contrast borders (`luminaBorder`) — dividers stay visible on black
-- **9 accent themes**: System, Ocean, Aurora, Blossom, Ember, Sunset, Gold, Forest, Teal
-- Accessibility labels on library filter tabs, wallpaper grid items, settings controls, and transport buttons
+2. Select a display using the monitor layout
+3. Click **Add to Library** and choose a video, GIF, or image
+4. Click any thumbnail to preview
+5. Adjust brightness, crop, speed, and effects
+6. Click **Apply to Wallpaper** to set it live
 
 ---
 
 ## Features
 
-### Playback
-| Feature | Detail |
-|---|---|
-| **Video wallpapers** | MP4, MOV, M4V, MKV, WebM, AVI and more |
-| **Animated GIFs** | Smooth loop via ImageIO frame decode + `CAKeyframeAnimation` on a `CALayer` |
-| **Static images** | PNG, JPEG, HEIC, WebP, TIFF |
-| **Seamless looping** | AVQueuePlayer + AVPlayerLooper — zero-gap |
-| **Loop crossfade** | Fade between loop points (0 – 5 s) |
-| **Playback speed** | 0.25× – 4.0× per display |
-| **Loop modes** | Loop continuously, Play once, or Bounce (forward ↔ reverse) |
-| **Video audio** | Per-display volume control (defaults to muted) |
+### Media Support
+- **Video**: MP4, MOV, M4V, MKV, WebM, AVI (hardware accelerated)
+- **Animated GIFs**: Smooth looping via ImageIO + Core Animation
+- **Images**: PNG, JPEG, HEIC, WebP, TIFF + slideshow support
+- Per-display volume, playback speed (0.25×–4×), loop modes, and crossfade
 
-### Visual Effects
-| Effect | Range |
-|---|---|
-| **Brightness** | −50 % to +50 % |
-| **Opacity** | 0 – 100 % |
-| **Saturation** | 0 (grayscale) – 200 % (vivid) |
-| **Hue rotation** | −180 ° to +180 ° |
-| **Grayscale** | One-tap toggle |
+### Visual Controls
+- Real-time brightness, saturation, hue, opacity, and grayscale
+- Inline crop editor with live preview and video scrubber
+- GPU-accelerated Core Image filters
 
-All effects are GPU-accelerated via Core Image filters — zero CPU overhead.
+### Slideshows
+- Drag & drop image queue with reordering
+- Adjustable interval (3–60s) and transitions (Fade/Cut)
+- Optional Ken Burns cinematic pan & zoom effect
 
-### Crop & Zoom
-- Inline crop editing directly on the live preview
-- Draggable crop rectangle with four corner handles
-- Video preview scrubber for frame-accurate crop setup
-- "Reset to Full" one-click
-- Window auto-grows when crop mode opens (if needed)
+### Multi-Display
+- Independent settings per monitor
+- Visual display picker with physical layout
+- Sync playback across all displays
 
-### Slideshow
-| Feature | Detail |
-|---|---|
-| **Image queue** | Drag-drop, library picker, reorder |
-| **Interval** | 3 s – 60 s per image |
-| **Transition** | Fade or cut |
-| **Ken Burns** | Slow cinematic pan/zoom per slide (toggleable) |
+### Library & Persistence
+- Auto-saved library with search and favorites
+- "Keep on startup" per-monitor pinning
+- Security-scoped bookmarks for reliable file access
 
-### Performance & Compression
-- **Video compression** — Re-encode any wallpaper to 4K / 1080p / 720p / 480p using Apple's hardware encoder
-- Shows current file size, resolution, and duration
-- Estimated output size before you start
-- Live progress bar with cancel support
-- Compressed files saved to `~/Library/Application Support/Lumina/Compressed/`
+### Performance & Power
+- Auto-pause on Low Power Mode, thermal pressure, or fullscreen apps
+- Performance profiles (Battery / Balanced / High Quality)
+- Hardware video re-encoding with progress and size estimation
 
-### Multi-Monitor
-- Independent wallpaper and settings on every display
-- Visual monitor selection via floating physical layout window
-- "Configuring S1 • Built-in Retina Display" header shows active target
-- Sync playback across displays — restart all videos in lockstep
-- Per-monitor brightness, crop, speed, and effects
-
-### Library & Favorites
-- Add wallpapers via file picker or slideshow builder (auto-saved to library)
-- Filter by **All / Video / Image / GIF / ★ Starred**
-- Search by filename
-- Star any wallpaper — persists across launches
-- Right-click context menu: Set as Wallpaper / Favourite / Remove
-- Library items cached between sessions
-
-### Ambient Audio
-- Add MP3 and other standard audio formats (`.audio`, `.mp3`) to a persistent music library
-- Footer transport bar with seek, skip, loop, and volume
-- Collapsible queue panel with reorder and remove
-- Plays independently of video audio
-- Remembers last track and position between launches
-
-### Power Management
-- Auto-pause on Low Power Mode
-- Auto-pause on high thermal pressure
-- Auto-pause when fullscreen apps are active
-- Performance profiles: Maximum Battery / Balanced / High Quality
-- Resumes automatically when conditions clear
+### Audio
+- Independent ambient music player (MP3 and common formats)
+- Footer transport + collapsible queue
+- Floating mini-player when the main window is minimized
 
 ---
 
-## Building a DMG
+## Screenshots
+
+> **Note**: Add screenshots here before final release (main window, crop editor, settings, multi-monitor view).
+
+---
+
+## Building & Distribution
 
 ```bash
-# Default: arm64 release, unsigned
+# Standard arm64 release DMG
 ./scripts/build-dmg.sh
 
-# Universal binary (arm64 + x86_64)
+# Universal binary
 ARCH=universal ./scripts/build-dmg.sh
 
-# Signed (requires Developer ID certificate in keychain)
+# Signed release (requires Developer ID certificate)
 SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" ./scripts/build-dmg.sh
-
-# Custom version
-VERSION=1.2.0 BUILD_NUMBER=42 ./scripts/build-dmg.sh
 ```
 
-The script builds a release binary, assembles a proper `.app` bundle with `Info.plist` and icons, optionally signs it, and produces `dist/Lumina-x.y.z.dmg` with a drag-to-Applications layout.
-
-For notarization:
-```bash
-xcrun notarytool submit dist/Lumina-1.0.0.dmg --keychain-profile AC_PASSWORD --wait
-xcrun stapler staple dist/Lumina-1.0.0.dmg
-```
+See [docs/DISTRIBUTION.md](docs/DISTRIBUTION.md) for notarization and Sparkle update instructions.
 
 ---
 
@@ -226,57 +121,37 @@ xcrun stapler staple dist/Lumina-1.0.0.dmg
 
 ```
 Sources/Lumina/
-├── main.swift                          # App entry, menu bar, LuminaApp delegate
-├── AssignmentStore.swift               # Dual-bucket persistence (monitor + library)
-├── WallpaperManagerStore.swift         # View model / presenter layer
+├── main.swift
+├── AssignmentStore.swift
+├── WallpaperManagerStore.swift
 ├── Models/
-│   ├── MonitorAssignment.swift         # All per-monitor settings
-│   ├── AppTheme.swift                  # Accent themes, luminaBase/luminaCard dividers
-│   ├── AppearanceManager.swift         # Light / Dark / Match System
-│   ├── FavoritesManager.swift
-│   └── MonitorInfo.swift
-├── WallpaperEngine/
-│   ├── VideoRenderer.swift             # AVQueuePlayer, crop, color effects
-│   ├── VideoCompressor.swift           # AVAssetExportSession transcoding
-│   ├── SlideshowEngine.swift           # Timer-driven cycling + Ken Burns
-│   ├── AmbientAudioManager.swift       # Persistent music library
-│   ├── PowerManager.swift
-│   ├── FullscreenDetector.swift
-│   └── DesktopWallpaperWindow.swift
-└── Views/
-    ├── WallpaperManagerView.swift      # Main two-column UI, library grid
-    ├── MonitorDetailPanel.swift        # Per-monitor settings + WYSIWYG preview
-    ├── SettingsView.swift              # App-wide preferences sheet
-    ├── SlideshowConfigView.swift       # Slideshow builder sheet
-    ├── NowPlayingWidget.swift          # Floating mini-player on minimize
-    ├── ChooseDisplayView.swift         # Monitor selection cards
-    ├── WallpaperPreview.swift          # Live video preview + crop overlay
-    └── CropRectangle.swift             # Draggable crop editor
+├── WallpaperEngine/          # VideoRenderer, SlideshowEngine, PowerManager, etc.
+└── Views/                    # Main UI, preview, crop, settings
 ```
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for deeper design decisions.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for detailed design notes.
 
 ---
 
 ## Roadmap
 
-- [ ] **v1.0** — Signed + notarized DMG, Sparkle auto-update
-- [ ] Homebrew Cask formula
-- [ ] iCloud library sync
-- [ ] Schedule wallpapers by time of day
-- [ ] HDR video support
-- [ ] Metal shader / particle wallpapers
+- [x] Core live wallpaper engine (video + GIF + image)
+- [x] Multi-monitor support with independent settings
+- [ ] Signed + notarized DMG + Sparkle auto-updates (v1.0 target)
+- [ ] Homebrew Cask
+- [ ] iCloud sync
+- [ ] Time-based wallpaper scheduling
 
-See [docs/ROADMAP.md](docs/ROADMAP.md) for the detailed plan.
+See [docs/ROADMAP.md](docs/ROADMAP.md) for the full plan.
 
 ---
 
 ## Contributing
 
-Pull requests are welcome. See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) for guidelines.
+Pull requests are welcome. Please read [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md).
 
-Bug reports → [GitHub Issues](https://github.com/Lyfae/Lumina/issues)  
-Feature ideas → [Discussions](https://github.com/Lyfae/Lumina/discussions)
+- Bug reports: [GitHub Issues](https://github.com/Lyfae/Lumina/issues)
+- Feature ideas: [GitHub Discussions](https://github.com/Lyfae/Lumina/discussions)
 
 ---
 

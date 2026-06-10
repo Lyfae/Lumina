@@ -171,52 +171,126 @@ final class SlideshowEngine {
 
     private func showImage(at index: Int, in host: CALayer, animated: Bool) {
         guard index < imagePaths.count else { return }
+
+        // For the very first slide (initial load from configure/start), decode synchronously
+        // so that isSlideshow + Ken Burns active checks and first paint are immediate.
+        // Subsequent advances (timer-driven) decode off-main to keep the main thread
+        // responsive during long-running slideshows with large images.
+        let isInitialSlide = (currentImageLayer == nil)
+        if isInitialSlide {
+            let path = (imagePaths[index] as NSString).expandingTildeInPath
+            let url = URL(fileURLWithPath: path)
+            let maxDim = max(host.bounds.width, host.bounds.height) * max(1, host.contentsScale)
+            let maxPixel = maxDim > 1 ? maxDim : 3840
+            guard let cgImage = CGImageSourceCreateWithURL(url as CFURL, nil)
+                    .flatMap({ AVVideoRenderer.downsampledImage(source: $0, index: 0, maxPixelSize: maxPixel) })
+                    ?? NSImage(contentsOfFile: path)?.cgImage(forProposedRect: nil, context: nil, hints: nil)
+            else { return }
+
+            let newLayer = CALayer()
+            newLayer.contents = cgImage
+            newLayer.contentsGravity = .resizeAspectFill
+            newLayer.frame = host.bounds
+            newLayer.anchorPoint = CGPoint(x: 0.5, y: 0.5)
+            newLayer.position = CGPoint(x: host.bounds.midX, y: host.bounds.midY)
+            host.addSublayer(newLayer)
+
+            slideShownAt = Date()
+            pauseStartedAt = nil
+
+            if kenBurnsEnabled {
+                applyKenBurns(to: newLayer, hostBounds: host.bounds, slideIndex: index, duration: interval)
+            }
+
+            if animated {
+                let fade = CABasicAnimation(keyPath: "opacity")
+                fade.fromValue = 0.0
+                fade.toValue   = 1.0
+                fade.duration  = min(1.5, interval * 0.3)
+                newLayer.opacity = 1.0
+                newLayer.add(fade, forKey: "fadeIn")
+            }
+
+            cancelPendingRemoval()
+            let old = currentImageLayer
+            let delay = animated ? min(1.5, interval * 0.3) : 0
+            if delay == 0 {
+                old?.removeFromSuperlayer()
+            } else {
+                let work = DispatchWorkItem { [weak old] in old?.removeFromSuperlayer() }
+                pendingRemoval = work
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+            }
+            currentImageLayer = newLayer
+            return
+        }
+
+        // Advance path: off-main decode for large images.
         let path = (imagePaths[index] as NSString).expandingTildeInPath
-        let url = URL(fileURLWithPath: path)
-        // Decode at display resolution to avoid holding full-size photos in memory.
-        let maxDim = max(host.bounds.width, host.bounds.height) * max(1, host.contentsScale)
-        let maxPixel = maxDim > 1 ? maxDim : 3840
-        guard let cgImage = CGImageSourceCreateWithURL(url as CFURL, nil)
-                .flatMap({ AVVideoRenderer.downsampledImage(source: $0, index: 0, maxPixelSize: maxPixel) })
+        let hostBounds = host.bounds
+        let scale = host.contentsScale
+        let targetInterval = interval
+        let targetKenBurns = kenBurnsEnabled
+        let targetTransition = transition
+        let targetIndex = index
+
+        Task.detached(priority: .utility) {
+            let url = URL(fileURLWithPath: path)
+            let maxDim = max(hostBounds.width, hostBounds.height) * max(1, scale)
+            let maxPixel = maxDim > 1 ? maxDim : 3840
+            let cgImage: CGImage? =
+                CGImageSourceCreateWithURL(url as CFURL, nil)
+                    .flatMap { AVVideoRenderer.downsampledImage(source: $0, index: 0, maxPixelSize: maxPixel) }
                 ?? NSImage(contentsOfFile: path)?.cgImage(forProposedRect: nil, context: nil, hints: nil)
-        else { return }
 
-        let newLayer = CALayer()
-        newLayer.contents = cgImage
-        newLayer.contentsGravity = .resizeAspectFill
-        newLayer.frame = host.bounds
-        newLayer.anchorPoint = CGPoint(x: 0.5, y: 0.5)
-        newLayer.position = CGPoint(x: host.bounds.midX, y: host.bounds.midY)
-        host.addSublayer(newLayer)
+            guard let cgImage else { return }
 
-        slideShownAt = Date()
-        pauseStartedAt = nil
+            await MainActor.run { [weak self] in
+                guard let self,
+                      self.currentIndex == targetIndex,
+                      self.imagePaths.indices.contains(targetIndex),
+                      let currentHost = self.hostLayer,
+                      !self.isPaused
+                else { return }
 
-        if kenBurnsEnabled {
-            applyKenBurns(to: newLayer, hostBounds: host.bounds, slideIndex: index, duration: interval)
+                let newLayer = CALayer()
+                newLayer.contents = cgImage
+                newLayer.contentsGravity = .resizeAspectFill
+                newLayer.frame = hostBounds
+                newLayer.anchorPoint = CGPoint(x: 0.5, y: 0.5)
+                newLayer.position = CGPoint(x: hostBounds.midX, y: hostBounds.midY)
+                currentHost.addSublayer(newLayer)
+
+                self.slideShownAt = Date()
+                self.pauseStartedAt = nil
+
+                if targetKenBurns {
+                    self.applyKenBurns(to: newLayer, hostBounds: hostBounds, slideIndex: targetIndex, duration: targetInterval)
+                }
+
+                let doFade = (targetTransition == .fade)
+                if doFade {
+                    let fade = CABasicAnimation(keyPath: "opacity")
+                    fade.fromValue = 0.0
+                    fade.toValue   = 1.0
+                    fade.duration  = min(1.5, targetInterval * 0.3)
+                    newLayer.opacity = 1.0
+                    newLayer.add(fade, forKey: "fadeIn")
+                }
+
+                self.cancelPendingRemoval()
+                let old = self.currentImageLayer
+                let delay = doFade ? min(1.5, targetInterval * 0.3) : 0
+                if delay == 0 {
+                    old?.removeFromSuperlayer()
+                } else {
+                    let work = DispatchWorkItem { [weak old] in old?.removeFromSuperlayer() }
+                    self.pendingRemoval = work
+                    DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+                }
+                self.currentImageLayer = newLayer
+            }
         }
-
-        if animated {
-            let fade = CABasicAnimation(keyPath: "opacity")
-            fade.fromValue = 0.0
-            fade.toValue   = 1.0
-            fade.duration  = min(1.5, interval * 0.3)
-            newLayer.opacity = 1.0
-            newLayer.add(fade, forKey: "fadeIn")
-        }
-
-        // Remove the old layer after transition (cancel any prior pending removal first).
-        cancelPendingRemoval()
-        let old = currentImageLayer
-        let delay = animated ? min(1.5, interval * 0.3) : 0
-        if delay == 0 {
-            old?.removeFromSuperlayer()
-        } else {
-            let work = DispatchWorkItem { [weak old] in old?.removeFromSuperlayer() }
-            pendingRemoval = work
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
-        }
-        currentImageLayer = newLayer
     }
 
     private func currentSlideElapsed() -> TimeInterval {

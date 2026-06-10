@@ -100,7 +100,7 @@ final class AssignmentStore: ObservableObject {
             let data = try JSONEncoder().encode(toSave)
             UserDefaults.standard.set(data, forKey: persistenceKey)
         } catch {
-            print("[AssignmentStore] Failed to save assignments: \(error)")
+            LuminaLog.app.error("Failed to save assignments: \(error)")
         }
     }
 
@@ -126,12 +126,12 @@ final class AssignmentStore: ObservableObject {
                 if hasValidMedia {
                     assignments[key] = item
                 } else {
-                    print("[AssignmentStore] Skipping pinned assignment for \(key) — media no longer exists on disk.")
+                    LuminaLog.app.warning("Skipping pinned assignment for \(key) — media no longer exists on disk.")
                 }
             }
-            print("[AssignmentStore] Loaded \(assignments.filter { $0.value.keepOnStartup }.count) pinned per-monitor assignment(s).")
+            LuminaLog.persistence.info("Loaded \(assignments.filter { $0.value.keepOnStartup }.count) pinned per-monitor assignment(s).")
         } catch {
-            print("[AssignmentStore] Failed to decode pinned assignments: \(error)")
+            LuminaLog.persistence.error("Failed to decode pinned assignments: \(error)")
         }
     }
 
@@ -149,9 +149,9 @@ final class AssignmentStore: ObservableObject {
                     assignments[key] = item
                 }
             }
-            print("[AssignmentStore] Loaded \(items.count) library item(s).")
+            LuminaLog.persistence.info("Loaded \(items.count) library item(s).")
         } catch {
-            print("[AssignmentStore] Failed to decode library: \(error)")
+            LuminaLog.persistence.error("Failed to decode library: \(error)")
             // Do not crash the app — just start with an empty library this time.
             // The custom decoder on MonitorAssignment should prevent most future decode failures.
         }
@@ -163,7 +163,7 @@ final class AssignmentStore: ObservableObject {
             let data = try JSONEncoder().encode(items)
             UserDefaults.standard.set(data, forKey: libraryKey)
         } catch {
-            print("[AssignmentStore] Failed to save library: \(error)")
+            LuminaLog.persistence.error("Failed to save library: \(error)")
         }
     }
 

@@ -85,7 +85,7 @@ final class WallpaperManagerStore: ObservableObject {
         // Update only the local UI snapshot. The real data lives in AssignmentStore.
         monitors[index].assignedVideoName = url.lastPathComponent
         
-        print("Assigned media to \(monitor.id) via central store")
+        LuminaLog.app.info("Assigned media to \(monitor.id) via central store")
     }
     
     func clearAssignment(for monitor: MonitorInfo) {

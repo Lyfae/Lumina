@@ -29,7 +29,7 @@ public struct WallpaperPersistence {
             )
             UserDefaults.standard.set(bookmarkData, forKey: lastVideoBookmarkKey)
         } catch {
-            print("[Persistence] Failed to create bookmark for \(url): \(error)")
+            LuminaLog.persistence.error("Failed to create bookmark for \(url): \(error)")
             // Path fallback is already saved above — no further action needed.
         }
     }

@@ -215,7 +215,7 @@ public final class PowerManager {
     private func setPolicy(_ newPolicy: WallpaperPlaybackPolicy) {
         guard currentPolicy != newPolicy else { return }
         currentPolicy = newPolicy
-        print("[PowerManager] Policy changed → \(newPolicy)")
+        LuminaLog.power.info("Policy changed → \(newPolicy)")
         onPolicyChange?(newPolicy)
     }
 }

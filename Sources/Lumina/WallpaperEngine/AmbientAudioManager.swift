@@ -216,7 +216,7 @@ final class AmbientAudioManager: NSObject, ObservableObject {
             addToLibrary(url: url)
             return true
         } catch {
-            print("[AmbientAudio] Failed to load: \(error)")
+            LuminaLog.audio.error("Failed to load: \(error)")
             return false
         }
     }

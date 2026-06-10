@@ -104,7 +104,7 @@ actor ThumbnailService {
         } catch {
             // Only log the first time (failures are cached in thumbnail(for:))
             if !failedKeys.contains(cacheKey(for: url, maxSize: maxSize, time: normalizedTime)) {
-                print("[ThumbnailService] Video thumbnail failed: \(error)")
+                LuminaLog.thumbnail.warning("Video thumbnail failed: \(error)")
             }
             return nil
         }
