@@ -19,7 +19,7 @@ set -euo pipefail
 # ── Configuration ─────────────────────────────────────────────────────────────
 APP_NAME="Lumina"
 BUNDLE_ID="com.lumina.studio"
-VERSION="${VERSION:-1.0.0}"
+VERSION="${VERSION:-0.1.0}"
 BUILD_NUMBER="${BUILD_NUMBER:-1}"
 ARCH="${ARCH:-arm64}"           # arm64 | x86_64 | universal
 SIGN_IDENTITY="${SIGN_IDENTITY:-}" # set to "Developer ID Application: ..." to sign
