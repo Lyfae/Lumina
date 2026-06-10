@@ -52,6 +52,7 @@ struct WallpaperManagerView: View {
     @State private var searchQuery: String = ""
     @State private var selectedFilter: LibraryFilter = .all
     @State private var showQueue: Bool = false
+    @State private var showSettings: Bool = false
 
     // MARK: - Computed
 
@@ -80,16 +81,24 @@ struct WallpaperManagerView: View {
     // MARK: - Body
 
     var body: some View {
+        // Adaptive: the view fills whatever size the user resizes the window to. We only set a
+        // floor so the two-column layout never collapses (mirrors the window's contentMinSize).
+        coreContent
+            .frame(minWidth: 960, minHeight: 720)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color.luminaBase)
+            .tint(themeManager.current.color)
+            .onAppear { autoSelectFirstMonitor() }
+    }
+
+    private var coreContent: some View {
         VStack(spacing: 0) {
             headerBar
-            Divider()
+            LuminaDivider()
             mainContent
-            Divider()
+            LuminaDivider()
             footerBar
         }
-        .frame(minWidth: 980, minHeight: 680)
-        .tint(themeManager.current.color)
-        .onAppear { autoSelectFirstMonitor() }
     }
 
     // MARK: - Header Bar
@@ -114,18 +123,31 @@ struct WallpaperManagerView: View {
             .frame(width: 200)
 
             Button {
-                store.setSyncPlayback(true)
-                store.syncAllRenderersNow()
+                // Simple, on-demand alignment: restart every matching video/GIF wallpaper
+                // together so displays that drifted (or started at different times) line up.
+                store.restartDisplaysInSync()
             } label: {
                 Label("Sync Displays", systemImage: "arrow.triangle.2.circlepath")
                     .font(.caption)
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
-            .help("Lock all wallpaper videos to the same playback position")
+            .help("Restart all matching video/GIF wallpapers together so they play in sync")
+
+            Button {
+                showSettings = true
+            } label: {
+                Image(systemName: "gearshape.fill").font(.callout)
+            }
+            .buttonStyle(.borderless)
+            .help("Settings")
+            .accessibilityLabel("Settings")
         }
         .padding(.horizontal, 20).padding(.vertical, 14)
         .background(.bar)
+        .sheet(isPresented: $showSettings) {
+            SettingsView(store: store, onClose: { showSettings = false })
+        }
     }
 
     // MARK: - Main Two-Column Content
@@ -133,7 +155,11 @@ struct WallpaperManagerView: View {
     private var mainContent: some View {
         HStack(spacing: 0) {
             libraryColumn
-            Divider()
+            // Prominent seam between the library and configuration columns. The system
+            // Divider all but vanishes on the pure-black theme, so use a clear border line.
+            Rectangle()
+                .fill(Color.luminaBorder)
+                .frame(width: 1)
             configurationColumn
         }
         .frame(maxHeight: .infinity)
@@ -172,11 +198,14 @@ struct WallpaperManagerView: View {
                     }
                     .buttonStyle(.plain)
                     .help(filter.helpText)
+                    .accessibilityLabel(filter.label)
+                    .accessibilityHint(filter.helpText)
+                    .accessibilityAddTraits(selectedFilter == filter ? .isSelected : [])
                 }
             }
             .background(.quaternary.opacity(0.4))
 
-            Divider()
+            LuminaDivider()
 
             // Grid
             ScrollView {
@@ -215,7 +244,7 @@ struct WallpaperManagerView: View {
             .background(.bar)
         }
         .frame(width: 400)
-        .background(Color(NSColor.controlBackgroundColor))
+        .background(Color.luminaBase)
     }
 
     // MARK: - Configuration Column (right)
@@ -225,9 +254,29 @@ struct WallpaperManagerView: View {
             // Monitor header
             HStack(spacing: 10) {
                 if let monitor = currentTargetMonitor {
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text("Configuring").font(.caption).foregroundStyle(.tertiary)
-                        Text(monitorLabel(for: monitor)).font(.subheadline.bold())
+                    HStack(spacing: 8) {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("Configuring").font(.caption).foregroundStyle(.tertiary)
+                            Text(monitorLabel(for: monitor)).font(.subheadline.bold())
+                        }
+
+                        // Prominent "pinned" status — best practice for surfacing
+                        // important persistence state at the top of the context.
+                        if let assignment = store.assignment(for: monitor.id),
+                           assignment.keepOnStartup {
+                            HStack(spacing: 4) {
+                                Image(systemName: "pin.fill")
+                                    .font(.caption2.weight(.bold))
+                                Text("Pinned")
+                                    .font(.caption2.weight(.semibold))
+                            }
+                            .foregroundStyle(.yellow)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 2)
+                            .background(.yellow.opacity(0.15))
+                            .clipShape(Capsule())
+                            .help("This wallpaper will automatically restore when Lumina launches")
+                        }
                     }
                 } else {
                     Text("No Display Selected").font(.subheadline).foregroundStyle(.secondary)
@@ -243,13 +292,13 @@ struct WallpaperManagerView: View {
             .padding(.horizontal, 16).padding(.vertical, 10)
             .background(.bar)
 
-            Divider()
+            LuminaDivider()
 
             if let monitor = currentTargetMonitor {
-                ScrollView {
-                    MonitorDetailPanel(monitor: monitor, store: store, showHeader: false)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                // No outer ScrollView: the panel pins its preview + action bar and scrolls
+                // only the settings in between.
+                MonitorDetailPanel(monitor: monitor, store: store, showHeader: false)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 Spacer()
                 VStack(spacing: 14) {
@@ -272,124 +321,178 @@ struct WallpaperManagerView: View {
         VStack(spacing: 0) {
             // Queue panel — collapsible above the controls row
             if !audioManager.library.isEmpty && showQueue {
-                Divider()
+                LuminaDivider()
                 queuePanel
             }
 
-            // Audio controls row
-            HStack(spacing: 8) {
-                // Transport
-                Group {
-                    Button { audioManager.previousTrack() } label: {
-                        Image(systemName: "backward.end.fill").font(.caption)
+            // Now-playing bar — larger, roomier, adaptive (the progress track absorbs
+            // any extra width as the window grows).
+            HStack(spacing: 16) {
+                nowPlayingArtwork
+
+                // Title + subtitle
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(nowPlayingTitle)
+                        .font(.system(size: 14, weight: .semibold))
+                        .lineLimit(1).truncationMode(.tail)
+                        .foregroundStyle(audioManager.trackURL != nil ? .primary : .secondary)
+                    Text("Ambient Audio")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                .frame(minWidth: 120, idealWidth: 170, maxWidth: 220, alignment: .leading)
+
+                // Transport — bigger, evenly spaced controls
+                HStack(spacing: 16) {
+                    // Loop toggle — highlights when repeat is on.
+                    transportIcon(
+                        "repeat",
+                        size: 14,
+                        active: audioManager.loops,
+                        help: audioManager.loops ? "Looping on — track repeats" : "Looping off"
+                    ) {
+                        audioManager.setLoops(!audioManager.loops)
                     }
-                    .help("Previous track")
+
+                    transportIcon("backward.end.fill", size: 15, help: "Previous track") {
+                        audioManager.previousTrack()
+                    }
                     .disabled(audioManager.library.count < 2)
 
-                    Button { audioManager.seek(by: -10) } label: {
-                        Image(systemName: "gobackward.10").font(.caption)
+                    transportIcon("gobackward.10", size: 15, help: "Skip back 10 seconds") {
+                        audioManager.seek(by: -10)
                     }
-                    .help("Skip back 10 seconds")
                     .disabled(audioManager.trackURL == nil)
 
                     Button { audioManager.toggle() } label: {
                         Image(systemName: audioManager.isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                            .font(.title3)
+                            .font(.system(size: 34))
                             .foregroundStyle(audioManager.trackURL != nil ? themeManager.current.color : .secondary)
                     }
+                    .buttonStyle(.plain)
                     .help(audioManager.isPlaying ? "Pause" : "Play")
+                    .accessibilityLabel(audioManager.isPlaying ? "Pause" : "Play")
                     .disabled(audioManager.trackURL == nil)
 
-                    Button { audioManager.seek(by: 10) } label: {
-                        Image(systemName: "goforward.10").font(.caption)
+                    transportIcon("goforward.10", size: 15, help: "Skip forward 10 seconds") {
+                        audioManager.seek(by: 10)
                     }
-                    .help("Skip forward 10 seconds")
                     .disabled(audioManager.trackURL == nil)
 
-                    Button { audioManager.nextTrack() } label: {
-                        Image(systemName: "forward.end.fill").font(.caption)
+                    // Skip to next track — always available when a track is loaded; with a single
+                    // track it restarts from the top so the control is never a dead end.
+                    transportIcon("forward.end.fill", size: 15, help: "Skip to next track") {
+                        if audioManager.library.count >= 2 {
+                            audioManager.nextTrack()
+                        } else {
+                            audioManager.seekToTime(0)
+                        }
                     }
-                    .help("Next track")
-                    .disabled(audioManager.library.count < 2)
+                    .disabled(audioManager.trackURL == nil)
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
 
-                // Track name
-                Text(audioManager.trackName)
-                    .font(.caption2).lineLimit(1).truncationMode(.middle)
-                    .frame(maxWidth: 110)
-
-                // Progress track
+                // Progress — expands to fill available width
                 if audioManager.duration > 0 {
-                    Text(formatAudioTime(audioManager.currentTime))
-                        .font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
-                        .frame(width: 34, alignment: .trailing)
-                    Slider(
-                        value: Binding(
-                            get: { audioManager.currentTime },
-                            set: { audioManager.seekToTime($0) }
-                        ),
-                        in: 0...max(audioManager.duration, 1)
-                    )
-                    .frame(width: 90)
-                    .controlSize(.mini)
-                    .help("Seek")
-                    Text(formatAudioTime(audioManager.duration))
-                        .font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
-                        .frame(width: 34, alignment: .leading)
+                    HStack(spacing: 8) {
+                        Text(formatAudioTime(audioManager.currentTime))
+                            .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                            .frame(width: 38, alignment: .trailing)
+                        Slider(
+                            value: Binding(
+                                get: { audioManager.currentTime },
+                                set: { audioManager.seekToTime($0) }
+                            ),
+                            in: 0...max(audioManager.duration, 1)
+                        )
+                        .help("Seek")
+                        Text(formatAudioTime(audioManager.duration))
+                            .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                            .frame(width: 38, alignment: .leading)
+                    }
+                    .frame(maxWidth: .infinity)
+                } else {
+                    Spacer(minLength: 12)
                 }
 
                 // Volume
-                Image(systemName: audioManager.volume < 0.01 ? "speaker.slash" : "speaker.wave.1")
-                    .font(.caption2).foregroundStyle(.secondary)
-                Slider(value: Binding(get: { audioManager.volume }, set: { audioManager.setVolume($0) }), in: 0...1)
-                    .frame(width: 56).controlSize(.mini).help("Ambient audio volume")
+                HStack(spacing: 8) {
+                    Image(systemName: audioManager.volume < 0.01 ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                        .font(.system(size: 13)).foregroundStyle(.secondary)
+                        .frame(width: 18, alignment: .leading)
+                    Slider(value: Binding(get: { audioManager.volume }, set: { audioManager.setVolume($0) }), in: 0...1)
+                        .frame(width: 84).help("Ambient audio volume")
+                }
 
-                Spacer()
+                LuminaVerticalDivider().frame(height: 26)
 
-                // Library management
-                Button("Add Track…") { audioManager.chooseTrack() }
-                    .buttonStyle(.bordered).controlSize(.small)
-                    .help("Add audio tracks to your music library")
+                // Library actions
+                Button { audioManager.chooseTrack() } label: {
+                    Label("Add Track", systemImage: "plus.circle.fill").font(.callout)
+                }
+                .buttonStyle(.borderless)
+                .help("Add audio tracks to your music library")
 
                 if audioManager.trackURL != nil {
-                    Button { audioManager.clearTrack() } label: {
-                        Image(systemName: "xmark.circle").foregroundStyle(.secondary)
-                    }.buttonStyle(.plain).help("Stop and clear current track")
-                }
-
-                // Queue toggle
-                Button {
-                    withAnimation(.easeInOut(duration: 0.18)) { showQueue.toggle() }
-                } label: {
-                    Image(systemName: "list.bullet.rectangle")
-                        .font(.caption)
-                        .foregroundStyle(showQueue ? themeManager.current.color : .secondary)
-                }
-                .buttonStyle(.plain)
-                .help(showQueue ? "Hide queue" : "Show music queue")
-
-                Divider().frame(height: 20)
-
-                // Accent colour dots
-                HStack(spacing: 5) {
-                    ForEach(AccentTheme.allCases) { theme in
-                        Button { themeManager.set(theme) } label: {
-                            Circle()
-                                .fill(theme == .system ? AnyShapeStyle(Color.secondary.opacity(0.6)) : AnyShapeStyle(theme.color))
-                                .frame(width: 13, height: 13)
-                                .overlay(Circle().strokeBorder(themeManager.current == theme ? Color.primary : Color.clear, lineWidth: 2))
-                        }
-                        .buttonStyle(.plain).help(theme.label)
+                    transportIcon("xmark.circle.fill", size: 16, help: "Stop and clear current track") {
+                        audioManager.clearTrack()
                     }
                 }
 
-                Divider().frame(height: 20)
-                Button("Close") { NSApp.keyWindow?.close() }.buttonStyle(.bordered).controlSize(.small)
+                transportIcon(
+                    "list.bullet.rectangle",
+                    size: 16,
+                    active: showQueue,
+                    help: showQueue ? "Hide queue" : "Show music queue"
+                ) {
+                    withAnimation(.easeInOut(duration: 0.18)) { showQueue.toggle() }
+                }
             }
-            .padding(.horizontal, 16).padding(.vertical, 10)
+            .padding(.horizontal, 20).padding(.vertical, 14)
         }
+    }
+
+    /// Small rounded album-art tile used in the now-playing bar.
+    private var nowPlayingArtwork: some View {
+        RoundedRectangle(cornerRadius: 10, style: .continuous)
+            .fill(
+                LinearGradient(
+                    colors: [themeManager.current.color.opacity(0.9),
+                             themeManager.current.color.opacity(0.5)],
+                    startPoint: .topLeading, endPoint: .bottomTrailing
+                )
+            )
+            .frame(width: 46, height: 46)
+            .overlay(
+                Image(systemName: audioManager.isPlaying ? "waveform" : "music.note")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(.white)
+            )
+            .opacity(audioManager.trackURL != nil ? 1 : 0.5)
+    }
+
+    private var nowPlayingTitle: String {
+        guard audioManager.trackURL != nil else { return "No track selected" }
+        let stem = (audioManager.trackName as NSString).deletingPathExtension
+        return stem.isEmpty ? audioManager.trackName : stem
+    }
+
+    /// A flat icon button for the now-playing bar with a consistent hit target.
+    private func transportIcon(
+        _ symbol: String,
+        size: CGFloat,
+        active: Bool = false,
+        help: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: size, weight: .medium))
+                .foregroundStyle(active ? themeManager.current.color : .secondary)
+                .frame(width: 26, height: 26)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .accessibilityLabel(help)
     }
 
     // MARK: - Music Queue Panel
@@ -447,6 +550,7 @@ struct WallpaperManagerView: View {
                                 .foregroundStyle(.tertiary)
                         }
                         .buttonStyle(.plain)
+                        .accessibilityLabel("Remove \(track.name) from queue")
                     }
                     .padding(.vertical, 2)
                     .listRowBackground(
@@ -463,7 +567,7 @@ struct WallpaperManagerView: View {
             .listStyle(.plain)
             .frame(height: min(CGFloat(audioManager.library.count) * 30 + 8, 130))
         }
-        .background(Color(NSColor.controlBackgroundColor))
+        .background(Color.luminaBase)
     }
 
     private func formatQueueDuration(_ track: AmbientAudioManager.AudioTrack) -> String {
@@ -582,13 +686,19 @@ struct WallpaperGridItem: View {
                             Button { onApply() } label: {
                                 Image(systemName: "checkmark.circle.fill")
                                     .font(.title2).foregroundStyle(.white)
-                            }.buttonStyle(.plain).help("Set as Wallpaper")
+                            }
+                            .buttonStyle(.plain)
+                            .help("Set as Wallpaper")
+                            .accessibilityLabel("Set as Wallpaper")
 
                             Button { onFavorite() } label: {
                                 Image(systemName: isFavorite ? "star.fill" : "star")
                                     .font(.title3)
                                     .foregroundStyle(isFavorite ? Color.yellow : .white)
-                            }.buttonStyle(.plain).help("Favorite")
+                            }
+                            .buttonStyle(.plain)
+                            .help(isFavorite ? "Remove from Favorites" : "Add to Favorites")
+                            .accessibilityLabel(isFavorite ? "Remove from Favorites" : "Add to Favorites")
                         }
                     )
                     .transition(.opacity)
@@ -623,6 +733,10 @@ struct WallpaperGridItem: View {
         }
         .onHover { isHovered = $0 }
         .onTapGesture { onApply() }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(recent.displayName)
+        .accessibilityHint(isSelected ? "Currently assigned wallpaper" : "Set as wallpaper")
+        .accessibilityAddTraits(.isButton)
         .overlay(alignment: .bottom) {
             Text(recent.displayName)
                 .font(.caption2)

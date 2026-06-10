@@ -1,19 +1,76 @@
-import XCTest
 @testable import Lumina
 
-final class PowerManagerTests: XCTestCase {
+#if canImport(Testing)
+import Testing
 
-    func testInitialPolicy() throws {
-        let pm = PowerManager()
-        // On a typical dev machine this should be normal (or throttled if thermally stressed)
-        let isNormalOrThrottled = pm.currentPolicy == .normal || {
-            if case .throttled = pm.currentPolicy { return true }
-            return false
-        }()
-        XCTAssertTrue(isNormalOrThrottled)
+@MainActor
+struct PowerManagerTests {
+
+    /// True when the policy is .normal or .throttled — the two states a healthy,
+    /// unpaused dev machine can legitimately be in.
+    private func isNormalOrThrottled(_ pm: PowerManager) -> Bool {
+        if pm.currentPolicy == .normal { return true }
+        if case .throttled = pm.currentPolicy { return true }
+        return false
     }
 
-    func testManualPauseAndResume() throws {
+    @Test func initialPolicy() {
+        let pm = PowerManager()
+        #expect(isNormalOrThrottled(pm))
+    }
+
+    @Test func manualPauseAndResume() {
+        let pm = PowerManager()
+
+        pm.pauseManually()
+        if case .paused(let reason) = pm.currentPolicy {
+            #expect(reason == .manual)
+        } else {
+            Issue.record("Expected paused state after manual pause")
+        }
+
+        pm.resumeManually()
+        #expect(isNormalOrThrottled(pm))
+    }
+
+    @Test func fullscreenPauseRespected() {
+        let pm = PowerManager()
+        pm.respectFullscreenApps = true
+
+        pm.updateFullscreenObscured(true)
+        if case .paused(let reason) = pm.currentPolicy {
+            #expect(reason == .fullscreenApp)
+        } else {
+            Issue.record("Expected fullscreen pause")
+        }
+
+        pm.updateFullscreenObscured(false)
+        // After un-obscured we re-evaluate; it should no longer be the fullscreen pause reason
+        if case .paused(let reason) = pm.currentPolicy {
+            #expect(reason != .fullscreenApp)
+        }
+    }
+}
+#elseif canImport(XCTest)
+import XCTest
+
+@MainActor
+final class PowerManagerTests: XCTestCase {
+
+    /// True when the policy is .normal or .throttled — the two states a healthy,
+    /// unpaused dev machine can legitimately be in.
+    private func isNormalOrThrottled(_ pm: PowerManager) -> Bool {
+        if pm.currentPolicy == .normal { return true }
+        if case .throttled = pm.currentPolicy { return true }
+        return false
+    }
+
+    func testInitialPolicy() {
+        let pm = PowerManager()
+        XCTAssertTrue(isNormalOrThrottled(pm))
+    }
+
+    func testManualPauseAndResume() {
         let pm = PowerManager()
 
         pm.pauseManually()
@@ -24,14 +81,10 @@ final class PowerManagerTests: XCTestCase {
         }
 
         pm.resumeManually()
-        let isNormalOrThrottled = pm.currentPolicy == .normal || {
-            if case .throttled = pm.currentPolicy { return true }
-            return false
-        }()
-        XCTAssertTrue(isNormalOrThrottled)
+        XCTAssertTrue(isNormalOrThrottled(pm))
     }
 
-    func testFullscreenPauseRespected() throws {
+    func testFullscreenPauseRespected() {
         let pm = PowerManager()
         pm.respectFullscreenApps = true
 
@@ -49,3 +102,4 @@ final class PowerManagerTests: XCTestCase {
         }
     }
 }
+#endif

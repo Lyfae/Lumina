@@ -12,6 +12,10 @@ final class AmbientAudioManager: NSObject, ObservableObject {
     @Published var loops: Bool = true
     @Published var currentTime: Double = 0
     @Published var duration: Double = 0
+    /// When on, a floating now-playing widget appears while the Studio window is minimized.
+    @Published var showWidgetWhenMinimized: Bool = true {
+        didSet { UserDefaults.standard.set(showWidgetWhenMinimized, forKey: widgetKey) }
+    }
     /// Persistent library of audio tracks the user has added
     @Published private(set) var library: [AudioTrack] = []
 
@@ -30,12 +34,14 @@ final class AmbientAudioManager: NSObject, ObservableObject {
     private let loopsKey         = "Lumina.AmbientAudio.Loops"
     private let libraryKey       = "Lumina.AmbientAudio.Library"
     private let durationCacheKey = "Lumina.AmbientAudio.Durations"
+    private let widgetKey        = "Lumina.AmbientAudio.ShowWidgetWhenMinimized"
 
     private override init() {
         super.init()
         let savedVolume = UserDefaults.standard.double(forKey: volumeKey).clamped(to: 0...1)
         volume = savedVolume == 0 ? 0.5 : savedVolume
         loops = UserDefaults.standard.object(forKey: loopsKey) as? Bool ?? true
+        showWidgetWhenMinimized = UserDefaults.standard.object(forKey: widgetKey) as? Bool ?? true
         loadLibrary()
         if let path = UserDefaults.standard.string(forKey: trackURLKey) {
             let url = URL(fileURLWithPath: path)
@@ -193,9 +199,14 @@ final class AmbientAudioManager: NSObject, ObservableObject {
         do {
             stopPlaybackTimer()
             let p = try AVAudioPlayer(contentsOf: url)
-            p.numberOfLoops = loops ? -1 : 0
+            // We always play the file exactly once and drive looping / auto-advance ourselves
+            // in `audioPlayerDidFinishPlaying`. Using AVAudioPlayer's own `numberOfLoops = -1`
+            // breaks when the user turns looping off mid-play: the player's internal play-count
+            // is already exceeded, so it instantly reports "finished" (the timer jumps to the
+            // end) while the audio buffer keeps draining.
+            p.numberOfLoops = 0
             p.volume = Float(volume)
-            p.delegate = self   // enables auto-advance when track ends
+            p.delegate = self   // drives loop-restart / auto-advance when the track ends
             p.prepareToPlay()
             player = p
             trackURL = url
@@ -205,7 +216,7 @@ final class AmbientAudioManager: NSObject, ObservableObject {
             addToLibrary(url: url)
             return true
         } catch {
-            print("[AmbientAudio] Failed to load: \(error)")
+            LuminaLog.audio.error("Failed to load: \(error)")
             return false
         }
     }
@@ -248,7 +259,9 @@ final class AmbientAudioManager: NSObject, ObservableObject {
 
     func setLoops(_ enabled: Bool) {
         loops = enabled
-        player?.numberOfLoops = enabled ? -1 : 0
+        // Looping is handled in the finish callback (player always plays once), so toggling
+        // this never disturbs the currently playing track — no timer jump on unloop.
+        player?.numberOfLoops = 0
         UserDefaults.standard.set(enabled, forKey: loopsKey)
     }
 
@@ -262,17 +275,49 @@ final class AmbientAudioManager: NSObject, ObservableObject {
         duration = 0
         UserDefaults.standard.removeObject(forKey: trackURLKey)
     }
+
+    // MARK: - End-of-track handling
+
+    /// Called when the current track finishes. Repeats it when looping is on, otherwise
+    /// advances to the next track in the library (and stops cleanly at the end of the list).
+    private func handleTrackFinished() {
+        if loops {
+            // Repeat the current track from the top.
+            player?.currentTime = 0
+            player?.play()
+            isPlaying = player?.isPlaying ?? false
+            startPlaybackTimer()
+            return
+        }
+
+        // Auto-advance to the next track in the library.
+        guard let current = trackURL,
+              let idx = library.firstIndex(where: { $0.url == current }) else {
+            isPlaying = false
+            stopPlaybackTimer()
+            return
+        }
+
+        let nextIdx = idx + 1
+        if nextIdx < library.count {
+            selectTrack(library[nextIdx])
+            play()
+        } else {
+            // Reached the end of the playlist without looping — stop cleanly on the last frame.
+            isPlaying = false
+            currentTime = duration
+            stopPlaybackTimer()
+        }
+    }
 }
 
-// MARK: - Auto-advance to next track when current one finishes
+// MARK: - Loop restart / auto-advance when the current track finishes
 
 extension AmbientAudioManager: AVAudioPlayerDelegate {
     nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
         guard flag else { return }
         Task { @MainActor [weak self] in
-            guard let self else { return }
-            // Only auto-advance in non-loop mode
-            if !self.loops { self.nextTrack() }
+            self?.handleTrackFinished()
         }
     }
 }

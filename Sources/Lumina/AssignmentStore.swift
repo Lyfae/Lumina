@@ -5,9 +5,8 @@ import AppKit
 /// Handles persistence, loading with fallbacks, and fail-safe behavior.
 ///
 /// Two separate persistence buckets:
-///   • `Lumina.MonitorAssignments.v1`  — per-monitor assignments (cleared on every launch; only
-///     items with keepOnStartup=true are written here, and they are currently not auto-restored
-///     so displays always start black).
+///   • `Lumina.MonitorAssignments.v1`  — only assignments where the user explicitly enabled
+///     "Keep this wallpaper on startup" are persisted here and auto-restored on launch.
 ///   • `Lumina.LibraryItems.v1`        — user's wallpaper library (always persisted and restored
 ///     so the library survives app restarts without replaying any wallpapers).
 @MainActor
@@ -22,8 +21,9 @@ final class AssignmentStore: ObservableObject {
 
     init() {
         loadPersistencePreference()
-        // Wipe per-monitor assignments so displays always start black.
-        UserDefaults.standard.removeObject(forKey: persistenceKey)
+        // Load any pinned (keepOnStartup) per-monitor assignments.
+        // This is what makes the "Keep this wallpaper on startup" toggle actually work.
+        loadAssignments()
         // Library items are always restored (they don't auto-play anything).
         loadLibraryItems()
     }
@@ -49,7 +49,10 @@ final class AssignmentStore: ObservableObject {
 
         if assignment.monitorIdentifier.hasPrefix("library-import-") {
             saveLibraryItems()
-        } else if persistAssignments && assignment.keepOnStartup {
+        } else if assignment.keepOnStartup {
+            // A pinned wallpaper must always persist — that is the entire purpose of the
+            // "Keep this wallpaper on startup" toggle. It must work regardless of the separate
+            // global "Remember wallpapers on startup" preference (which gates the un-pinned UI).
             saveAssignments()
         }
     }
@@ -72,6 +75,14 @@ final class AssignmentStore: ObservableObject {
         }
     }
 
+    /// Public helper so the UI layer can force a filtered save (e.g. when user turns
+    /// "Keep on startup" off so we immediately drop the entry from persistence).
+    func forceSaveAssignments() {
+        if persistAssignments {
+            saveAssignments()
+        }
+    }
+
     // MARK: - Per-Monitor Persistence (clean-start; only written, never auto-read on launch)
 
     private func loadPersistencePreference() {
@@ -89,7 +100,38 @@ final class AssignmentStore: ObservableObject {
             let data = try JSONEncoder().encode(toSave)
             UserDefaults.standard.set(data, forKey: persistenceKey)
         } catch {
-            print("[AssignmentStore] Failed to save assignments: \(error)")
+            LuminaLog.app.error("Failed to save assignments: \(error)")
+        }
+    }
+
+    /// Loads per-monitor assignments that the user explicitly pinned with "Keep on startup".
+    /// Only items with `keepOnStartup == true` and whose media still exists on disk are restored.
+    private func loadAssignments() {
+        guard let data = UserDefaults.standard.data(forKey: persistenceKey) else { return }
+        do {
+            let saved = try JSONDecoder().decode([String: MonitorAssignment].self, from: data)
+
+            for (key, item) in saved where item.keepOnStartup && !key.hasPrefix("library-import-") {
+                // Verify the media (or at least one slideshow image) still exists
+                let hasValidMedia: Bool = {
+                    if !item.slideshowItems.isEmpty {
+                        return item.slideshowItems.contains { path in
+                            FileManager.default.fileExists(atPath: (path as NSString).expandingTildeInPath)
+                        }
+                    }
+                    guard let path = item.filePath else { return false }
+                    return FileManager.default.fileExists(atPath: (path as NSString).expandingTildeInPath)
+                }()
+
+                if hasValidMedia {
+                    assignments[key] = item
+                } else {
+                    LuminaLog.app.warning("Skipping pinned assignment for \(key) — media no longer exists on disk.")
+                }
+            }
+            LuminaLog.persistence.info("Loaded \(assignments.filter { $0.value.keepOnStartup }.count) pinned per-monitor assignment(s).")
+        } catch {
+            LuminaLog.persistence.error("Failed to decode pinned assignments: \(error)")
         }
     }
 
@@ -107,9 +149,9 @@ final class AssignmentStore: ObservableObject {
                     assignments[key] = item
                 }
             }
-            print("[AssignmentStore] Loaded \(items.count) library item(s).")
+            LuminaLog.persistence.info("Loaded \(items.count) library item(s).")
         } catch {
-            print("[AssignmentStore] Failed to decode library: \(error)")
+            LuminaLog.persistence.error("Failed to decode library: \(error)")
             // Do not crash the app — just start with an empty library this time.
             // The custom decoder on MonitorAssignment should prevent most future decode failures.
         }
@@ -121,7 +163,7 @@ final class AssignmentStore: ObservableObject {
             let data = try JSONEncoder().encode(items)
             UserDefaults.standard.set(data, forKey: libraryKey)
         } catch {
-            print("[AssignmentStore] Failed to save library: \(error)")
+            LuminaLog.persistence.error("Failed to save library: \(error)")
         }
     }
 

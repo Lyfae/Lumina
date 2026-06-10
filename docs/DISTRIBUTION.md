@@ -10,11 +10,11 @@ Everything you need to build, sign, notarize, and ship Lumina.
 ./scripts/build-dmg.sh
 ```
 
-Produces `dist/Lumina-1.0.0.dmg` — a drag-to-install DMG with a proper `.app` bundle, `Info.plist`, icon, and resource bundle. No Xcode project required.
+Produces `dist/Lumina-0.1.0.dmg` — a drag-to-install DMG with a proper `.app` bundle, `Info.plist`, icon, and resource bundle. No Xcode project required.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `VERSION` | `1.0.0` | `CFBundleShortVersionString` |
+| `VERSION` | `0.1.0` | `CFBundleShortVersionString` |
 | `BUILD_NUMBER` | `1` | `CFBundleVersion` |
 | `ARCH` | `arm64` | `arm64`, `x86_64`, or `universal` |
 | `SIGN_IDENTITY` | *(empty)* | `"Developer ID Application: Name (TEAMID)"` |
@@ -22,7 +22,7 @@ Produces `dist/Lumina-1.0.0.dmg` — a drag-to-install DMG with a proper `.app` 
 ```bash
 # Signed universal binary
 ARCH=universal SIGN_IDENTITY="Developer ID Application: Paul (XXXXXXXXXX)" \
-  VERSION=1.0.0 ./scripts/build-dmg.sh
+  VERSION=0.1.0 ./scripts/build-dmg.sh
 ```
 
 ---
@@ -80,15 +80,15 @@ xcrun notarytool store-credentials "AC_PASSWORD" \
   --password "app-specific-password"   # generate at appleid.apple.com
 
 # 2. Submit and wait
-xcrun notarytool submit dist/Lumina-1.0.0.dmg \
+xcrun notarytool submit dist/Lumina-0.1.0.dmg \
   --keychain-profile "AC_PASSWORD" \
   --wait
 
 # 3. Staple the ticket
-xcrun stapler staple dist/Lumina-1.0.0.dmg
+xcrun stapler staple dist/Lumina-0.1.0.dmg
 
 # 4. Verify
-spctl --assess -vv dist/Lumina-1.0.0.dmg
+spctl --assess -vv dist/Lumina-0.1.0.dmg
 ```
 
 ---
@@ -112,9 +112,9 @@ User experience: open DMG → drag app → done. Three seconds, no installer.
 
 ## Releasing on GitHub
 
-1. Tag the commit: `git tag v1.0.0 && git push origin v1.0.0`
+1. Tag the commit: `git tag v0.1.0 && git push origin v0.1.0`
 2. Create a GitHub Release from the tag
-3. Upload `dist/Lumina-1.0.0.dmg` as the release asset
+3. Upload `dist/Lumina-0.1.0.dmg` as the release asset
 4. Write release notes (what's new, bug fixes)
 
 ---

@@ -134,34 +134,34 @@ extension WhatsNewView {
         // For now we show the highlights for the active release.
         return [
             ChangelogEntry(
-                icon: "display.2",
-                title: "New Choose Display Window",
-                description: "A beautiful floating window with unmistakable yellow/gold selection highlighting. Click any monitor to instantly configure it."
+                icon: "music.note.list",
+                title: "Redesigned Music Player",
+                description: "A roomier now-playing bar with album art, bigger transport controls, a loop toggle, and skip — plus a floating mini-player that pops out when you minimize the Studio window."
             ),
             ChangelogEntry(
-                icon: "rectangle.on.rectangle",
-                title: "Recent Wallpapers Canvas",
-                description: "A horizontal strip of your previously used wallpapers with real thumbnails. Click any one to instantly apply it to the selected display."
+                icon: "macwindow.on.rectangle",
+                title: "Adaptive, Resizable Window",
+                description: "The Studio window now resizes freely to whatever size you like — crisp at every size, with no wasted empty space. Your size is remembered between launches."
             ),
             ChangelogEntry(
-                icon: "person.crop.circle",
-                title: "Welcome & What's New for Everyone",
-                description: "The welcome screen and changelog are now easily accessible from the menu bar and inside the Wallpaper Manager — no more digging in Debug menus."
+                icon: "slider.horizontal.3",
+                title: "Preview First, Then Apply",
+                description: "Stage brightness, opacity, color, crop and more on a live WYSIWYG preview, then commit it all to the desktop with one Apply — which now clearly shows when you're up to date."
             ),
             ChangelogEntry(
-                icon: "wand.and.stars",
-                title: "Cleaner Manager Experience",
-                description: "Removed the old workflow instructions. Display information moved down. Configuration only appears when you have actually selected a screen."
+                icon: "arrow.triangle.2.circlepath",
+                title: "Sync Displays",
+                description: "Running the same video or GIF across multiple monitors but out of phase? One click restarts them together so they play in perfect lockstep."
+            ),
+            ChangelogEntry(
+                icon: "gearshape.fill",
+                title: "New Settings Panel",
+                description: "Theme (dark / light / match system), accent color, launch at login, startup restore, sync, and battery & performance profiles — all in one tidy place."
             ),
             ChangelogEntry(
                 icon: "bolt.fill",
-                title: "Better Power & Playback Reliability",
-                description: "Videos no longer freeze while the manager or Choose Display window is open. Smoother low-power mode handling and thermal awareness."
-            ),
-            ChangelogEntry(
-                icon: "paintbrush.fill",
-                title: "Polished Selection & Visual Feedback",
-                description: "Much stronger visual indication when choosing monitors, matching the experience you loved in Wallpaper Engine."
+                title: "Battery & Performance That Works",
+                description: "Performance profiles, Low Power Mode pausing, thermal throttling, and pause-behind-fullscreen all take effect on the live wallpaper immediately."
             )
         ]
     }

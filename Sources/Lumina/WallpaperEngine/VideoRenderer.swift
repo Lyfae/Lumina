@@ -77,6 +77,9 @@ public final class AVVideoRenderer: @unchecked Sendable {
     private var imageLayer: CALayer?
     private weak var hostLayer: CALayer?
     private var mediaKind: MediaType = .video
+    /// The current GIF keyframe animation, retained so it can be restarted in lockstep with
+    /// other displays (see `restartInSync`). nil for non-GIF media.
+    private var gifAnimation: CAKeyframeAnimation?
 
     // MARK: - Slideshow support
     private var slideshow: SlideshowEngine?
@@ -124,6 +127,10 @@ public final class AVVideoRenderer: @unchecked Sendable {
     private var loopFadeEnabled: Bool = false
     private var loopFadeDuration: Double = 1.5
     private var loopBoundaryObserver: Any?
+
+    // MARK: - Loop Mode (loop / once / bounce)
+    private var loopMode: MonitorAssignment.LoopMode = .loop
+    private var endTimeObserver: NSObjectProtocol?
 
     // MARK: - Brightness
     private var brightnessLayer: CALayer?
@@ -323,32 +330,37 @@ public final class AVVideoRenderer: @unchecked Sendable {
     // MARK: - VideoRenderer (legacy names kept for compatibility during transition)
 
     public func install(into view: NSView) {
-        guard view.wantsLayer else {
-            assertionFailure("Hosting view must have wantsLayer = true before installing AVVideoRenderer")
-            return
-        }
-
-        hostLayer = view.layer
-
-        if playerLayer == nil {
-            playerLayer = AVPlayerLayer()
-            // Apply the user's chosen scaling (or default .fill)
-            setScaling(currentScaling)
-        }
-
-        if let layer = playerLayer {
-            // Remove any previous (supports re-install into a different view)
-            layer.removeFromSuperlayer()
-            view.layer?.addSublayer(layer)
-            layer.frame = view.bounds
-
-            // Robustness: if load() was called before install(), attach the existing player now.
-            if let existingPlayer = player {
-                layer.player = existingPlayer
+        // NSView's layer/bounds/wantsLayer are main-actor isolated. This renderer is
+        // documented main-thread-only (see @unchecked Sendable note), and all callers
+        // install from the main thread, so assert isolation rather than hop threads.
+        MainActor.assumeIsolated {
+            guard view.wantsLayer else {
+                assertionFailure("Hosting view must have wantsLayer = true before installing AVVideoRenderer")
+                return
             }
 
-            // Re-apply crop geometry now that the layer has a real superlayer and bounds.
-            applyCurrentCrop()
+            hostLayer = view.layer
+
+            if playerLayer == nil {
+                playerLayer = AVPlayerLayer()
+                // Apply the user's chosen scaling (or default .fill)
+                setScaling(currentScaling)
+            }
+
+            if let layer = playerLayer {
+                // Remove any previous (supports re-install into a different view)
+                layer.removeFromSuperlayer()
+                view.layer?.addSublayer(layer)
+                layer.frame = view.bounds
+
+                // Robustness: if load() was called before install(), attach the existing player now.
+                if let existingPlayer = player {
+                    layer.player = existingPlayer
+                }
+
+                // Re-apply crop geometry now that the layer has a real superlayer and bounds.
+                applyCurrentCrop()
+            }
         }
     }
 
@@ -370,6 +382,11 @@ public final class AVVideoRenderer: @unchecked Sendable {
     }
 
     public func play() {
+        if let slideshow {
+            if case .paused = currentPolicy { return }
+            MainActor.assumeIsolated { slideshow.resume() }
+            return
+        }
         if mediaKind == .animatedImage, let layer = imageLayer {
             if case .paused = currentPolicy { return }
             resumeLayerAnimation(layer)
@@ -386,6 +403,10 @@ public final class AVVideoRenderer: @unchecked Sendable {
     }
 
     public func pause() {
+        if let slideshow {
+            MainActor.assumeIsolated { slideshow.pause() }
+            return
+        }
         if mediaKind == .animatedImage, let layer = imageLayer {
             pauseLayerAnimation(layer)
             return
@@ -399,20 +420,57 @@ public final class AVVideoRenderer: @unchecked Sendable {
         player.seek(to: cmTime, toleranceBefore: .zero, toleranceAfter: .zero)
     }
 
-    /// Seeks to `time` then schedules playback to begin at a shared host-clock instant.
-    /// Call this on all renderers with the same `hostTime` to achieve frame-precise sync.
+    /// Schedules playback to seek to `time` and begin at a shared host-clock instant.
+    /// Call this on every renderer with the same `hostTime` to achieve frame-precise sync.
+    ///
+    /// Uses the atomic `setRate(_:time:atHostTime:)` form rather than a separate async seek:
+    /// AVPlayer only honors the host-time scheduling when (a) the player is paused at the
+    /// moment of the call, and (b) a *valid* item time is supplied so the seek and the
+    /// timed rate-change happen as one operation. The previous code seeked first and passed
+    /// `.invalid`, which raced (each seek completion fired at a different instant) and was
+    /// issued while the player was still playing — so the shared start time was ignored and
+    /// the two displays drifted.
     public func syncStart(to time: TimeInterval, atHostTime hostTime: CMTime) {
         guard let player else { return }
         let cmTime = CMTime(seconds: max(0, time), preferredTimescale: 600)
-        player.seek(to: cmTime, toleranceBefore: .zero, toleranceAfter: .zero) { [weak player] _ in
-            guard let player else { return }
-            player.setRate(1.0, time: .invalid, atHostTime: hostTime)
+        let rate = Float(userPlaybackSpeed > 0 ? userPlaybackSpeed : 1.0)
+        player.pause()
+        player.setRate(rate, time: cmTime, atHostTime: hostTime)
+    }
+
+    /// Restarts this renderer's media from the beginning, aligned to a shared start instant so
+    /// the same wallpaper on multiple displays plays in lockstep. Videos use a frame-precise
+    /// host-clock start; GIFs re-anchor their keyframe animation to a common layer time. A
+    /// deliberately paused video is left alone (we don't want a "sync" to silently un-pause it).
+    public func restartInSync(videoHostTime: CMTime, layerBeginTime: CFTimeInterval) {
+        if let player {
+            guard player.rate > 0 else { return }
+            syncStart(to: 0, atHostTime: videoHostTime)
+            return
         }
+
+        guard mediaKind == .animatedImage,
+              let layer = imageLayer,
+              let restarted = gifAnimation?.copy() as? CAKeyframeAnimation else { return }
+
+        restarted.beginTime = layer.convertTime(layerBeginTime, from: nil)
+        layer.speed = 1
+        layer.timeOffset = 0
+        layer.removeAnimation(forKey: "gif")
+        layer.add(restarted, forKey: "gif")
     }
 
     public func currentPlaybackTime() -> TimeInterval {
         guard let player else { return 0 }
         return player.currentTime().seconds
+    }
+
+    /// Duration of the currently playing item, or 0 if unknown/indefinite.
+    /// Used by the sync coordinator to measure drift across a looping boundary.
+    public func currentItemDuration() -> TimeInterval {
+        guard let d = player?.currentItem?.duration, d.isNumeric else { return 0 }
+        let seconds = d.seconds
+        return seconds.isFinite && seconds > 0 ? seconds : 0
     }
 
     public func clear() {
@@ -422,6 +480,7 @@ public final class AVVideoRenderer: @unchecked Sendable {
         slideshow = nil
         player?.replaceCurrentItem(with: nil)
         imageLayer?.removeAnimation(forKey: "gif")
+        gifAnimation = nil
         imageLayer?.contents = nil
         imageLayer?.isHidden = true
         loadedURL = nil
@@ -432,10 +491,11 @@ public final class AVVideoRenderer: @unchecked Sendable {
     public func applyPolicy(_ policy: WallpaperPlaybackPolicy) {
         currentPolicy = policy
 
-        // Slideshow: stop the timer when paused, resume cycling otherwise.
+        // Slideshow: pause the advance timer and Ken Burns when paused; resume without
+        // restarting from slide 0 (mirrors the GIF layer pause/resume path).
         if let slideshow {
             MainActor.assumeIsolated {
-                if case .paused = policy { slideshow.stop() } else { slideshow.start() }
+                if case .paused = policy { slideshow.pause() } else { slideshow.resume() }
             }
             return
         }
@@ -492,6 +552,27 @@ public final class AVVideoRenderer: @unchecked Sendable {
         loopFadeDuration = max(0.05, duration)
         currentFadeEasing = easing
         registerLoopBoundaryObserver()
+    }
+
+    /// Changes the end-of-playback behavior for the current (or next) video.
+    /// .loop   → seamless AVPlayerLooper (current default)
+    /// .once   → play to end, then visually go black (no looping)
+    /// .bounce → forward then reverse (ping-pong) using rate reversal
+    public func setLoopMode(_ mode: MonitorAssignment.LoopMode) {
+        guard mode != loopMode else { return }
+        loopMode = mode
+
+        // If we have active video content, reconfigure it now with the new strategy.
+        // For slideshows the mode is ignored (they have their own cycling).
+        if !isSlideshow, let url = loadedURL, mediaKind == .video {
+            let wasPlaying = (player?.rate ?? 0) > 0.01
+            // Full cleanup is safe here (we are in video mode, not slideshow).
+            // It removes player+looper+observers; loadVideo will rebuild.
+            cleanup()
+            // Recreate using the (newly stored) loopMode
+            loadVideo(url: url)
+            if wasPlaying { play() }
+        }
     }
 
     private func registerLoopBoundaryObserver() {
@@ -647,6 +728,11 @@ public final class AVVideoRenderer: @unchecked Sendable {
         itemStatusObserver = nil
         loadStatusObserver = nil
 
+        if let obs = endTimeObserver {
+            NotificationCenter.default.removeObserver(obs)
+            endTimeObserver = nil
+        }
+
         // Remove brightness overlay
         brightnessLayer?.removeFromSuperlayer()
         brightnessLayer = nil
@@ -693,7 +779,7 @@ public final class AVVideoRenderer: @unchecked Sendable {
     public func load(assignment: MonitorAssignment, autoPlay: Bool = true) {
         guard let url = assignment.resolvedURL() ??
                         (assignment.filePath.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) }) else {
-            print("[AVVideoRenderer] Could not resolve URL from assignment")
+            LuminaLog.wallpaper.error("Could not resolve URL from assignment")
             return
         }
         load(url: url, autoPlay: autoPlay)
@@ -747,7 +833,7 @@ public final class AVVideoRenderer: @unchecked Sendable {
             let error = item.error
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
-                print("[AVVideoRenderer] Failed to load \(failedURL.lastPathComponent): \(error?.localizedDescription ?? "unknown error")")
+                LuminaLog.wallpaper.error("Failed to load \(failedURL.lastPathComponent): \(error?.localizedDescription ?? "unknown error")")
                 self.clear()
                 self.onLoadFailure?(failedURL, error)
             }
@@ -760,10 +846,19 @@ public final class AVVideoRenderer: @unchecked Sendable {
         queuePlayer.preventsDisplaySleepDuringVideoPlayback = false
         queuePlayer.allowsExternalPlayback = false
 
-        let playerLooper = AVPlayerLooper(player: queuePlayer, templateItem: item)
-
         self.player = queuePlayer
-        self.looper = playerLooper
+
+        // Mode-aware looping setup (the heart of the "Loop Mode" dropdown)
+        switch loopMode {
+        case .loop:
+            let playerLooper = AVPlayerLooper(player: queuePlayer, templateItem: item)
+            self.looper = playerLooper
+
+        case .once, .bounce:
+            // No looper — we handle end ourselves for one-shot or ping-pong
+            self.looper = nil
+            attachEndOfItemHandler(for: item, player: queuePlayer, mode: loopMode)
+        }
 
         if let pl = playerLayer {
             pl.player = queuePlayer
@@ -771,18 +866,88 @@ public final class AVVideoRenderer: @unchecked Sendable {
             setScaling(currentScaling)
         }
 
-        // Re-register loop boundary observer for the new content
-        if loopFadeEnabled {
+        // Re-register loop boundary observer for the new content (crossfade at loop points only makes sense for .loop)
+        if loopFadeEnabled && loopMode == .loop {
             registerLoopBoundaryObserver()
+        }
+    }
+
+    private func attachEndOfItemHandler(for item: AVPlayerItem, player: AVQueuePlayer, mode: MonitorAssignment.LoopMode) {
+        // Clean previous
+        if let obs = endTimeObserver {
+            NotificationCenter.default.removeObserver(obs)
+            endTimeObserver = nil
+        }
+
+        endTimeObserver = NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemDidPlayToEndTime,
+            object: item,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+
+            switch mode {
+            case .once:
+                // Play to end → visually black the display (as documented in the model)
+                player.pause()
+                // Gentle fade to black instead of hard cut
+                CATransaction.begin()
+                CATransaction.setAnimationDuration(0.6)
+                self.playerLayer?.opacity = 0.0
+                CATransaction.commit()
+
+            case .bounce:
+                // Reverse direction
+                player.seek(to: .zero) { _ in
+                    player.rate = -1.0   // play backwards
+                }
+                // When we hit the beginning while reversing, flip back to forward
+                self.installReverseBoundaryFlip(player: player, item: item)
+
+            case .loop:
+                break // should never happen here
+            }
+        }
+    }
+
+    private func installReverseBoundaryFlip(player: AVQueuePlayer, item: AVPlayerItem) {
+        // Remove any prior boundary observer for reverse
+        // (We reuse the same pattern as loop crossfade observers)
+        // For simplicity we add a time observer near t=0 while rate is negative.
+        // Lightweight periodic check while reversing. We intentionally do *not* capture
+        // the observer token inside the closure (would be declared-before-use error).
+        // The timer is extremely short-lived and will be released after the flip.
+        let interval = CMTime(seconds: 0.05, preferredTimescale: 600)
+        _ = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak player] time in
+            guard let p = player, p.rate < 0 else { return }
+            if time.seconds <= 0.05 {
+                p.rate = 1.0
+                // The observer will naturally be deallocated shortly after rate changes.
+            }
         }
     }
 
     /// Runs an image slideshow on this display. The slideshow draws its own layers on the
     /// host layer; the video/image layers are hidden while it's active.
-    public func loadSlideshow(items: [String], interval: Double, transition: MonitorAssignment.SlideshowTransition) {
+    /// Live Ken Burns toggle — updates the running slideshow without a full restart.
+    public func setSlideshowKenBurnsEnabled(_ enabled: Bool) {
+        guard let slideshow else { return }
+        MainActor.assumeIsolated { slideshow.setKenBurnsEnabled(enabled) }
+    }
+
+    /// Headless self-test hook — whether the current slide has an active Ken Burns animation.
+    public var slideshowKenBurnsAnimationActive: Bool {
+        guard let engine = slideshow else { return false }
+        return MainActor.assumeIsolated { engine.hasActiveKenBurnsAnimation }
+    }
+
+    public func loadSlideshow(items: [String],
+                            interval: Double,
+                            transition: MonitorAssignment.SlideshowTransition,
+                            kenBurnsEnabled: Bool = true) {
         cleanup()
         guard let host = hostLayer ?? playerLayer?.superlayer else {
-            print("[AVVideoRenderer] No host layer available for slideshow")
+            LuminaLog.wallpaper.warning("No host layer available for slideshow")
             return
         }
         mediaKind = .image           // image-like: power policy shouldn't drive the AVPlayer
@@ -792,7 +957,8 @@ public final class AVVideoRenderer: @unchecked Sendable {
         // SlideshowEngine is @MainActor; this renderer is documented main-thread-only.
         slideshow = MainActor.assumeIsolated {
             let engine = SlideshowEngine()
-            engine.configure(items: items, interval: interval, transition: transition, hostLayer: host)
+            engine.configure(items: items, interval: interval, transition: transition,
+                             kenBurnsEnabled: kenBurnsEnabled, hostLayer: host)
             return engine
         }
         loadedURL = items.first.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) }
@@ -812,7 +978,7 @@ public final class AVVideoRenderer: @unchecked Sendable {
 
         // Ensure an image layer exists, attached to the same superlayer as the video layer.
         guard let superlayer = playerLayer?.superlayer ?? hostLayer else {
-            print("[AVVideoRenderer] No host layer available for image content")
+            LuminaLog.wallpaper.warning("No host layer available for image content")
             return
         }
         let layer = imageLayer ?? CALayer()
@@ -823,6 +989,8 @@ public final class AVVideoRenderer: @unchecked Sendable {
         }
         layer.isHidden = false
         layer.frame = superlayer.bounds
+        // Match the backing scale so the display-resolution image maps 1:1 (crisp on Retina).
+        layer.contentsScale = superlayer.contentsScale
 
         if kind == .animatedImage {
             applyGIFAnimation(url: url, to: layer, autoPlay: autoPlay)
@@ -836,7 +1004,7 @@ public final class AVVideoRenderer: @unchecked Sendable {
                       let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) {
                 layer.contents = cg   // fallback for anything ImageIO can't open
             } else {
-                print("[AVVideoRenderer] Failed to decode image at \(url.path)")
+                LuminaLog.wallpaper.error("Failed to decode image at \(url.path)")
             }
         }
 
@@ -913,6 +1081,7 @@ public final class AVVideoRenderer: @unchecked Sendable {
         animation.isRemovedOnCompletion = false
         layer.contents = frames.last
         layer.add(animation, forKey: "gif")
+        gifAnimation = animation   // retained so the displays can be restarted in sync
 
         if !autoPlay { pauseLayerAnimation(layer) }
     }

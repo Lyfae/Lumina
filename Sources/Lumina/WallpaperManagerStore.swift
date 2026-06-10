@@ -85,7 +85,7 @@ final class WallpaperManagerStore: ObservableObject {
         // Update only the local UI snapshot. The real data lives in AssignmentStore.
         monitors[index].assignedVideoName = url.lastPathComponent
         
-        print("Assigned media to \(monitor.id) via central store")
+        LuminaLog.app.info("Assigned media to \(monitor.id) via central store")
     }
     
     func clearAssignment(for monitor: MonitorInfo) {
@@ -131,6 +131,12 @@ final class WallpaperManagerStore: ObservableObject {
             newAssignment.keepOnStartup = enabled
             appDelegate?.assignmentStore.updateAssignment(newAssignment)
         }
+
+        // When the user explicitly turns the toggle OFF, force a save so the
+        // filtered persistence immediately drops this monitor (prevents stale keep-on-startup entries).
+        if !enabled {
+            appDelegate?.assignmentStore.forceSaveAssignments()
+        }
         
         print("Keep on startup for \(monitor.name) set to \(enabled)")
     }
@@ -166,16 +172,19 @@ final class WallpaperManagerStore: ObservableObject {
             // "Keep on startup" flag. The keep flag only controls auto-restoration on launch.
             // This way newly loaded wallpapers immediately appear in the canvas for easy re-use.
             
-            // Always prefer resolvedURL() — it starts security-scoped access via the bookmark.
-            // This is critical for ThumbnailService / AVAssetImageGenerator to be able to open the file.
-            let url = assignment.resolvedURL() ?? {
+            // Use the plain file path here (cheap). `recentMedia` is recomputed on every SwiftUI
+            // render pass, so resolving a security-scoped bookmark per item per render was a real
+            // performance drain AND leaked access counts. ThumbnailService starts/stops its own
+            // security-scoped access on the URL it's given, and the actual render path
+            // (assignVideoToMonitor) re-resolves bookmarks, so the grid only needs a path. We fall
+            // back to bookmark resolution only when no file path is stored (rare).
+            let url: URL? = {
                 if let path = assignment.filePath {
-                    let expanded = (path as NSString).expandingTildeInPath
-                    return URL(fileURLWithPath: expanded)
+                    return URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
                 }
-                return nil
+                return assignment.resolvedURL()
             }()
-            
+
             guard let url else { continue }
             
             let expandedPath = url.path
@@ -299,6 +308,24 @@ final class WallpaperManagerStore: ObservableObject {
         print("Playback speed for \(monitor.name) set to \(speed)x")
     }
 
+    func setLoopMode(for monitor: MonitorInfo, mode: MonitorAssignment.LoopMode) {
+        guard let central = appDelegate?.assignmentStore else { return }
+
+        if var assignment = central.assignment(for: monitor.id) {
+            assignment.loopMode = mode
+            central.updateAssignment(assignment)
+        } else {
+            var newAssignment = MonitorAssignment(monitorIdentifier: monitor.id)
+            newAssignment.loopMode = mode
+            central.updateAssignment(newAssignment)
+        }
+
+        // Live apply to the running renderer (will reconfigure looping strategy)
+        appDelegate?.applyLoopModeToMonitor(monitorID: monitor.id, mode: mode)
+
+        print("Loop mode for \(monitor.name) set to \(mode)")
+    }
+
     func setLoopFade(for monitor: MonitorInfo, enabled: Bool, duration: Double,
                      easing: MonitorAssignment.FadeEasing = .easeInOut) {
         guard let central = appDelegate?.assignmentStore else { return }
@@ -337,14 +364,17 @@ final class WallpaperManagerStore: ObservableObject {
     func setSlideshowItems(for monitor: MonitorInfo, items: [String]) {
         guard let central = appDelegate?.assignmentStore else { return }
 
-        if var assignment = central.assignment(for: monitor.id) {
-            assignment.slideshowItems = items
-            central.updateAssignment(assignment)
-        } else {
-            var newAssignment = MonitorAssignment(monitorIdentifier: monitor.id)
-            newAssignment.slideshowItems = items
-            central.updateAssignment(newAssignment)
+        var assignment = central.assignment(for: monitor.id) ?? MonitorAssignment(monitorIdentifier: monitor.id)
+        assignment.slideshowItems = items
+        // One mode per monitor: a non-empty slideshow means this display is a *still-image
+        // slideshow*, so drop any single video/image reference (the renderer also frees the
+        // video player) — no mp4 is kept loaded or restored.
+        if !items.isEmpty {
+            assignment.filePath = nil
+            assignment.bookmarkData = nil
+            assignment.mediaType = .image
         }
+        central.updateAssignment(assignment)
         appDelegate?.applySlideshowToMonitor(monitorID: monitor.id)
     }
 
@@ -374,6 +404,20 @@ final class WallpaperManagerStore: ObservableObject {
             central.updateAssignment(newAssignment)
         }
         appDelegate?.applySlideshowToMonitor(monitorID: monitor.id)
+    }
+
+    func setSlideshowKenBurns(for monitor: MonitorInfo, enabled: Bool) {
+        guard let central = appDelegate?.assignmentStore else { return }
+
+        if var assignment = central.assignment(for: monitor.id) {
+            assignment.slideshowKenBurnsEnabled = enabled
+            central.updateAssignment(assignment)
+        } else {
+            var newAssignment = MonitorAssignment(monitorIdentifier: monitor.id)
+            newAssignment.slideshowKenBurnsEnabled = enabled
+            central.updateAssignment(newAssignment)
+        }
+        appDelegate?.applySlideshowKenBurnsToMonitor(monitorID: monitor.id, enabled: enabled)
     }
 
     func setOpacity(for monitor: MonitorInfo, opacity: Double) {
@@ -471,21 +515,33 @@ final class WallpaperManagerStore: ObservableObject {
     
     /// Exposes the user-facing Welcome / What's New screen from the UI layer.
     func showWelcomeScreen() {
-        (appDelegate as? LuminaApp)?.showWelcomeScreen(force: true)
+        appDelegate?.showWelcomeScreen(force: true)
     }
     
     /// Shows the changelog for the current version (used by the prominent button + menu).
     func showCurrentChangelog() {
-        (appDelegate as? LuminaApp)?.showWhatsNew()
+        appDelegate?.showWhatsNew()
     }
-    
-    /// Forwards to the main app to synchronize all renderers (used by the "Sync Now" button).
-    func syncAllRenderersNow() {
-        (appDelegate as? LuminaApp)?.syncAllRenderers()
+
+    /// Shows the About / Status panel (moved from the menu bar into Settings).
+    func showAboutStatus() {
+        appDelegate?.showAboutStatus()
     }
-    
+
+    /// Re-applies the power policy to all renderers after a power preference changes,
+    /// so Settings toggles/profile take effect on the live wallpaper immediately.
+    func reapplyPowerPolicy() {
+        appDelegate?.reapplyPowerPolicy()
+    }
+
+    /// One-shot "Sync Displays": restart all matching video/GIF wallpapers together so they
+    /// play in lockstep. Used by the header button — the simple, on-demand alignment.
+    func restartDisplaysInSync() {
+        appDelegate?.restartDisplaysInSync()
+    }
+
     // MARK: - Playback Sync Setting
-    
+
     private let syncPlaybackKey = "Lumina.SyncPlaybackAcrossDisplays"
     
     private func loadSyncPlaybackSetting() {
@@ -496,10 +552,9 @@ final class WallpaperManagerStore: ObservableObject {
     func setSyncPlayback(_ enabled: Bool) {
         syncPlaybackAcrossDisplays = enabled
         UserDefaults.standard.set(enabled, forKey: syncPlaybackKey)
-        
-        // Immediately apply the change to the engine if possible
-        if enabled {
-            appDelegate?.syncAllRenderers()
-        }
+
+        // Drive the engine: an immediate hard sync plus the continuous drift watcher when on,
+        // or tear the watcher down when off.
+        appDelegate?.setPlaybackSyncEnabled(enabled)
     }
 }

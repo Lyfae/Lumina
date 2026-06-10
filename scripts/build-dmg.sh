@@ -19,7 +19,7 @@ set -euo pipefail
 # ── Configuration ─────────────────────────────────────────────────────────────
 APP_NAME="Lumina"
 BUNDLE_ID="com.lumina.studio"
-VERSION="${VERSION:-1.0.0}"
+VERSION="${VERSION:-0.1.0}"
 BUILD_NUMBER="${BUILD_NUMBER:-1}"
 ARCH="${ARCH:-arm64}"           # arm64 | x86_64 | universal
 SIGN_IDENTITY="${SIGN_IDENTITY:-}" # set to "Developer ID Application: ..." to sign
@@ -152,7 +152,13 @@ ENT
     "$APP_BUNDLE"
   ok "Signed"
 else
-  echo "  (skipping code signing — set SIGN_IDENTITY env var to enable)"
+  # Ad-hoc sign so the app has a stable code identity. This is required for
+  # SMAppService (Launch at login) to work even without a Developer ID, and avoids
+  # the unsigned-binary failures that silently break login-item registration.
+  step "Ad-hoc signing (no Developer ID set)"
+  codesign --force --sign - --timestamp=none "$APP_BUNDLE" \
+    && ok "Ad-hoc signed (Launch at login will work locally)" \
+    || echo "  (ad-hoc signing failed — Launch at login may not register)"
 fi
 
 # ── 4. Create DMG ─────────────────────────────────────────────────────────────

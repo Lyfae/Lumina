@@ -35,7 +35,7 @@ public struct MonitorAssignment: Codable, Equatable {
     public var grayscale: Bool = false
     public var loopMode: LoopMode = .loop
 
-    public enum LoopMode: String, Codable, CaseIterable {
+    public enum LoopMode: String, Codable, CaseIterable, Sendable {
         case loop, once, bounce
         var label: String {
             switch self {
@@ -84,6 +84,8 @@ public struct MonitorAssignment: Codable, Equatable {
     public var slideshowItems: [String] = []        // file paths for slideshow
     public var slideshowInterval: Double = 10.0     // seconds between slides
     public var slideshowTransition: SlideshowTransition = .fade
+    /// Slow cinematic pan/zoom on each still image (Ken Burns effect).
+    public var slideshowKenBurnsEnabled: Bool = true
 
     public enum SlideshowTransition: String, Codable, CaseIterable, Sendable {
         case fade, cut
@@ -111,7 +113,8 @@ public struct MonitorAssignment: Codable, Equatable {
              lastSuccessfulLoad, lastError,
              loopFadeEnabled, loopFadeDuration, loopFadeEasing,
              crossfadeDuration, crossfadeEasing,
-             slideshowItems, slideshowInterval, slideshowTransition
+             slideshowItems, slideshowInterval, slideshowTransition,
+             slideshowKenBurnsEnabled
     }
 
     // MARK: - Custom Decoding (resilient to older saved data)
@@ -151,6 +154,7 @@ public struct MonitorAssignment: Codable, Equatable {
         slideshowItems = try container.decodeIfPresent([String].self, forKey: .slideshowItems) ?? []
         slideshowInterval = try container.decodeIfPresent(Double.self, forKey: .slideshowInterval) ?? 10.0
         slideshowTransition = try container.decodeIfPresent(SlideshowTransition.self, forKey: .slideshowTransition) ?? .fade
+        slideshowKenBurnsEnabled = try container.decodeIfPresent(Bool.self, forKey: .slideshowKenBurnsEnabled) ?? true
 
         schemaVersion = try container.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
     }

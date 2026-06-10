@@ -38,7 +38,21 @@ let package = Package(
                 // Relaxed concurrency during active development / Swift 6 migration.
                 // This eliminates the remaining data-race warnings from thumbnail loading
                 // without changing behavior. We can tighten this later.
-                .unsafeFlags(["-strict-concurrency=minimal"])
+                .unsafeFlags(["-strict-concurrency=minimal"]),
+
+                // Release-only performance optimization (debug builds stay fast to compile):
+                // cross-module optimization lets the optimizer inline/specialize across
+                // module boundaries (stdlib, frameworks' Swift overlays).
+                // Note: -lto=llvm-thin was tried and reverted — it emits stray .bc files
+                // into the package root under SwiftPM.
+                .unsafeFlags(
+                    ["-cross-module-optimization"],
+                    .when(configuration: .release)
+                )
+            ],
+            linkerSettings: [
+                // Strip unreachable code/data from the release binary.
+                .unsafeFlags(["-Xlinker", "-dead_strip"], .when(configuration: .release))
             ]
         ),
         .testTarget(

@@ -4,10 +4,9 @@
 // Entry point: menu-bar-only accessory application.
 // We deliberately avoid a Dock icon and any foreground windows by default.
 //
-// PROTOTYPE STATUS: Working video wallpaper engine with PowerManager integration.
-// Use the menu bar icon → "Load Video..." to select any .mp4/.mov file.
-// The video will appear as a live wallpaper behind all windows on every display.
-// It automatically pauses on Low Power Mode, high thermal load, etc.
+// Native live wallpaper engine. Menu-bar accessory app (no Dock icon).
+// Per-monitor video / GIF / image wallpapers with live preview, slideshows (Ken Burns),
+// crop, effects, ambient audio, power-aware pausing, and launch-at-login support.
 //
 // Icon: Uses a proper NSImage (SF Symbol "water.waves" + fallback) for correct vertical
 // alignment instead of emoji titles (fixes shift-up bug on Tahoe and other macOS releases).
@@ -33,6 +32,9 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Display IDs whose wallpaper window is currently occluded (covered by a fullscreen app
     /// or other windows). Those renderers are paused for power until they become visible again.
     private var occludedDisplayIDs: Set<CGDirectDisplayID> = []
+    /// Periodically re-aligns video playback positions while "Sync playback across displays"
+    /// is on, correcting the small drift that accumulates between independent AVQueuePlayers.
+    private var syncDriftTimer: Timer?
     
     // New per-monitor state management (Phase 1+)
     let assignmentStore = AssignmentStore()   // Made internal so WallpaperManagerStore can access it
@@ -40,9 +42,6 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: - UX / State (prototype enhancements for B + C)
     private var currentVideoURL: URL?
     private var currentWallpaperMenuItem: NSMenuItem!
-    private var lpmToggleMenuItem: NSMenuItem!
-    private var thermalToggleMenuItem: NSMenuItem!
-    private var fullscreenToggleMenuItem: NSMenuItem!
 
     // MARK: - UI
     private var statusItem: NSStatusItem!
@@ -80,6 +79,9 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Purge any legacy global-persistence keys so the app always starts clean (black displays).
         WallpaperPersistence.clearLastVideo()
 
+        // Apply the saved UI appearance (light / dark / match system) before any windows open.
+        AppearanceManager.shared.apply()
+
         setupStatusItem()
         setupPowerManager()
         setupWallpaperWindowsAndRenderers()
@@ -108,7 +110,7 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         wsnc.addObserver(self, selector: #selector(activeContextChanged),
             name: NSWorkspace.activeSpaceDidChangeNotification, object: nil)
 
-        print("Lumina started (menu-bar only). Use the menu bar icon → Wallpaper Manager (⌘M)")
+        LuminaLog.app.info("Lumina started (menu-bar only). Use the menu bar icon → Wallpaper Manager (⌘M)")
 
         // Show onboarding on first launch (unless user chose "never show again").
         // We also re-check when the Wallpaper Manager opens so it feels tied to the manager experience.
@@ -122,6 +124,22 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
             self.checkForNewVersionAndShowChangelogIfNeeded()
         }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        // Single teardown path for every exit (menu Quit, ⌘Q, logout, system shutdown):
+        // stop all playback and remove the desktop wallpaper windows so nothing lingers.
+        powerManager?.pauseManually()
+        stopDriftWatcher()
+        for renderer in renderers {
+            renderer.cleanup()
+        }
+        for window in wallpaperWindows {
+            window.hideAndRelease()
+        }
+        renderers.removeAll()
+        wallpaperWindows.removeAll()
+        LuminaLog.app.info("Shutdown complete — all renderers and wallpaper windows torn down.")
     }
 
     @objc private func wakeFromSleep() {
@@ -193,17 +211,18 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         if restoredCount > 0 {
-            print("Restored \(restoredCount) per-monitor assignment(s).")
+            LuminaLog.app.info("Restored \(restoredCount) per-monitor assignment(s).")
         } else {
             // We deliberately do NOT fall back to the old global persistence here anymore.
             // Once the user has used the per-monitor system and cleared things,
             // we want a clean black start unless they explicitly re-enable "Keep on startup".
-            print("No per-monitor wallpapers set to keep on startup. Starting clean (black).")
+            LuminaLog.app.info("No per-monitor wallpapers set to keep on startup. Starting clean (black).")
         }
 
-        // If the user has "Sync playback across displays" enabled, align them on launch
+        // If the user has "Sync playback across displays" enabled, align them on launch and
+        // start the continuous drift watcher so they stay aligned.
         if UserDefaults.standard.bool(forKey: "Lumina.SyncPlaybackAcrossDisplays") {
-            syncAllRenderers()
+            setPlaybackSyncEnabled(true)
         }
 
         updateCurrentWallpaperDisplay()
@@ -244,7 +263,7 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
             || assignment.filePath.map({ ($0 as NSString).expandingTildeInPath }) == url.path {
             assignment.lastError = message
             assignmentStore.updateAssignment(assignment)
-            print("[Lumina] Recorded load failure for \(id): \(message)")
+            LuminaLog.wallpaper.warning("Recorded load failure for \(id): \(message)")
         }
     }
 
@@ -282,15 +301,16 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if !slideItems.isEmpty {
             renderer.loadSlideshow(items: slideItems,
                                    interval: assignment.slideshowInterval,
-                                   transition: assignment.slideshowTransition)
-            print("Restored slideshow for \(monitorID) (\(slideItems.count) image(s))")
+                                   transition: assignment.slideshowTransition,
+                                   kenBurnsEnabled: assignment.slideshowKenBurnsEnabled)
+            LuminaLog.app.info("Restored slideshow for \(monitorID) (\(slideItems.count) image(s))")
             return true
         }
 
         guard let path = assignment.filePath else { return false }
         let url = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
         guard FileManager.default.fileExists(atPath: url.path) else {
-            print("[Lumina] File missing for \(monitorID): \(path)")
+            LuminaLog.app.warning("File missing for \(monitorID): \(path)")
             return false
         }
 
@@ -304,10 +324,10 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
             var refreshed = assignment
             refreshed.updateBookmark(from: url)
             assignmentStore.updateAssignment(refreshed)
-            print("[Lumina] Refreshed stale bookmark for \(monitorID)")
+            LuminaLog.app.info("Refreshed stale bookmark for \(monitorID)")
         }
 
-        print("Restored \(monitorID) → \(url.lastPathComponent) (\(assignment.mediaType), speed: \(assignment.playbackSpeed)x)")
+        LuminaLog.app.info("Restored \(monitorID) → \(url.lastPathComponent) (\(assignment.mediaType), speed: \(assignment.playbackSpeed)x)")
         return true
     }
 
@@ -326,6 +346,7 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         renderer.setLoopFade(enabled: assignment.loopFadeEnabled,
                              duration: assignment.loopFadeDuration,
                              easing: assignment.loopFadeEasing)
+        renderer.setLoopMode(assignment.loopMode)
     }
 
     // MARK: - Display Reconfiguration
@@ -406,6 +427,16 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         for index in renderers.indices {
             applyEffectivePolicy(policy, toRendererAt: index)
         }
+    }
+
+    /// Re-evaluates the power policy AND re-applies it to every renderer. Called when the user
+    /// changes a power preference (toggle / profile) so the change takes effect immediately —
+    /// even when the recomputed policy value is unchanged (e.g. toggling "pause behind
+    /// fullscreen apps" only affects the per-display occlusion gating in applyEffectivePolicy,
+    /// which would otherwise never re-run).
+    func reapplyPowerPolicy() {
+        powerManager.recomputePolicy()
+        applyPolicyToRenderers(powerManager.currentPolicy)
     }
 
     /// Applies the global power policy to one renderer, except that an occluded display is
@@ -494,16 +525,109 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
             renderer.syncStart(to: referenceTime, atHostTime: startAt)
         }
 
-        print("[Lumina] Synced \(activeRenderers.count) renderer(s) to \(String(format: "%.2f", referenceTime))s")
+        LuminaLog.wallpaper.info("Synced \(activeRenderers.count) renderer(s) to \(String(format: "%.2f", referenceTime))s")
     }
-    
+
+    /// One-shot "Sync Displays": restarts every active video/GIF wallpaper from the beginning
+    /// at a shared start instant, so the same media on multiple monitors plays in lockstep.
+    /// This is the simple, on-demand fix for "they drifted / started at different times."
+    func restartDisplaysInSync() {
+        let active = renderers.filter { $0.isLoaded }
+        guard !active.isEmpty else { return }
+
+        // A small shared lead so every renderer is armed before the common start moment.
+        let layerBegin = CACurrentMediaTime() + 0.1
+        let videoHostTime = CMTimeAdd(CMClockGetTime(CMClockGetHostTimeClock()),
+                                      CMTime(value: 10, timescale: 100))   // ~100 ms
+
+        for renderer in active {
+            renderer.restartInSync(videoHostTime: videoHostTime, layerBeginTime: layerBegin)
+        }
+        LuminaLog.wallpaper.info("Restarted \(active.count) renderer(s) in sync")
+
+        // Verification: sample the video positions once playback has settled and report the
+        // spread between displays, so the alignment is observable rather than a guess.
+        let videoRenderers = active.filter { $0.currentItemDuration() > 0 }
+        guard videoRenderers.count >= 2 else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
+            let times = videoRenderers.map { $0.currentPlaybackTime() }
+            guard let lo = times.min(), let hi = times.max() else { return }
+            let spreadMs = (hi - lo) * 1000
+            let positions = times.map { String(format: "%.3f", $0) }.joined(separator: ", ")
+            LuminaLog.wallpaper.info(String(format: "Sync check: %d videos at [%@]s — spread %.0f ms %@",
+                         videoRenderers.count, positions, spreadMs,
+                         spreadMs < 50 ? "✅ aligned" : "⚠️ drifting"))
+        }
+    }
+
+    /// Turns continuous playback sync on or off. When on, performs an immediate hard sync and
+    /// then starts a low-frequency drift watcher; when off, stops the watcher. The setting's
+    /// persistence is owned by the store — this only drives the engine.
+    func setPlaybackSyncEnabled(_ enabled: Bool) {
+        if enabled {
+            syncAllRenderers()
+            startDriftWatcher()
+        } else {
+            stopDriftWatcher()
+        }
+    }
+
+    /// Maximum tolerated drift before we re-seek. Below this, players are perceptually in sync
+    /// and re-seeking would cause a visible hitch, so we leave them alone.
+    private static let syncDriftToleranceSeconds: TimeInterval = 0.15
+
+    private func startDriftWatcher() {
+        stopDriftWatcher()
+        // 3s cadence keeps overhead negligible while bounding worst-case visible skew.
+        let timer = Timer(timeInterval: 3.0, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.correctDriftIfNeeded() }
+        }
+        // .common so it keeps firing during window resizing / menu tracking.
+        RunLoop.main.add(timer, forMode: .common)
+        syncDriftTimer = timer
+    }
+
+    private func stopDriftWatcher() {
+        syncDriftTimer?.invalidate()
+        syncDriftTimer = nil
+    }
+
+    /// Measures loop-aware drift between active video renderers and hard-syncs only when it
+    /// exceeds the tolerance. Paused/occluded renderers (rate 0) are skipped so we don't fight
+    /// the power policy or restart playback the user deliberately stopped.
+    private func correctDriftIfNeeded() {
+        let active = renderers.filter { $0.isLoaded && $0.currentPlaybackRate > 0 }
+        guard active.count >= 2 else { return }
+
+        let reference = active[0].currentPlaybackTime()
+        // Loop period from the reference item; used to measure distance across the wrap boundary.
+        let period = active[0].currentItemDuration()
+
+        let maxDrift = active.dropFirst().reduce(0.0) { worst, r in
+            max(worst, circularDrift(reference, r.currentPlaybackTime(), period: period))
+        }
+
+        if maxDrift > Self.syncDriftToleranceSeconds {
+            LuminaLog.wallpaper.info("Drift \(String(format: "%.3f", maxDrift))s exceeds tolerance — re-syncing")
+            syncAllRenderers()
+        }
+    }
+
+    /// Shortest distance between two positions on a loop of length `period`. Falls back to the
+    /// plain absolute difference when the period is unknown (0).
+    private func circularDrift(_ a: TimeInterval, _ b: TimeInterval, period: TimeInterval) -> TimeInterval {
+        let raw = abs(a - b)
+        guard period > 0 else { return raw }
+        return min(raw, period - raw)
+    }
+
     /// Immediately clears the renderer for a specific monitor (makes that display go black).
     /// Used when the user turns off "Keep on startup" for instant feedback.
     func clearRenderer(for monitorID: String) {
         guard let index = monitorIndex(for: monitorID) else { return }
         guard index < renderers.count else { return }
         renderers[index].clear()
-        print("[Lumina] Cleared renderer for \(monitorID) (keep on startup turned off)")
+        LuminaLog.app.info("Cleared renderer for \(monitorID) (keep on startup turned off)")
     }
 
     /// Fully removes a monitor's wallpaper: blanks the display (to black) and deletes its
@@ -515,7 +639,7 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if monitorID == currentVideoURLMonitorID { currentVideoURL = nil }
         updateCurrentWallpaperDisplay()
         updateStatusItem(for: powerManager.currentPolicy)
-        print("[Lumina] Cleared wallpaper for \(monitorID)")
+        LuminaLog.app.info("Cleared wallpaper for \(monitorID)")
     }
 
     /// Tracks which monitor the legacy `currentVideoURL` status field refers to, so clearing
@@ -673,7 +797,7 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         
         // Simple string compare works well enough for semver during early releases (1.0, 1.1, 1.2, etc.)
         if currentVersion != lastShown {
-            print("[Lumina] New version detected: \(currentVersion) (previously saw \(lastShown))")
+            LuminaLog.app.info("New version detected: \(currentVersion) (previously saw \(lastShown))")
             
             // Mark as seen so we only show once per version
             UserDefaults.standard.set(currentVersion, forKey: lastShownChangelogKey)
@@ -711,12 +835,17 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         updateCurrentWallpaperDisplay()
         updateStatusItem(for: powerManager.currentPolicy)
 
-        // Create or update the assignment with correct media type
+        // Create or update the assignment with correct media type.
+        // IMPORTANT: preserve the existing keep-on-startup choice. Brand-new assignments
+        // default to false (via MonitorAssignment), but re-applying media to an already-pinned
+        // monitor must NOT silently un-pin it — that was causing pinned wallpapers to vanish
+        // (come up black) after relaunch.
         var assignment = assignmentStore.assignment(for: monitorID) ?? MonitorAssignment(monitorIdentifier: monitorID)
         assignment.filePath = url.path
-        // Default is NOT to keep on startup. User must explicitly toggle "Keep this wallpaper on startup".
-        assignment.keepOnStartup = false
         assignment.mediaType = MediaType.from(url: url)
+        // One mode per monitor: choosing a single video/image ends any slideshow on this
+        // display (and frees its image cycling), so the two modes never run at once.
+        assignment.slideshowItems = []
         assignment.lastError = nil   // fresh load; recordLoadFailure will re-set this if it fails
         assignment.updateBookmark(from: url)
 
@@ -857,6 +986,15 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    /// Reconfigures the looping strategy (loop / once / bounce) on the running renderer.
+    func applyLoopModeToMonitor(monitorID: String, mode: MonitorAssignment.LoopMode) {
+        guard let index = monitorIndex(for: monitorID), index < renderers.count else {
+            print("Could not find renderer for monitor \(monitorID) when applying loop mode")
+            return
+        }
+        renderers[index].setLoopMode(mode)
+    }
+
     /// Applies a brightness adjustment live to the renderer for this monitor.
     func applyBrightnessToMonitor(monitorID: String, brightness: Double) {
         guard let index = monitorIndex(for: monitorID) else { return }
@@ -903,6 +1041,12 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    /// Live Ken Burns toggle — updates the running slideshow without restarting from slide 0.
+    func applySlideshowKenBurnsToMonitor(monitorID: String, enabled: Bool) {
+        guard let index = monitorIndex(for: monitorID), index < renderers.count else { return }
+        renderers[index].setSlideshowKenBurnsEnabled(enabled)
+    }
+
     /// Starts/updates (or stops) an image slideshow on a monitor based on its assignment's
     /// slideshow fields. Called whenever the user edits the slideshow in the manager.
     func applySlideshowToMonitor(monitorID: String) {
@@ -925,7 +1069,8 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         renderers[index].loadSlideshow(items: items,
                                        interval: assignment.slideshowInterval,
-                                       transition: assignment.slideshowTransition)
+                                       transition: assignment.slideshowTransition,
+                                       kenBurnsEnabled: assignment.slideshowKenBurnsEnabled)
         currentVideoURL = URL(fileURLWithPath: (items[0] as NSString).expandingTildeInPath)
         currentVideoURLMonitorID = monitorID
         updateCurrentWallpaperDisplay()
@@ -961,7 +1106,7 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         updateCurrentWallpaperDisplay()
         updateStatusItem(for: powerManager.currentPolicy)
 
-        print("Loaded wallpaper video: \(url.path)")
+        LuminaLog.wallpaper.info("Loaded wallpaper video: \(url.path)")
     }
 
     // MARK: - Status Item & Menu (enhanced for B: UX + C: debug)
@@ -970,53 +1115,12 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         updateStatusItem(for: .normal)
 
+        // Minimal menu bar: open the app, or quit. Everything else (power toggles,
+        // performance profile, about/welcome/what's new) now lives in Settings inside
+        // Lumina Studio, so we don't duplicate it here.
         let menu = NSMenu()
-        menu.delegate = self   // For dynamic title updates on open (lightweight)
-
-        // Prominent current wallpaper status (disabled item, updated live)
-        let currentItem = NSMenuItem(title: "No video loaded — use Load Video…", action: nil, keyEquivalent: "")
-        currentItem.isEnabled = false
-        menu.addItem(currentItem)
-        self.currentWallpaperMenuItem = currentItem
-
+        menu.addItem(NSMenuItem(title: "Lumina Studio", action: #selector(openWallpaperManager), keyEquivalent: "m"))
         menu.addItem(NSMenuItem.separator())
-
-        // Main management UI - the Window Manager now controls most actions
-        menu.addItem(NSMenuItem(title: "Lumina Studio…", action: #selector(openWallpaperManager), keyEquivalent: "m"))
-        menu.addItem(NSMenuItem.separator())
-
-        // Simple power toggles (live state updated via delegate)
-        let lpmItem = NSMenuItem(title: "Pause on Low Power Mode", action: #selector(togglePauseOnLPM), keyEquivalent: "")
-        self.lpmToggleMenuItem = lpmItem
-        menu.addItem(lpmItem)
-
-        let thermalItem = NSMenuItem(title: "Pause on High Thermal", action: #selector(togglePauseOnThermal), keyEquivalent: "")
-        self.thermalToggleMenuItem = thermalItem
-        menu.addItem(thermalItem)
-
-        let fullscreenItem = NSMenuItem(title: "Pause on Fullscreen Apps", action: #selector(togglePauseOnFullscreen), keyEquivalent: "")
-        self.fullscreenToggleMenuItem = fullscreenItem
-        menu.addItem(fullscreenItem)
-
-        // Performance profiles submenu (great UX for power users and battery-conscious users)
-        let perfMenu = NSMenu()
-        for profile in PowerManager.PerformanceProfile.allCases {
-            let item = NSMenuItem(title: profileTitle(profile), action: #selector(selectPerformanceProfile(_:)), keyEquivalent: "")
-            item.representedObject = profile
-            item.state = (powerManager?.performanceProfile == profile) ? .on : .off
-            perfMenu.addItem(item)
-        }
-        let perfItem = NSMenuItem(title: "Performance Profile", action: nil, keyEquivalent: "")
-        perfItem.submenu = perfMenu
-        menu.addItem(perfItem)
-        menu.addItem(NSMenuItem.separator())
-
-        menu.addItem(NSMenuItem(title: "About / Status…", action: #selector(showAboutStatus), keyEquivalent: ""))
-        menu.addItem(NSMenuItem(title: "Welcome to Lumina", action: #selector(showWelcomeFromMenu), keyEquivalent: ""))
-        menu.addItem(NSMenuItem(title: "What's New in Lumina…", action: #selector(showWhatsNewFromMenu), keyEquivalent: ""))
-        menu.addItem(NSMenuItem(title: "Debug: Print Status to Console", action: #selector(printDebugStatus), keyEquivalent: "d"))
-        menu.addItem(NSMenuItem.separator())
-
         menu.addItem(NSMenuItem(title: "Quit Lumina", action: #selector(quit), keyEquivalent: "q"))
 
         statusItem.menu = menu
@@ -1192,90 +1296,21 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func quit() {
-        // Clean shutdown
-        for renderer in renderers {
-            renderer.cleanup()
-        }
-        for window in wallpaperWindows {
-            window.hideAndRelease()
-        }
-        // FullscreenDetector will be deallocated; it stops its own timer
+        // Ask AppKit to terminate; applicationWillTerminate performs the actual teardown so
+        // the same cleanup runs for menu Quit, ⌘Q, logout, and system shutdown alike.
         NSApplication.shared.terminate(nil)
-    }
-
-    // MARK: - NSMenuDelegate (for live-updating dynamic menu items like toggles + current name)
-
-    func menuNeedsUpdate(_ menu: NSMenu) {
-        // Update toggle checkmarks from live PowerManager state
-        lpmToggleMenuItem?.state = (powerManager?.pauseOnLowPowerMode ?? true) ? .on : .off
-        thermalToggleMenuItem?.state = (powerManager?.pauseOnHighThermal ?? true) ? .on : .off
-        fullscreenToggleMenuItem?.state = (powerManager?.respectFullscreenApps ?? true) ? .on : .off
-
-        // Update performance profile submenu checkmarks
-        if let perfItem = menu.items.first(where: { $0.title == "Performance Profile" }),
-           let submenu = perfItem.submenu {
-            for item in submenu.items {
-                if let profile = item.representedObject as? PowerManager.PerformanceProfile {
-                    item.state = (powerManager?.performanceProfile == profile) ? .on : .off
-                }
-            }
-        }
-
-        // Ensure current wallpaper display is fresh
-        updateCurrentWallpaperDisplay()
-    }
-
-    // MARK: - Simple Settings Toggles (B: minimal power preferences exposed in menu)
-
-    @objc private func togglePauseOnLPM() {
-        guard let pm = powerManager else { return }
-        pm.pauseOnLowPowerMode.toggle()
-        print("[Settings] Pause on Low Power Mode = \(pm.pauseOnLowPowerMode)")
-        pm.recomputePolicy()
-    }
-
-    @objc private func togglePauseOnThermal() {
-        guard let pm = powerManager else { return }
-        pm.pauseOnHighThermal.toggle()
-        print("[Settings] Pause on High Thermal = \(pm.pauseOnHighThermal)")
-        pm.recomputePolicy()
-    }
-
-    @objc private func togglePauseOnFullscreen() {
-        guard let pm = powerManager else { return }
-        pm.respectFullscreenApps.toggle()
-        print("[Settings] Respect Fullscreen Apps = \(pm.respectFullscreenApps)")
-        // Re-apply effective policy: turning this off should resume any display we paused
-        // for occlusion; turning it on should pause currently-covered displays.
-        pm.recomputePolicy()
-        applyPolicyToRenderers(pm.currentPolicy)
-    }
-
-    private func profileTitle(_ profile: PowerManager.PerformanceProfile) -> String {
-        switch profile {
-        case .maximumBattery: return "Maximum Battery Saving"
-        case .balanced:       return "Balanced (Recommended)"
-        case .highQuality:    return "High Quality Playback"
-        }
-    }
-
-    @objc private func selectPerformanceProfile(_ sender: NSMenuItem) {
-        guard let pm = powerManager,
-              let profile = sender.representedObject as? PowerManager.PerformanceProfile else { return }
-        pm.performanceProfile = profile
-        print("[Settings] Performance profile set to \(profile)")
     }
 
     // MARK: - About / Status (B) + Debug (C)
 
-    @objc private func showAboutStatus() {
+    @objc func showAboutStatus() {
         let loaded = currentVideoURL?.lastPathComponent ?? "None"
         let policyStr = describePolicy(powerManager?.currentPolicy ?? .normal)
         let lpm = powerManager?.pauseOnLowPowerMode ?? true
         let thermal = powerManager?.pauseOnHighThermal ?? true
 
         let info = """
-        Lumina Prototype — Native Low-Power Live Wallpaper
+        Lumina — Native Low-Power Live Wallpaper
 
         Video loaded: \(loaded)
         Current policy: \(policyStr)
@@ -1286,14 +1321,12 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         • Pause on Fullscreen Apps: \(powerManager?.respectFullscreenApps ?? true ? "ON" : "OFF")
 
         Quick instructions:
-        • Load Video… (⌘O) to pick any MP4/MOV.
-        • Wallpapers run at desktop level behind icons.
-        • Auto-pauses intelligently on Low Power Mode, fullscreen apps, thermals.
-        • Use menu for manual Pause/Resume, Clear, Reload.
+        • Menu bar icon → Lumina Studio (⌘M) for the full manager.
+        • Add videos, GIFs, or images to the library and assign per display.
+        • Use live preview, then Apply to Wallpaper. Slideshows, crop, and effects supported.
+        • Auto-pauses on Low Power Mode, high thermals, and fullscreen apps.
 
-        For hardware testing & Instruments guide see docs/PROTOTYPE_TESTING.md
-
-        This is early prototype software. Feedback welcome!
+        For advanced power/performance testing see docs/PROTOTYPE_TESTING.md.
         """
 
         let alert = NSAlert()
@@ -1310,17 +1343,6 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         } else if response == .alertThirdButtonReturn {
             openTestingDocInFinder()
         }
-    }
-
-    @objc private func showWelcomeFromMenu() {
-        // Explicitly show the first-run style education welcome screen.
-        // This is separate from version-specific "What's New" notes.
-        showWelcomeScreen(force: true)
-    }
-    
-    @objc private func showWhatsNewFromMenu() {
-        // Show the rich changelog / update notes for the current version.
-        showWhatsNew()
     }
 
     @objc private func printDebugStatus() {
