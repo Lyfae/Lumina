@@ -69,6 +69,7 @@ struct SettingsView: View {
             }
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
+            .accessibilityLabel("Close settings")
             .keyboardShortcut(.cancelAction)
         }
         .padding(.horizontal, 20).padding(.vertical, 14)
@@ -108,6 +109,9 @@ struct SettingsView: View {
                         }
                         .buttonStyle(.plain)
                         .help(theme.label)
+                        .accessibilityLabel(theme.label)
+                        .accessibilityHint("Select accent color")
+                        .accessibilityAddTraits(themeManager.current == theme ? .isSelected : [])
                     }
                 }
             }

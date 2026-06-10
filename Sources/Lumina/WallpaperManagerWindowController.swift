@@ -13,6 +13,9 @@ final class WallpaperManagerWindowController: NSWindowController {
     /// (when the user has enabled "Show music widget when minimized").
     private var musicWidget: NowPlayingWidgetController?
 
+    /// Window frame snapshot taken when crop mode opens — restored on close even if growth was clamped.
+    private var preCropWindowFrame: NSRect?
+
     @State private var selectedMonitorID: String? = nil   // Shared selection between windows
 
     init(appDelegate: LuminaApp) {
@@ -162,26 +165,33 @@ final class WallpaperManagerWindowController: NSWindowController {
     }
     
     @objc private func handleCropEditorVisibilityChanged(_ notification: Notification) {
-        guard let isVisible = notification.userInfo?["visible"] as? Bool, isVisible else { return }
-        
-        guard let window = self.window else { return }
-        
-        // Grow the window vertically to accommodate the crop editor (~180pt)
-        let growth: CGFloat = 180
-        let currentFrame = window.frame
-        let newHeight = currentFrame.height + growth
-        
-        // Don't grow beyond 85% of the main screen height
-        let maxHeight = (NSScreen.main?.visibleFrame.height ?? 900) * 0.85
-        let targetHeight = min(newHeight, maxHeight)
-        
-        if targetHeight > currentFrame.height {
-            var newFrame = currentFrame
-            newFrame.size.height = targetHeight
-            // Keep the top of the window in the same place (grow downward)
-            newFrame.origin.y = currentFrame.maxY - targetHeight
-            
-            window.setFrame(newFrame, display: true, animate: true)
+        guard let isVisible = notification.userInfo?["visible"] as? Bool,
+              let window = self.window else { return }
+
+        if isVisible {
+            if preCropWindowFrame == nil {
+                preCropWindowFrame = window.frame
+            }
+
+            // Grow the window vertically to accommodate the crop editor (~180pt)
+            let growth: CGFloat = 180
+            let currentFrame = window.frame
+            let newHeight = currentFrame.height + growth
+
+            // Don't grow beyond 85% of the main screen height
+            let maxHeight = (NSScreen.main?.visibleFrame.height ?? 900) * 0.85
+            let targetHeight = min(newHeight, maxHeight)
+
+            if targetHeight > currentFrame.height {
+                var newFrame = currentFrame
+                newFrame.size.height = targetHeight
+                // Keep the top of the window in the same place (grow downward)
+                newFrame.origin.y = currentFrame.maxY - targetHeight
+                window.setFrame(newFrame, display: true, animate: true)
+            }
+        } else if let saved = preCropWindowFrame {
+            window.setFrame(saved, display: true, animate: true)
+            preCropWindowFrame = nil
         }
     }
 }

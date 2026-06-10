@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="https://github.com/Lyfae/Lumina/releases"><img src="https://img.shields.io/github/v/release/Lyfae/Lumina?color=blue&label=Download" alt="Download"></a>
-  <img src="https://img.shields.io/badge/platform-macOS%2013%2B-blue" alt="macOS 13+">
+  <img src="https://img.shields.io/badge/platform-macOS%2015%2B-blue" alt="macOS 15+">
   <img src="https://img.shields.io/badge/Swift-6-orange" alt="Swift 6">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT">
   <img src="https://img.shields.io/badge/Dock%20icon-none-lightgrey" alt="Menu-bar only">
@@ -18,7 +18,7 @@
 
 ---
 
-Lumina Studio brings the best of Wallpaper Engine to the Mac — completely native, completely free, and built to run 24/7 without draining your battery. Set live video wallpapers, animated GIFs, or image slideshows on every display independently, then tune every detail from a single polished interface.
+Lumina Studio brings cinematic live wallpapers to the Mac — completely native, completely free, and built to run 24/7 without draining your battery. Set live video wallpapers, animated GIFs, or image slideshows on every display independently, then tune every detail from a single polished interface.
 
 ---
 
@@ -41,7 +41,80 @@ swift build -c release --arch arm64
 ./scripts/build-dmg.sh          # produces dist/Lumina-1.0.0.dmg
 ```
 
-Requirements: macOS 13+, Xcode Command Line Tools, Swift 6
+Requirements: macOS 15+, Xcode Command Line Tools, Swift 6
+
+**Self-test (headless, no display required):**
+
+```bash
+swift build
+.build/debug/Lumina --self-test   # 27 checks
+```
+
+---
+
+## Quick Start
+
+1. Click the Lumina icon in the menu bar → **Lumina Studio** (`⌘M`)
+2. Click **Switch Display** and pick a monitor in the physical layout window
+3. Click **Add to Library** and choose a video or image
+4. Click any thumbnail to **preview** it on the selected display
+5. Tune brightness, crop, speed, and effects in the right panel
+6. Click **Apply to Wallpaper** to commit staged edits to the live desktop
+
+---
+
+## Lumina Studio
+
+Lumina Studio is a resizable two-column control hub. The window remembers its size across launches and enforces a sensible minimum (960 × 720) so the layout never collapses.
+
+| Area | What it does |
+|---|---|
+| **Library (left)** | Filterable grid of all wallpapers you've used — All / Video / Image / GIF / ★ Starred. Search by filename. Click to preview; hover for quick actions. |
+| **Configuration (right)** | Live WYSIWYG preview, per-monitor settings, and the **Apply to Wallpaper** commit bar. |
+| **Footer** | Ambient audio transport, volume, seek bar, and collapsible music queue. |
+| **Header** | Search, **Sync Displays**, and **Settings** (gear icon). |
+
+### Preview → Apply workflow
+
+Edits in the right panel are **staged** — they update the live preview immediately but do not touch the desktop until you commit.
+
+- The preview is resizable (drag the handle below it)
+- Crop editing happens inline on the preview (crop button, top-right)
+- **Apply to Wallpaper** turns green when there are uncommitted changes
+- **Reset Adjustments** reverts staged values without touching the desktop
+- **Keep this wallpaper on startup** (promoted toggle under the preview) pins the assignment for relaunch
+
+### Settings sheet
+
+Opened from the gear icon in the header. Covers app-wide preferences — distinct from per-monitor wallpaper settings.
+
+| Section | Options |
+|---|---|
+| **Appearance** | Theme (Match System / Light / Dark), 9 accent colors |
+| **General** | Launch at login, remember wallpapers on startup, sync playback across displays, show music widget when minimized |
+| **Battery & Performance** | Pause in Low Power Mode, pause when running hot, pause behind fullscreen apps, performance profile (Maximum Battery / Balanced / High Quality) |
+| **About & Help** | About & Status, Welcome, What's New |
+
+### Slideshow builder
+
+Configure a still-image slideshow per display from the **Slideshow** section in the right panel.
+
+- **Drag & drop** images onto the queue canvas
+- Pick images from your Library strip or via **Add Images…**
+- Reorder by dragging rows in the queue
+- Set interval (3 s – 60 s) and transition (Fade / Cut)
+- **Ken Burns effect** — slow cinematic pan & zoom on each image (on by default)
+- **Save & Play** commits immediately to the desktop
+
+### Floating now-playing widget
+
+When **Show music widget when minimized** is enabled in Settings, minimizing Lumina Studio pops a floating mini-player in the top-right corner. It mirrors the footer transport controls for ambient audio and can be dismissed independently.
+
+### Theme & accessibility
+
+- **Dark theme** uses pure black (`luminaBase`) and near-black cards (`luminaCard`) with high-contrast borders (`luminaBorder`) — dividers stay visible on black
+- **9 accent themes**: System, Ocean, Aurora, Blossom, Ember, Sunset, Gold, Forest, Teal
+- Accessibility labels on library filter tabs, wallpaper grid items, settings controls, and transport buttons
 
 ---
 
@@ -51,10 +124,10 @@ Requirements: macOS 13+, Xcode Command Line Tools, Swift 6
 | Feature | Detail |
 |---|---|
 | **Video wallpapers** | MP4, MOV, M4V, MKV, WebM, AVI and more |
-| **Animated GIFs** | Smooth native loop via AVFoundation |
+| **Animated GIFs** | Smooth loop via ImageIO frame decode + `CAKeyframeAnimation` on a `CALayer` |
 | **Static images** | PNG, JPEG, HEIC, WebP, TIFF |
 | **Seamless looping** | AVQueuePlayer + AVPlayerLooper — zero-gap |
-| **Loop crossfade** | Fade between loop points (0.25 s – 5 s) |
+| **Loop crossfade** | Fade between loop points (0 – 5 s) |
 | **Playback speed** | 0.25× – 4.0× per display |
 | **Loop modes** | Loop continuously, Play once, or Bounce (forward ↔ reverse) |
 | **Video audio** | Per-display volume control (defaults to muted) |
@@ -71,13 +144,22 @@ Requirements: macOS 13+, Xcode Command Line Tools, Swift 6
 All effects are GPU-accelerated via Core Image filters — zero CPU overhead.
 
 ### Crop & Zoom
+- Inline crop editing directly on the live preview
 - Draggable crop rectangle with four corner handles
-- Stays within bounds, clamped at all edges
 - Video preview scrubber for frame-accurate crop setup
 - "Reset to Full" one-click
+- Window auto-grows when crop mode opens (if needed)
+
+### Slideshow
+| Feature | Detail |
+|---|---|
+| **Image queue** | Drag-drop, library picker, reorder |
+| **Interval** | 3 s – 60 s per image |
+| **Transition** | Fade or cut |
+| **Ken Burns** | Slow cinematic pan/zoom per slide (toggleable) |
 
 ### Performance & Compression
-- **Video compression** — Re-encode any wallpaper to 4K / 1080p / 720p / 480p using Apple's hardware encoder (fast on Apple Silicon)
+- **Video compression** — Re-encode any wallpaper to 4K / 1080p / 720p / 480p using Apple's hardware encoder
 - Shows current file size, resolution, and duration
 - Estimated output size before you start
 - Live progress bar with cancel support
@@ -85,31 +167,25 @@ All effects are GPU-accelerated via Core Image filters — zero CPU overhead.
 
 ### Multi-Monitor
 - Independent wallpaper and settings on every display
-- Visual monitor selection cards with highlight bounding box
-- "Configuring S2 • Built-in Retina Display" header always shows active target
-- Sync playback across displays — keeps all videos in lockstep at the same frame
+- Visual monitor selection via floating physical layout window
+- "Configuring S1 • Built-in Retina Display" header shows active target
+- Sync playback across displays — restart all videos in lockstep
 - Per-monitor brightness, crop, speed, and effects
 
 ### Library & Favorites
-- Drag-and-drop or file picker to add wallpapers
+- Add wallpapers via file picker or slideshow builder (auto-saved to library)
 - Filter by **All / Video / Image / GIF / ★ Starred**
 - Search by filename
 - Star any wallpaper — persists across launches
 - Right-click context menu: Set as Wallpaper / Favourite / Remove
-- Library items cached between sessions (never need to re-add)
+- Library items cached between sessions
 
 ### Ambient Audio
-- Add an unlimited number of MP3, AAC, or FLAC tracks to a persistent music library
-- Scrollable library strip in the footer — click any chip to play it
-- Per-track volume and loop toggle
+- Add MP3 and other standard audio formats (`.audio`, `.mp3`) to a persistent music library
+- Footer transport bar with seek, skip, loop, and volume
+- Collapsible queue panel with reorder and remove
 - Plays independently of video audio
 - Remembers last track and position between launches
-
-### Slideshow
-- Add multiple images to any display's slideshow queue
-- Configurable interval (3 s – 60 s)
-- Fade or cut transition
-- Remove individual images from the queue
 
 ### Power Management
 - Auto-pause on Low Power Mode
@@ -117,28 +193,6 @@ All effects are GPU-accelerated via Core Image filters — zero CPU overhead.
 - Auto-pause when fullscreen apps are active
 - Performance profiles: Maximum Battery / Balanced / High Quality
 - Resumes automatically when conditions clear
-
-### UI / UX
-- **Lumina Studio** — clean two-column layout
-- Collapsible settings sections with SF Symbol icons
-- **9 accent colour themes**: System, Ocean, Aurora, Blossom, Ember, Sunset, Gold, Forest, Teal
-- Filter tabs with full-area hit targets and underline selection indicator
-- Hover cards showing quick-action overlay (apply, favourite)
-- Settings snap instantly when switching displays — no animated glitch
-- **Reset Settings** button restores all effects to defaults
-- Tooltips on every non-obvious control
-- Loop mode description shown live below the mode picker
-- Pure menu-bar accessory app — no Dock icon
-
----
-
-## Quick Start
-
-1. Click the Lumina icon in the menu bar → **Lumina Studio…** (`⌘M`)
-2. Click **Choose Display…** and select a monitor
-3. Click **Add to Library** (bottom of the library panel) and pick a video or image
-4. Click any thumbnail to apply it to the selected display immediately
-5. Tune brightness, speed, crop, and effects in the right panel
 
 ---
 
@@ -177,18 +231,24 @@ Sources/Lumina/
 ├── WallpaperManagerStore.swift         # View model / presenter layer
 ├── Models/
 │   ├── MonitorAssignment.swift         # All per-monitor settings
-│   ├── AppTheme.swift                  # 9 accent themes
-│   └── FavoritesManager.swift
+│   ├── AppTheme.swift                  # Accent themes, luminaBase/luminaCard dividers
+│   ├── AppearanceManager.swift         # Light / Dark / Match System
+│   ├── FavoritesManager.swift
+│   └── MonitorInfo.swift
 ├── WallpaperEngine/
 │   ├── VideoRenderer.swift             # AVQueuePlayer, crop, color effects
 │   ├── VideoCompressor.swift           # AVAssetExportSession transcoding
-│   ├── SlideshowEngine.swift           # Timer-driven image cycling
+│   ├── SlideshowEngine.swift           # Timer-driven cycling + Ken Burns
 │   ├── AmbientAudioManager.swift       # Persistent music library
 │   ├── PowerManager.swift
-│   └── FullscreenDetector.swift
+│   ├── FullscreenDetector.swift
+│   └── DesktopWallpaperWindow.swift
 └── Views/
     ├── WallpaperManagerView.swift      # Main two-column UI, library grid
-    ├── MonitorDetailPanel.swift        # Per-monitor settings (collapsible sections)
+    ├── MonitorDetailPanel.swift        # Per-monitor settings + WYSIWYG preview
+    ├── SettingsView.swift              # App-wide preferences sheet
+    ├── SlideshowConfigView.swift       # Slideshow builder sheet
+    ├── NowPlayingWidget.swift          # Floating mini-player on minimize
     ├── ChooseDisplayView.swift         # Monitor selection cards
     ├── WallpaperPreview.swift          # Live video preview + crop overlay
     └── CropRectangle.swift             # Draggable crop editor
@@ -203,7 +263,6 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for deeper design decisions.
 - [ ] **v1.0** — Signed + notarized DMG, Sparkle auto-update
 - [ ] Homebrew Cask formula
 - [ ] iCloud library sync
-- [ ] Playlist mode (multiple wallpapers cycling per display)
 - [ ] Schedule wallpapers by time of day
 - [ ] HDR video support
 - [ ] Metal shader / particle wallpapers

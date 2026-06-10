@@ -14,6 +14,7 @@ struct SlideshowConfigView: View {
     @State private var items: [String] = []
     @State private var interval: Double = 10
     @State private var transition: MonitorAssignment.SlideshowTransition = .fade
+    @State private var kenBurnsEnabled: Bool = true
     @State private var isDropTargeted: Bool = false
 
     @StateObject private var themeManager = ThemeManager.shared
@@ -200,6 +201,18 @@ struct SlideshowConfigView: View {
                 .labelsHidden()
                 .frame(width: 160)
             }
+
+            Toggle(isOn: $kenBurnsEnabled) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Label("Ken Burns effect", systemImage: "camera.aperture")
+                        .font(.subheadline.weight(.medium))
+                    Text("Slow cinematic pan & zoom on each image — like a documentary.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .toggleStyle(.switch)
+            .accessibilityLabel("Ken Burns effect")
+            .accessibilityHint("Enable slow pan and zoom animation on slideshow images")
         }
         .padding(.horizontal, 18).padding(.vertical, 14)
     }
@@ -239,6 +252,7 @@ struct SlideshowConfigView: View {
             items = a.slideshowItems
             interval = a.slideshowInterval
             transition = a.slideshowTransition
+            kenBurnsEnabled = a.slideshowKenBurnsEnabled
         }
     }
 
@@ -277,6 +291,7 @@ struct SlideshowConfigView: View {
         // setSlideshowItems) uses the new timing/transition.
         store.setSlideshowInterval(for: monitor, interval: interval)
         store.setSlideshowTransition(for: monitor, transition: transition)
+        store.setSlideshowKenBurns(for: monitor, enabled: kenBurnsEnabled)
         store.setSlideshowItems(for: monitor, items: items)
         onClose()
     }

@@ -45,6 +45,15 @@ struct LuminaDivider: View {
     }
 }
 
+/// Vertical counterpart to `LuminaDivider` for inline separators in toolbars.
+struct LuminaVerticalDivider: View {
+    var body: some View {
+        Rectangle()
+            .fill(Color.luminaBorder)
+            .frame(width: 1)
+    }
+}
+
 enum AccentTheme: String, CaseIterable, Identifiable {
     case system, blue, purple, pink, red, orange, yellow, green, teal
 

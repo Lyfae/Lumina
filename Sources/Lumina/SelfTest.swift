@@ -74,8 +74,13 @@ enum SelfTest {
             renderer.load(url: gif, autoPlay: false)
             check("renderer dispatches GIF", renderer.statusSummary.hasPrefix("gif"))
 
-            renderer.loadSlideshow(items: [png.path, gif.path], interval: 5, transition: .fade)
+            renderer.loadSlideshow(items: [png.path, gif.path], interval: 5, transition: .fade,
+                                   kenBurnsEnabled: true)
             check("renderer enters slideshow", renderer.isSlideshow)
+            check("slideshow Ken Burns animation attached", renderer.slideshowKenBurnsAnimationActive)
+
+            renderer.setSlideshowKenBurnsEnabled(false)
+            check("slideshow Ken Burns toggled off", !renderer.slideshowKenBurnsAnimationActive)
 
             renderer.clear()
             check("clear() exits slideshow", !renderer.isSlideshow)
@@ -101,12 +106,14 @@ enum SelfTest {
             a.loopFadeEasing = .easeOut
             a.slideshowItems = ["/a.png", "/b.png"]
             a.slideshowInterval = 15
+            a.slideshowKenBurnsEnabled = true
             let data = try JSONEncoder().encode(a)
             let back = try JSONDecoder().decode(MonitorAssignment.self, from: data)
             check("assignment round-trips scaling", back.scaling == .fit)
             check("assignment round-trips opacity", abs(back.opacity - 0.42) < 0.0001)
             check("assignment round-trips fade easing", back.loopFadeEasing == .easeOut)
             check("assignment round-trips slideshow items", back.slideshowItems == ["/a.png", "/b.png"])
+            check("assignment round-trips Ken Burns", back.slideshowKenBurnsEnabled == true)
         } catch {
             check("assignment encode/decode (no throw)", false)
         }
@@ -116,7 +123,8 @@ enum SelfTest {
         if let a = try? JSONDecoder().decode(MonitorAssignment.self, from: minimal) {
             check("minimal record decodes with defaults",
                   a.scaling == .fill && abs(a.opacity - 1.0) < 0.0001
-                  && a.slideshowItems.isEmpty && a.loopFadeEnabled == false)
+                  && a.slideshowItems.isEmpty && a.loopFadeEnabled == false
+                  && a.slideshowKenBurnsEnabled == true)
         } else {
             check("minimal record decodes (no throw)", false)
         }

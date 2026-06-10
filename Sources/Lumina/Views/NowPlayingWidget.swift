@@ -132,6 +132,7 @@ struct NowPlayingWidgetView: View {
             }
             .buttonStyle(.plain)
             .help("Hide widget")
+            .accessibilityLabel("Hide widget")
         }
     }
 
@@ -209,6 +210,7 @@ struct NowPlayingWidgetView: View {
             .disabled(audio.trackURL == nil)
             .opacity(audio.trackURL == nil ? 0.4 : 1)
             .help(audio.isPlaying ? "Pause" : "Play")
+            .accessibilityLabel(audio.isPlaying ? "Pause" : "Play")
 
             Spacer(minLength: 0)
 
@@ -222,7 +224,7 @@ struct NowPlayingWidgetView: View {
             transportButton(
                 audio.volume < 0.01 ? "speaker.slash.fill" : "speaker.wave.2.fill",
                 size: 15,
-                help: "Mute"
+                help: audio.volume < 0.01 ? "Unmute" : "Mute"
             ) {
                 audio.setVolume(audio.volume < 0.01 ? 0.5 : 0)
             }
@@ -246,6 +248,7 @@ struct NowPlayingWidgetView: View {
         }
         .buttonStyle(.plain)
         .help(help)
+        .accessibilityLabel(help)
     }
 
     private func timeString(_ seconds: Double) -> String {

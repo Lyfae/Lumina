@@ -302,7 +302,8 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if !slideItems.isEmpty {
             renderer.loadSlideshow(items: slideItems,
                                    interval: assignment.slideshowInterval,
-                                   transition: assignment.slideshowTransition)
+                                   transition: assignment.slideshowTransition,
+                                   kenBurnsEnabled: assignment.slideshowKenBurnsEnabled)
             print("Restored slideshow for \(monitorID) (\(slideItems.count) image(s))")
             return true
         }
@@ -1041,6 +1042,12 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    /// Live Ken Burns toggle — updates the running slideshow without restarting from slide 0.
+    func applySlideshowKenBurnsToMonitor(monitorID: String, enabled: Bool) {
+        guard let index = monitorIndex(for: monitorID), index < renderers.count else { return }
+        renderers[index].setSlideshowKenBurnsEnabled(enabled)
+    }
+
     /// Starts/updates (or stops) an image slideshow on a monitor based on its assignment's
     /// slideshow fields. Called whenever the user edits the slideshow in the manager.
     func applySlideshowToMonitor(monitorID: String) {
@@ -1063,7 +1070,8 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         renderers[index].loadSlideshow(items: items,
                                        interval: assignment.slideshowInterval,
-                                       transition: assignment.slideshowTransition)
+                                       transition: assignment.slideshowTransition,
+                                       kenBurnsEnabled: assignment.slideshowKenBurnsEnabled)
         currentVideoURL = URL(fileURLWithPath: (items[0] as NSString).expandingTildeInPath)
         currentVideoURLMonitorID = monitorID
         updateCurrentWallpaperDisplay()

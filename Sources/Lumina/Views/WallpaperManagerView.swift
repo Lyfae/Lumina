@@ -94,9 +94,9 @@ struct WallpaperManagerView: View {
     private var coreContent: some View {
         VStack(spacing: 0) {
             headerBar
-            Divider()
+            LuminaDivider()
             mainContent
-            Divider()
+            LuminaDivider()
             footerBar
         }
     }
@@ -141,6 +141,7 @@ struct WallpaperManagerView: View {
             }
             .buttonStyle(.borderless)
             .help("Settings")
+            .accessibilityLabel("Settings")
         }
         .padding(.horizontal, 20).padding(.vertical, 14)
         .background(.bar)
@@ -197,11 +198,14 @@ struct WallpaperManagerView: View {
                     }
                     .buttonStyle(.plain)
                     .help(filter.helpText)
+                    .accessibilityLabel(filter.label)
+                    .accessibilityHint(filter.helpText)
+                    .accessibilityAddTraits(selectedFilter == filter ? .isSelected : [])
                 }
             }
             .background(.quaternary.opacity(0.4))
 
-            Divider()
+            LuminaDivider()
 
             // Grid
             ScrollView {
@@ -288,7 +292,7 @@ struct WallpaperManagerView: View {
             .padding(.horizontal, 16).padding(.vertical, 10)
             .background(.bar)
 
-            Divider()
+            LuminaDivider()
 
             if let monitor = currentTargetMonitor {
                 // No outer ScrollView: the panel pins its preview + action bar and scrolls
@@ -317,7 +321,7 @@ struct WallpaperManagerView: View {
         VStack(spacing: 0) {
             // Queue panel — collapsible above the controls row
             if !audioManager.library.isEmpty && showQueue {
-                Divider()
+                LuminaDivider()
                 queuePanel
             }
 
@@ -366,6 +370,7 @@ struct WallpaperManagerView: View {
                     }
                     .buttonStyle(.plain)
                     .help(audioManager.isPlaying ? "Pause" : "Play")
+                    .accessibilityLabel(audioManager.isPlaying ? "Pause" : "Play")
                     .disabled(audioManager.trackURL == nil)
 
                     transportIcon("goforward.10", size: 15, help: "Skip forward 10 seconds") {
@@ -417,7 +422,7 @@ struct WallpaperManagerView: View {
                         .frame(width: 84).help("Ambient audio volume")
                 }
 
-                Divider().frame(height: 26)
+                LuminaVerticalDivider().frame(height: 26)
 
                 // Library actions
                 Button { audioManager.chooseTrack() } label: {
@@ -487,6 +492,7 @@ struct WallpaperManagerView: View {
         }
         .buttonStyle(.plain)
         .help(help)
+        .accessibilityLabel(help)
     }
 
     // MARK: - Music Queue Panel
@@ -544,6 +550,7 @@ struct WallpaperManagerView: View {
                                 .foregroundStyle(.tertiary)
                         }
                         .buttonStyle(.plain)
+                        .accessibilityLabel("Remove \(track.name) from queue")
                     }
                     .padding(.vertical, 2)
                     .listRowBackground(
@@ -679,13 +686,19 @@ struct WallpaperGridItem: View {
                             Button { onApply() } label: {
                                 Image(systemName: "checkmark.circle.fill")
                                     .font(.title2).foregroundStyle(.white)
-                            }.buttonStyle(.plain).help("Set as Wallpaper")
+                            }
+                            .buttonStyle(.plain)
+                            .help("Set as Wallpaper")
+                            .accessibilityLabel("Set as Wallpaper")
 
                             Button { onFavorite() } label: {
                                 Image(systemName: isFavorite ? "star.fill" : "star")
                                     .font(.title3)
                                     .foregroundStyle(isFavorite ? Color.yellow : .white)
-                            }.buttonStyle(.plain).help("Favorite")
+                            }
+                            .buttonStyle(.plain)
+                            .help(isFavorite ? "Remove from Favorites" : "Add to Favorites")
+                            .accessibilityLabel(isFavorite ? "Remove from Favorites" : "Add to Favorites")
                         }
                     )
                     .transition(.opacity)
@@ -720,6 +733,10 @@ struct WallpaperGridItem: View {
         }
         .onHover { isHovered = $0 }
         .onTapGesture { onApply() }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(recent.displayName)
+        .accessibilityHint(isSelected ? "Currently assigned wallpaper" : "Set as wallpaper")
+        .accessibilityAddTraits(.isButton)
         .overlay(alignment: .bottom) {
             Text(recent.displayName)
                 .font(.caption2)

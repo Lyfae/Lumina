@@ -382,6 +382,11 @@ public final class AVVideoRenderer: @unchecked Sendable {
     }
 
     public func play() {
+        if let slideshow {
+            if case .paused = currentPolicy { return }
+            MainActor.assumeIsolated { slideshow.resume() }
+            return
+        }
         if mediaKind == .animatedImage, let layer = imageLayer {
             if case .paused = currentPolicy { return }
             resumeLayerAnimation(layer)
@@ -398,6 +403,10 @@ public final class AVVideoRenderer: @unchecked Sendable {
     }
 
     public func pause() {
+        if let slideshow {
+            MainActor.assumeIsolated { slideshow.pause() }
+            return
+        }
         if mediaKind == .animatedImage, let layer = imageLayer {
             pauseLayerAnimation(layer)
             return
@@ -482,10 +491,11 @@ public final class AVVideoRenderer: @unchecked Sendable {
     public func applyPolicy(_ policy: WallpaperPlaybackPolicy) {
         currentPolicy = policy
 
-        // Slideshow: stop the timer when paused, resume cycling otherwise.
+        // Slideshow: pause the advance timer and Ken Burns when paused; resume without
+        // restarting from slide 0 (mirrors the GIF layer pause/resume path).
         if let slideshow {
             MainActor.assumeIsolated {
-                if case .paused = policy { slideshow.stop() } else { slideshow.start() }
+                if case .paused = policy { slideshow.pause() } else { slideshow.resume() }
             }
             return
         }
@@ -919,7 +929,22 @@ public final class AVVideoRenderer: @unchecked Sendable {
 
     /// Runs an image slideshow on this display. The slideshow draws its own layers on the
     /// host layer; the video/image layers are hidden while it's active.
-    public func loadSlideshow(items: [String], interval: Double, transition: MonitorAssignment.SlideshowTransition) {
+    /// Live Ken Burns toggle — updates the running slideshow without a full restart.
+    public func setSlideshowKenBurnsEnabled(_ enabled: Bool) {
+        guard let slideshow else { return }
+        MainActor.assumeIsolated { slideshow.setKenBurnsEnabled(enabled) }
+    }
+
+    /// Headless self-test hook — whether the current slide has an active Ken Burns animation.
+    public var slideshowKenBurnsAnimationActive: Bool {
+        guard let engine = slideshow else { return false }
+        return MainActor.assumeIsolated { engine.hasActiveKenBurnsAnimation }
+    }
+
+    public func loadSlideshow(items: [String],
+                            interval: Double,
+                            transition: MonitorAssignment.SlideshowTransition,
+                            kenBurnsEnabled: Bool = true) {
         cleanup()
         guard let host = hostLayer ?? playerLayer?.superlayer else {
             print("[AVVideoRenderer] No host layer available for slideshow")
@@ -932,7 +957,8 @@ public final class AVVideoRenderer: @unchecked Sendable {
         // SlideshowEngine is @MainActor; this renderer is documented main-thread-only.
         slideshow = MainActor.assumeIsolated {
             let engine = SlideshowEngine()
-            engine.configure(items: items, interval: interval, transition: transition, hostLayer: host)
+            engine.configure(items: items, interval: interval, transition: transition,
+                             kenBurnsEnabled: kenBurnsEnabled, hostLayer: host)
             return engine
         }
         loadedURL = items.first.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) }

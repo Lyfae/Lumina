@@ -406,6 +406,20 @@ final class WallpaperManagerStore: ObservableObject {
         appDelegate?.applySlideshowToMonitor(monitorID: monitor.id)
     }
 
+    func setSlideshowKenBurns(for monitor: MonitorInfo, enabled: Bool) {
+        guard let central = appDelegate?.assignmentStore else { return }
+
+        if var assignment = central.assignment(for: monitor.id) {
+            assignment.slideshowKenBurnsEnabled = enabled
+            central.updateAssignment(assignment)
+        } else {
+            var newAssignment = MonitorAssignment(monitorIdentifier: monitor.id)
+            newAssignment.slideshowKenBurnsEnabled = enabled
+            central.updateAssignment(newAssignment)
+        }
+        appDelegate?.applySlideshowKenBurnsToMonitor(monitorID: monitor.id, enabled: enabled)
+    }
+
     func setOpacity(for monitor: MonitorInfo, opacity: Double) {
         guard let central = appDelegate?.assignmentStore else { return }
 

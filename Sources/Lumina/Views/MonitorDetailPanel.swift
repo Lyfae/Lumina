@@ -34,6 +34,7 @@ struct MonitorDetailPanel: View {
     @State private var slideshowItems: [String] = []
     @State private var slideshowInterval: Double = 10.0
     @State private var slideshowTransition: MonitorAssignment.SlideshowTransition = .fade
+    @State private var slideshowKenBurnsEnabled: Bool = true
 
     // Compressor
     @StateObject private var compressor = VideoCompressor.shared
@@ -141,6 +142,13 @@ struct MonitorDetailPanel: View {
         .sheet(isPresented: $showSlideshowConfig, onDismiss: { loadCurrentValues() }) {
             SlideshowConfigView(monitor: monitor, store: store,
                                 onClose: { showSlideshowConfig = false })
+        }
+        .onChange(of: cropEditMode) { _, visible in
+            NotificationCenter.default.post(
+                name: .cropEditorVisibilityChanged,
+                object: nil,
+                userInfo: ["visible": visible]
+            )
         }
     }
 
@@ -609,7 +617,7 @@ struct MonitorDetailPanel: View {
                 HStack(spacing: 8) {
                     Image(systemName: "photo.stack.fill")
                         .foregroundStyle(.secondary)
-                    Text("^[\(slideshowItems.count) image](inflect: true) • every \(Int(slideshowInterval))s • \(slideshowTransition.rawValue.capitalized)")
+                    Text("^[\(slideshowItems.count) image](inflect: true) • every \(Int(slideshowInterval))s • \(slideshowTransition.rawValue.capitalized)\(slideshowKenBurnsEnabled ? " • Ken Burns" : "")")
                         .font(.caption.weight(.medium))
                         .foregroundStyle(.secondary)
                 }
@@ -736,6 +744,10 @@ struct MonitorDetailPanel: View {
     }
 
     private func _loadCurrentValuesInner() {
+        // Leaving crop mode when the target display changes prevents stale crop UI and
+        // ensures cropEditorVisibilityChanged fires so the window can shrink if needed.
+        if cropEditMode { cropEditMode = false }
+
         if let a = store.assignment(for: monitor.id) {
             selectedScaling = a.scaling
             keepOnStartup = a.keepOnStartup
@@ -748,6 +760,7 @@ struct MonitorDetailPanel: View {
             slideshowItems = a.slideshowItems
             slideshowInterval = a.slideshowInterval
             slideshowTransition = a.slideshowTransition
+            slideshowKenBurnsEnabled = a.slideshowKenBurnsEnabled
             opacity = a.opacity
             saturation = a.saturation
             hue = a.hue
@@ -766,6 +779,7 @@ struct MonitorDetailPanel: View {
             slideshowItems = []
             slideshowInterval = 10.0
             slideshowTransition = .fade
+            slideshowKenBurnsEnabled = true
             opacity = 1.0
             saturation = 1.0
             hue = 0.0
