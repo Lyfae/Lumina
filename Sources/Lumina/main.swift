@@ -1144,30 +1144,9 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: - Status Item & Menu (enhanced for B: UX + C: debug)
 
-    /// The LS menu-bar icon, loaded from disk exactly once. updateStatusItem() runs on every
-    /// power-policy change (thermal, low power, focus), so reloading the PNG there was
-    /// repeated main-thread disk I/O for an image that never changes.
-    private lazy var statusBarIcon: NSImage = {
-        let lsPaths = [
-            "Sources/Lumina/Resources/Icons/LuminaLSLogo_Menu@2x.png",
-            "Sources/Lumina/Resources/Icons/LuminaLSLogo_Menu.png"
-        ]
-        for p in lsPaths {
-            if FileManager.default.fileExists(atPath: p),
-               let img = NSImage(contentsOfFile: p) {
-                img.isTemplate = true
-                img.size = NSSize(width: 23, height: 18)
-                return img
-            }
-        }
-        if let url = Bundle.module.url(forResource: "LuminaLSLogo_Menu@2x", withExtension: "png", subdirectory: "Icons"),
-           let img = NSImage(contentsOf: url) {
-            img.isTemplate = true
-            img.size = NSSize(width: 23, height: 18)
-            return img
-        }
-        return makeLuminaStatusImage()
-    }()
+    /// The LS menu-bar icon, rendered once from the cursive monogram path.
+    /// Programmatic rendering avoids brittle bundle path lookups in the packaged .app.
+    private lazy var statusBarIcon: NSImage = LuminaMenuIcon.make()
 
     private func setupStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -1188,59 +1167,6 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(NSMenuItem(title: "Quit Lumina", action: #selector(quit), keyEquivalent: "q"))
 
         statusItem.menu = menu
-    }
-
-    /// Returns a properly aligned, template NSImage for the menu bar status item.
-    /// Prefers the unique custom icon generated with Grok Imagine for a distinctive
-    /// premium feel. Falls back to SF Symbol then a hand-drawn glyph.
-    private func makeLuminaStatusImage() -> NSImage {
-        // 1. Custom Grok Imagine generated icon (unique to Lumina)
-        if let customIcon = loadCustomLuminaMenuIcon() {
-            return customIcon
-        }
-
-        // 2. Preferred built-in: SF Symbol (thematic "water wave")
-        if let symbol = NSImage(systemSymbolName: "water.waves", accessibilityDescription: "Lumina") {
-            symbol.isTemplate = true
-            return symbol
-        }
-
-        // 3. Final fallback: simple drawn icon
-        let size = NSSize(width: 16, height: 16)
-        let image = NSImage(size: size)
-        image.lockFocus()
-        NSColor.black.set()
-        let inset = NSRect(x: 1, y: 1, width: 14, height: 14)
-        NSBezierPath(ovalIn: inset).fill()
-        let wave = NSBezierPath()
-        wave.move(to: NSPoint(x: 4, y: 8))
-        wave.curve(to: NSPoint(x: 8, y: 5), controlPoint1: NSPoint(x: 5, y: 9), controlPoint2: NSPoint(x: 6, y: 4))
-        wave.curve(to: NSPoint(x: 12, y: 8), controlPoint1: NSPoint(x: 10, y: 6), controlPoint2: NSPoint(x: 11, y: 9))
-        NSColor.white.set()
-        wave.lineWidth = 1.2
-        wave.stroke()
-        image.unlockFocus()
-        image.isTemplate = true
-        return image
-    }
-
-    /// Loads the unique custom menu bar icon generated with Grok Imagine.
-    /// Uses the bundled resource when available (works for `swift run`, Xcode, and packaged .app).
-        private func loadCustomLuminaMenuIcon() -> NSImage? {
-        // LS symbol - the one the user wants for the menu bar icon
-        let candidates = [
-            "Sources/Lumina/Resources/Icons/LuminaLSLogo_Menu@2x.png",
-            "Sources/Lumina/Resources/Icons/LuminaLSLogo_Menu.png"
-        ]
-        for path in candidates {
-            if FileManager.default.fileExists(atPath: path),
-               let image = NSImage(contentsOfFile: path) {
-                image.isTemplate = true
-                image.size = NSSize(width: 23, height: 18)
-                return image
-            }
-        }
-        return nil
     }
 
     private func updateStatusItem(for policy: WallpaperPlaybackPolicy) {
