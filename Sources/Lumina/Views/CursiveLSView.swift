@@ -18,7 +18,9 @@ struct CursiveLSView: View {
     @State private var trimEnd: CGFloat = 0
     @State private var hasAnimated = false
 
-    private let lsPath: Path = {
+    /// The cursive LS monogram path (original zip animation coordinates).
+    /// Shared so icon generation and other renderers use the exact same artwork.
+    static let lsPath: Path = {
         var path = Path()
         path.move(to: CGPoint(x: 65, y: 108))
         path.addCurve(to: CGPoint(x: 137, y: 80), control1: CGPoint(x: 92, y: 100), control2: CGPoint(x: 118, y: 88))
@@ -89,7 +91,7 @@ struct CursiveLSView: View {
 
     @ViewBuilder
     private var strokedPath: some View {
-        let trimmed = lsPath.trim(from: 0, to: trimEnd)
+        let trimmed = Self.lsPath.trim(from: 0, to: trimEnd)
         let style = StrokeStyle(lineWidth: lineWidth, lineCap: .round, lineJoin: .round)
 
         if let gradientColors {

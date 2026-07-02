@@ -7,7 +7,7 @@ import AppKit
 // A borderless, floating card that appears briefly when Lumina starts:
 //   1. Deep aurora background (slow-drifting color glows — the app's wallpaper identity)
 //   2. The cursive LS monogram draws itself in with a gradient ink + soft glow
-//   3. The wordmark, tagline, and version fade in as the stroke completes
+//   3. The wordmark fades in as the stroke completes
 //   4. The card holds for a beat, then fades and scales away on its own
 //
 // Design constraints:
@@ -30,11 +30,6 @@ struct SplashScreenView: View {
 
     private var reduceMotion: Bool {
         NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-    }
-
-    private var appVersion: String {
-        let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
-        return "Version \(v)"
     }
 
     // Shared palette — echoes the "living wallpaper" identity.
@@ -60,24 +55,12 @@ struct SplashScreenView: View {
                 )
                 .padding(.top, 10)
 
-                VStack(spacing: 7) {
-                    Text("Lumina Studio")
-                        .font(.system(size: 24, weight: .semibold, design: .serif))
-                        .foregroundStyle(.white)
-                        .tracking(0.6)
-
-                    Text("Living wallpapers, engineered for battery life")
-                        .font(.system(size: 12, weight: .regular))
-                        .foregroundStyle(.white.opacity(0.55))
-                        .tracking(0.4)
-
-                    Text(appVersion)
-                        .font(.system(size: 10.5, weight: .medium).monospacedDigit())
-                        .foregroundStyle(.white.opacity(0.35))
-                        .padding(.top, 2)
-                }
-                .opacity(wordmarkVisible ? 1 : 0)
-                .offset(y: wordmarkVisible ? 0 : 8)
+                Text("Lumina Studio")
+                    .font(.system(size: 24, weight: .semibold, design: .serif))
+                    .foregroundStyle(.white)
+                    .tracking(0.6)
+                    .opacity(wordmarkVisible ? 1 : 0)
+                    .offset(y: wordmarkVisible ? 0 : 8)
             }
             .padding(.horizontal, 44)
             .padding(.vertical, 38)

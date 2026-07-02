@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="Sources/Lumina/Resources/Icons/LuminaMenuIcon@2x.png" width="72" alt="Lumina">
+  <img src="Sources/Lumina/Resources/Icons/LuminaAppIcon.png" width="128" alt="Lumina">
 </p>
 
 <h1 align="center">Lumina Studio</h1>
