@@ -46,12 +46,13 @@ struct WallpaperManagerView: View {
     @Binding var selectedMonitorID: String?
 
     @StateObject private var themeManager = ThemeManager.shared
-    @StateObject private var audioManager = AmbientAudioManager.shared
+    // NOTE: AmbientAudioManager is deliberately NOT observed here. It publishes currentTime
+    // 4×/sec during playback, which would invalidate the entire manager tree (library grid,
+    // live preview, crop UI) on every tick. Only AudioFooterBar observes it.
     @StateObject private var favoritesManager = FavoritesManager.shared
 
     @State private var searchQuery: String = ""
     @State private var selectedFilter: LibraryFilter = .all
-    @State private var showQueue: Bool = false
     @State private var showSettings: Bool = false
 
     // MARK: - Computed
@@ -97,7 +98,7 @@ struct WallpaperManagerView: View {
             LuminaDivider()
             mainContent
             LuminaDivider()
-            footerBar
+            AudioFooterBar()
         }
     }
 
@@ -105,10 +106,7 @@ struct WallpaperManagerView: View {
 
     private var headerBar: some View {
         HStack(spacing: 12) {
-            HStack(spacing: 6) {
-                Image(systemName: "water.waves")
-                    .font(.title3.weight(.semibold))
-                    .foregroundStyle(themeManager.current.color)
+            HStack(spacing: 8) {
                 Text("Lumina Studio")
                     .font(.title3.bold())
             }
@@ -315,9 +313,86 @@ struct WallpaperManagerView: View {
         .frame(maxWidth: .infinity)
     }
 
-    // MARK: - Footer Bar
+    // MARK: - Helpers (preserved verbatim from original)
 
-    private var footerBar: some View {
+    private func autoSelectFirstMonitor() {
+        if store.selectedMonitorID == nil && selectedMonitorID == nil,
+           let first = store.monitors.first {
+            selectedMonitorID = first.id
+            store.selectedMonitorID = first.id
+        }
+    }
+
+    private func monitorLabel(for monitor: MonitorInfo) -> String {
+        if let index = store.monitors.firstIndex(where: { $0.id == monitor.id }) {
+            return "S\(index + 1) • \(monitor.name)"
+        }
+        return monitor.name
+    }
+
+    /// Returns whether this recent item is the one currently assigned to the active target display.
+    private func isCurrentWallpaper(recent: WallpaperManagerStore.RecentMedia) -> Bool {
+        let targetID = store.selectedMonitorID ?? selectedMonitorID
+        guard let targetID,
+              let assignment = store.assignment(for: targetID),
+              let currentPath = assignment.filePath else {
+            return false
+        }
+        let expandedCurrent = (currentPath as NSString).expandingTildeInPath
+        return expandedCurrent == recent.url.path || expandedCurrent == recent.id
+    }
+
+    // Apply a recent wallpaper to the currently targeted display
+    private func applyRecentToSelected(recent: WallpaperManagerStore.RecentMedia) {
+        let targetID = store.selectedMonitorID ?? selectedMonitorID ?? store.monitors.first?.id
+        guard let targetID else {
+            NSSound.beep()
+            return
+        }
+        if selectedMonitorID != targetID { selectedMonitorID = targetID }
+        if store.selectedMonitorID != targetID { store.selectedMonitorID = targetID }
+        store.applyRecentMedia(to: targetID, url: recent.url)
+    }
+
+    private func addMediaToLibrary() {
+        let panel = NSOpenPanel()
+        panel.title = "Add wallpaper to library"
+        panel.message = "This adds the file to your collection on the left so you can easily re-use it on any display. It will not change what is currently playing."
+        panel.allowedContentTypes = [.movie, .image, .gif]
+        panel.canChooseFiles = true
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        store.addMediaToLibrary(url: url)
+    }
+
+    // MARK: - Empty Library View
+
+    @ViewBuilder private var emptyLibraryView: some View {
+        VStack(spacing: 14) {
+            Image(systemName: selectedFilter == .favorites ? "star" : "photo.badge.plus")
+                .font(.system(size: 40)).foregroundStyle(.quaternary)
+            Text(selectedFilter == .favorites ? "No favorites yet" :
+                 searchQuery.isEmpty ? "Library is empty" : "No results for \"\(searchQuery)\"")
+                .font(.callout).foregroundStyle(.secondary)
+            if searchQuery.isEmpty && selectedFilter == .all {
+                Button("Add to Library") { addMediaToLibrary() }.buttonStyle(.borderedProminent)
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 200)
+        .padding(40)
+    }
+}
+
+// MARK: - Audio Footer Bar
+
+/// The now-playing / queue footer. Kept as a separate view so that the 4 Hz `currentTime`
+/// publisher from AmbientAudioManager only re-renders this small bar — not the whole
+/// manager window (library grid, live preview, crop editor, …).
+private struct AudioFooterBar: View {
+    @StateObject private var themeManager = ThemeManager.shared
+    @StateObject private var audioManager = AmbientAudioManager.shared
+    @State private var showQueue: Bool = false
+
+    var body: some View {
         VStack(spacing: 0) {
             // Queue panel — collapsible above the controls row
             if !audioManager.library.isEmpty && showQueue {
@@ -576,77 +651,9 @@ struct WallpaperManagerView: View {
         return String(format: "%d:%02d", s / 60, s % 60)
     }
 
-    // MARK: - Empty Library View
-
-    @ViewBuilder private var emptyLibraryView: some View {
-        VStack(spacing: 14) {
-            Image(systemName: selectedFilter == .favorites ? "star" : "photo.badge.plus")
-                .font(.system(size: 40)).foregroundStyle(.quaternary)
-            Text(selectedFilter == .favorites ? "No favorites yet" :
-                 searchQuery.isEmpty ? "Library is empty" : "No results for \"\(searchQuery)\"")
-                .font(.callout).foregroundStyle(.secondary)
-            if searchQuery.isEmpty && selectedFilter == .all {
-                Button("Add to Library") { addMediaToLibrary() }.buttonStyle(.borderedProminent)
-            }
-        }
-        .frame(maxWidth: .infinity, minHeight: 200)
-        .padding(40)
-    }
-
-    // MARK: - Helpers (preserved verbatim from original)
-
-    private func autoSelectFirstMonitor() {
-        if store.selectedMonitorID == nil && selectedMonitorID == nil,
-           let first = store.monitors.first {
-            selectedMonitorID = first.id
-            store.selectedMonitorID = first.id
-        }
-    }
-
-    private func monitorLabel(for monitor: MonitorInfo) -> String {
-        if let index = store.monitors.firstIndex(where: { $0.id == monitor.id }) {
-            return "S\(index + 1) • \(monitor.name)"
-        }
-        return monitor.name
-    }
-
-    /// Returns whether this recent item is the one currently assigned to the active target display.
-    private func isCurrentWallpaper(recent: WallpaperManagerStore.RecentMedia) -> Bool {
-        let targetID = store.selectedMonitorID ?? selectedMonitorID
-        guard let targetID,
-              let assignment = store.assignment(for: targetID),
-              let currentPath = assignment.filePath else {
-            return false
-        }
-        let expandedCurrent = (currentPath as NSString).expandingTildeInPath
-        return expandedCurrent == recent.url.path || expandedCurrent == recent.id
-    }
-
-    // Apply a recent wallpaper to the currently targeted display
-    private func applyRecentToSelected(recent: WallpaperManagerStore.RecentMedia) {
-        let targetID = store.selectedMonitorID ?? selectedMonitorID ?? store.monitors.first?.id
-        guard let targetID else {
-            NSSound.beep()
-            return
-        }
-        if selectedMonitorID != targetID { selectedMonitorID = targetID }
-        if store.selectedMonitorID != targetID { store.selectedMonitorID = targetID }
-        store.applyRecentMedia(to: targetID, url: recent.url)
-    }
-
     private func formatAudioTime(_ seconds: Double) -> String {
         let s = Int(max(0, seconds))
         return String(format: "%d:%02d", s / 60, s % 60)
-    }
-
-    private func addMediaToLibrary() {
-        let panel = NSOpenPanel()
-        panel.title = "Add wallpaper to library"
-        panel.message = "This adds the file to your collection on the left so you can easily re-use it on any display. It will not change what is currently playing."
-        panel.allowedContentTypes = [.movie, .image, .gif]
-        panel.canChooseFiles = true
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        store.addMediaToLibrary(url: url)
     }
 }
 
@@ -764,7 +771,8 @@ struct WallpaperGridItem: View {
             }
             .disabled(onRemove == nil)
         }
-        .task { await loadThumbnail() }
+        // id: reload when the underlying file changes even if SwiftUI reuses this view's identity.
+        .task(id: recent.url) { await loadThumbnail() }
     }
 
     @ViewBuilder private var thumbnailContent: some View {

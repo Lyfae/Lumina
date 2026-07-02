@@ -7,10 +7,14 @@ final class PhysicalSetupWindowController: NSWindowController {
     
     private let store: WallpaperManagerStore
     @Binding private var selectedMonitorID: String?
+    /// The Lumina Studio window — used to keep the "manager active" power state on while
+    /// focus merely moves between our own configuration windows.
+    private weak var managerWindow: NSWindow?
     
-    init(store: WallpaperManagerStore, selectedMonitorID: Binding<String?>) {
+    init(store: WallpaperManagerStore, selectedMonitorID: Binding<String?>, managerWindow: NSWindow? = nil) {
         self.store = store
         self._selectedMonitorID = selectedMonitorID
+        self.managerWindow = managerWindow
         
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 620, height: 420),
@@ -78,7 +82,11 @@ final class PhysicalSetupWindowController: NSWindowController {
     
     @objc private func windowDidResignKey() {
         Task { @MainActor in
-            store.appDelegate?.powerManager?.setManagerWindowsActive(false)
+            // Only deactivate if Lumina Studio isn't still focused — otherwise unfocusing
+            // this floating panel would let Max Battery throttling kick in mid-configuration.
+            if self.managerWindow?.isKeyWindow != true {
+                store.appDelegate?.powerManager?.setManagerWindowsActive(false)
+            }
         }
     }
     

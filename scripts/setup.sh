@@ -178,6 +178,12 @@ main() {
     detect_colors "$@"
     setup_colors
 
+    # Support quick dev run: ./scripts/setup.sh --run
+    if [[ "${1:-}" == "--run" || "${1:-}" == "run" ]]; then
+        quick_dev_run
+        exit 0
+    fi
+
     print_header
     print_title
     print_header
@@ -257,22 +263,30 @@ main() {
 
     if [[ -f ~/Movies/Lumina\ Samples/demo.mp4 ]]; then
         print_plain "  1. Your demo video is ready at ~/Movies/Lumina Samples/demo.mp4"
-        print_plain "  2. Run the prototype:   .build/debug/Lumina"
-        print_plain "  3. Load it via the menu bar icon → \"Load Video…\" (⌘O)"
     else
         print_plain "  1. Place (or rename) a video as demo.mp4 inside ~/Movies/Lumina Samples/"
-        print_plain "  2. Run the prototype:   .build/debug/Lumina"
-        print_plain "  3. Load it via the menu bar icon → \"Load Video…\" (⌘O)"
     fi
 
     echo ""
-    print_plain "  4. Read docs/PROTOTYPE_TESTING.md for full verification steps & Instruments guidance."
+    print_plain "  2. Build the release app:   ./build"
+    print_plain "  3. Run the real app:        ./run"
+    print_plain "  4. Load it via the menu bar icon → \"Load Video…\" (⌘O)"
     echo ""
-    print_plain "${YELLOW}Tip:${NC} Using the name demo.mp4 makes it easy for this script and future tools to detect it."
+    print_plain "  5. Read docs/PROTOTYPE_TESTING.md for verification steps."
     echo ""
-    print_plain "${YELLOW}Re-run anytime:${NC} ./scripts/setup.sh"
+    print_plain "${YELLOW}Tip:${NC} Always use ./run to test (it uses the packaged dist/Lumina.app)"
+    echo ""
+    print_plain "${YELLOW}Re-run anytime:${NC}"
+    print_plain "  Build only:   ./build"
+    print_plain "  Build + Run:  ./run"
+    print_plain "  (This replaces the old debug + setup --run workflow)"
     echo ""
     print_header
 }
 
 main "$@"
+
+# --- Legacy support (kept for now) ---
+# The recommended commands are now ./build and ./run at the project root.
+# These build and launch the real packaged dist/Lumina.app instead of debug.
+

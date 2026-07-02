@@ -120,7 +120,10 @@ final class SlideshowEngine {
         pauseStartedAt = nil
         isPaused = false
         resumeKenBurns()
-        scheduleAdvanceTimer()
+        // Only wait for the *remaining* portion of the current slide, then fall back to
+        // the regular repeating cadence — otherwise every pause/resume extends the slide
+        // by a full interval.
+        scheduleAdvanceTimer(firstDelay: max(0.1, interval - currentSlideElapsed()))
     }
 
     /// Live toggle — updates Ken Burns on the current slide without a full slideshow restart.
@@ -143,9 +146,24 @@ final class SlideshowEngine {
         }
     }
 
-    private func scheduleAdvanceTimer() {
+    /// Schedules the advance timer. When `firstDelay` is provided, the first advance fires
+    /// after that delay (e.g. the remainder of a paused slide) and then re-arms at the
+    /// regular repeating `interval`.
+    private func scheduleAdvanceTimer(firstDelay: TimeInterval? = nil) {
         invalidateTimer()
         guard !imagePaths.isEmpty else { return }
+        if let firstDelay {
+            let t = Timer(timeInterval: firstDelay, repeats: false) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    guard let self, !self.isPaused else { return }
+                    self.advance()
+                    self.scheduleAdvanceTimer()
+                }
+            }
+            RunLoop.main.add(t, forMode: .common)
+            timer = t
+            return
+        }
         let t = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in self?.advance() }
         }

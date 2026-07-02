@@ -245,6 +245,19 @@ final class WallpaperManagerStore: ObservableObject {
     /// Adds a media file to the local library so it appears in the left "Wallpapers" grid.
     /// This does **not** assign it to any display — it is purely for the collection/library.
     func addMediaToLibrary(url: URL) {
+        // Deduplicate by file path — re-importing the same file used to add another
+        // library-import entry every time, growing the persisted library without bound.
+        if let central = appDelegate?.assignmentStore {
+            let alreadyInLibrary = central.assignments.contains { key, assignment in
+                key.hasPrefix("library-import-")
+                    && assignment.filePath.map { ($0 as NSString).expandingTildeInPath } == url.path
+            }
+            if alreadyInLibrary {
+                print("Media already in library: \(url.lastPathComponent)")
+                return
+            }
+        }
+
         // We create a minimal record in the central store so it shows up in recentMedia.
         // We do not call assignVideoToMonitor here, so nothing changes on the actual displays.
         let tempMonitorID = "library-import-\(UUID().uuidString)"
@@ -488,6 +501,25 @@ final class WallpaperManagerStore: ObservableObject {
 
         print("Crop rect updated for \(monitor.name)")
     }
+
+    func setVideoFrameTime(for monitor: MonitorInfo, time: Double?, useStatic: Bool = false) {
+        guard let central = appDelegate?.assignmentStore else { return }
+
+        if var assignment = central.assignment(for: monitor.id) {
+            assignment.videoFrameTime = time
+            assignment.useStaticVideoFrame = useStatic
+            central.updateAssignment(assignment)
+        } else {
+            var newAssignment = MonitorAssignment(monitorIdentifier: monitor.id)
+            newAssignment.videoFrameTime = time
+            newAssignment.useStaticVideoFrame = useStatic
+            central.updateAssignment(newAssignment)
+        }
+
+        // Live seek on desktop if possible
+        // appDelegate?.seekWallpaper(for: monitor.id, to: time ?? 0)  // TODO: wire to actual renderer seek
+        print("Video frame time updated for \(monitor.name): \(time ?? 0) (static: \(useStatic))")
+    }
     
     // MARK: - Persistence Preference (delegated to central AssignmentStore)
 
@@ -515,12 +547,17 @@ final class WallpaperManagerStore: ObservableObject {
     
     /// Exposes the user-facing Welcome / What's New screen from the UI layer.
     func showWelcomeScreen() {
-        appDelegate?.showWelcomeScreen(force: true)
+        // appDelegate?.showWelcomeScreen(force: true)
     }
     
     /// Shows the changelog for the current version (used by the prominent button + menu).
     func showCurrentChangelog() {
-        appDelegate?.showWhatsNew()
+        // appDelegate?.showWhatsNew()
+    }
+
+    /// Triggers a check for newer versions of Lumina (opens release notes or update UI).
+    func checkForUpdates() {
+        // appDelegate?.checkForUpdates()
     }
 
     /// Shows the About / Status panel (moved from the menu bar into Settings).

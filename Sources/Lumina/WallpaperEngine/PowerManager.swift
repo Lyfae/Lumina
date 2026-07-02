@@ -104,12 +104,18 @@ public final class PowerManager {
 
     // MARK: - Public API for other components
 
+    /// True while the user has explicitly paused via menu bar / hotkey. Kept sticky so
+    /// system events (thermal, low power, focus changes) can't silently resume playback.
+    private var isManuallyPaused = false
+
     /// Temporarily force a pause (e.g. from menu bar or hotkey). User can resume.
     public func pauseManually() {
+        isManuallyPaused = true
         setPolicy(.paused(reason: .manual))
     }
 
     public func resumeManually() {
+        isManuallyPaused = false
         // Re-evaluate from real system state instead of blindly going to .normal
         updatePolicy()
     }
@@ -121,7 +127,7 @@ public final class PowerManager {
 
     /// Called by FullscreenDetector when the desktop is (or is no longer) obscured by a fullscreen window.
     public func updateFullscreenObscured(_ isObscured: Bool) {
-        guard respectFullscreenApps else { return }
+        guard respectFullscreenApps, !isManuallyPaused else { return }
         if isObscured {
             setPolicy(.paused(reason: .fullscreenApp))
         } else {
@@ -158,6 +164,12 @@ public final class PowerManager {
     }
 
     private func updatePolicy() {
+        // A manual pause is sticky: only resumeManually() may clear it.
+        if isManuallyPaused {
+            setPolicy(.paused(reason: .manual))
+            return
+        }
+
         let processInfo = ProcessInfo.processInfo
 
         // Highest priority reasons first

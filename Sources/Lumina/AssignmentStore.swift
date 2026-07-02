@@ -62,7 +62,9 @@ final class AssignmentStore: ObservableObject {
 
         if monitorIdentifier.hasPrefix("library-import-") {
             saveLibraryItems()
-        } else if persistAssignments {
+        } else {
+            // Always rewrite the pinned bucket — gating this on `persistAssignments` left
+            // removed assignments in UserDefaults, so they came back on the next launch.
             saveAssignments()
         }
     }
@@ -77,10 +79,10 @@ final class AssignmentStore: ObservableObject {
 
     /// Public helper so the UI layer can force a filtered save (e.g. when user turns
     /// "Keep on startup" off so we immediately drop the entry from persistence).
+    /// Not gated on `persistAssignments`: un-pinning must always drop the stale entry
+    /// from UserDefaults, or it silently reloads on next launch.
     func forceSaveAssignments() {
-        if persistAssignments {
-            saveAssignments()
-        }
+        saveAssignments()
     }
 
     // MARK: - Per-Monitor Persistence (clean-start; only written, never auto-read on launch)

@@ -62,6 +62,8 @@ struct NowPlayingWidgetView: View {
 
     @StateObject private var audio = AmbientAudioManager.shared
     @StateObject private var theme = ThemeManager.shared
+    /// Non-nil while the user is dragging the progress bar (0...1).
+    @State private var scrubFraction: CGFloat? = nil
 
     private var accent: Color { theme.current.color }
 
@@ -151,7 +153,11 @@ struct NowPlayingWidgetView: View {
     private var progressBar: some View {
         VStack(spacing: 3) {
             GeometryReader { geo in
-                let fraction = audio.duration > 0 ? audio.currentTime / audio.duration : 0
+                // While scrubbing, show the local drag position and only seek once on
+                // release — seeking the AVAudioPlayer on every drag event caused a
+                // storm of decoder seeks and audible stutter.
+                let fraction = scrubFraction
+                    ?? (audio.duration > 0 ? audio.currentTime / audio.duration : 0)
                 ZStack(alignment: .leading) {
                     Capsule().fill(Color.white.opacity(0.14))
                     Capsule().fill(Color.white.opacity(0.85))
@@ -159,19 +165,25 @@ struct NowPlayingWidgetView: View {
                 }
                 .contentShape(Rectangle())
                 .gesture(
-                    DragGesture(minimumDistance: 0).onChanged { value in
-                        guard audio.duration > 0 else { return }
-                        let f = (value.location.x / geo.size.width).clampedUnit
-                        audio.seekToTime(f * audio.duration)
-                    }
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { value in
+                            guard audio.duration > 0 else { return }
+                            scrubFraction = (value.location.x / geo.size.width).clampedUnit
+                        }
+                        .onEnded { value in
+                            guard audio.duration > 0 else { scrubFraction = nil; return }
+                            let f = (value.location.x / geo.size.width).clampedUnit
+                            audio.seekToTime(f * audio.duration)
+                            scrubFraction = nil
+                        }
                 )
             }
             .frame(height: 5)
 
             HStack {
-                Text(timeString(audio.currentTime))
+                Text(timeString(scrubFraction.map { $0 * audio.duration } ?? audio.currentTime))
                 Spacer()
-                Text("-" + timeString(max(0, audio.duration - audio.currentTime)))
+                Text("-" + timeString(max(0, audio.duration - (scrubFraction.map { $0 * audio.duration } ?? audio.currentTime))))
             }
             .font(.system(size: 10.5, weight: .medium).monospacedDigit())
             .foregroundStyle(.white.opacity(0.45))

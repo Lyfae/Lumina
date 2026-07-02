@@ -19,16 +19,41 @@ public struct MonitorInfo: Identifiable, Equatable {
         self.isPrimary = isPrimary
         self.assignedVideoName = assignedVideoName
     }
+    
+    /// Approximate aspect ratio (width / height) parsed from the resolution string.
+    /// Falls back to 16:9. Used for preview containers and crop locking.
+    public var aspectRatio: CGFloat {
+        let components = resolution.split(separator: "x")
+        guard components.count == 2,
+              let w = Double(components[0]),
+              let h = Double(components[1]),
+              h > 0 else {
+            return 16.0 / 9.0
+        }
+        return CGFloat(w / h)
+    }
 }
 
 /// Helper to generate a reasonably stable monitor identifier.
 extension MonitorInfo {
     static func identifier(for screen: NSScreen, index: Int) -> String {
         let name = screen.localizedName.isEmpty ? "Display-\(index)" : screen.localizedName
+        // Key on the display's persistent UUID when available. Resolution is deliberately
+        // NOT part of the identifier: it changes with scaling/resolution switches, which
+        // orphaned saved assignments (pinned wallpapers came back black).
+        if let uuid = persistentUUID(for: screen) {
+            let suffix = String(uuid.prefix(8))
+            return "\(name)-\(suffix)"
+        }
         let res = "\(Int(screen.frame.width))x\(Int(screen.frame.height))"
-        // Append a short hash of the display's persistent UUID when available.
-        // This disambiguates two identical monitors (same name + resolution) so their
-        // assignments don't collide, while remaining stable across unplug/replug.
+        return "\(name)-\(res)"
+    }
+
+    /// The identifier format used by older builds (resolution baked in). Used only to
+    /// migrate previously saved assignments to the resolution-independent key.
+    static func legacyIdentifier(for screen: NSScreen, index: Int) -> String {
+        let name = screen.localizedName.isEmpty ? "Display-\(index)" : screen.localizedName
+        let res = "\(Int(screen.frame.width))x\(Int(screen.frame.height))"
         if let uuid = persistentUUID(for: screen) {
             let suffix = String(uuid.prefix(8))
             return "\(name)-\(res)-\(suffix)"

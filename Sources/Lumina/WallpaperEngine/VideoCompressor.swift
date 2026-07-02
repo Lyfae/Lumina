@@ -1,5 +1,6 @@
 import AVFoundation
 import AppKit
+import CryptoKit
 import Foundation
 
 /// Transcodes a video to a smaller resolution/bitrate so it runs as a desktop wallpaper
@@ -92,15 +93,18 @@ final class VideoCompressor: ObservableObject {
 
         let stem = sourceURL.deletingPathExtension().lastPathComponent
         // Hash the full source path so same-named files from different folders never collide.
-        let pathHash = String(format: "%06x", abs(sourceURL.path.hashValue) & 0xFFFFFF)
+        // SHA256 (not String.hashValue, which is salted per-launch) so the same source+preset
+        // maps to the same filename across app launches and the cache can dedupe.
+        let digest = SHA256.hash(data: Data(sourceURL.path.utf8))
+        let pathHash = digest.prefix(3).map { String(format: "%02x", $0) }.joined()
         let baseName = "\(stem)-\(preset.rawValue)-\(pathHash)"
-        // Never delete an existing compressed file — they are permanent.
-        // If this exact combination already exists, add a counter to create a new copy.
-        var output = outputDirectory.appendingPathComponent("\(baseName).mp4")
-        var counter = 1
-        while FileManager.default.fileExists(atPath: output.path) {
-            output = outputDirectory.appendingPathComponent("\(baseName)-\(counter).mp4")
-            counter += 1
+        let output = outputDirectory.appendingPathComponent("\(baseName).mp4")
+        // Same source + preset was already compressed — reuse it instead of growing the cache.
+        if FileManager.default.fileExists(atPath: output.path) {
+            progress = 1.0
+            statusMessage = "Done"
+            lastCompressedURL = output
+            return output
         }
 
         session.shouldOptimizeForNetworkUse = false
@@ -199,10 +203,10 @@ final class VideoCompressor: ObservableObject {
     // MARK: - Private
 
     private var outputDirectory: URL {
-        let base = FileManager.default
+        let appSupport = FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)
-            .first!
-            .appendingPathComponent("Lumina/Compressed", isDirectory: true)
+            .first ?? FileManager.default.temporaryDirectory
+        let base = appSupport.appendingPathComponent("Lumina/Compressed", isDirectory: true)
         try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
         return base
     }

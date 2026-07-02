@@ -82,6 +82,10 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Apply the saved UI appearance (light / dark / match system) before any windows open.
         AppearanceManager.shared.apply()
 
+        // Release splash: borderless floating card with the animated cursive LS monogram.
+        // Non-activating (never steals focus), click-to-dismiss, auto-dismisses in ~4s.
+        SplashWindowController.present()
+
         setupStatusItem()
         setupPowerManager()
         setupWallpaperWindowsAndRenderers()
@@ -131,6 +135,8 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // stop all playback and remove the desktop wallpaper windows so nothing lingers.
         powerManager?.pauseManually()
         stopDriftWatcher()
+        reconcileWorkItem?.cancel()
+        occlusionRescanWorkItem?.cancel()
         for renderer in renderers {
             renderer.cleanup()
         }
@@ -289,6 +295,19 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
                                    index: Int,
                                    requireKeepOnStartup: Bool) -> Bool {
         let monitorID = MonitorInfo.identifier(for: screen, index: index)
+
+        // Migrate assignments saved under the old resolution-dependent identifier so
+        // pinned wallpapers survive the key-format change (and resolution switches).
+        if assignmentStore.assignment(for: monitorID) == nil {
+            let legacyID = MonitorInfo.legacyIdentifier(for: screen, index: index)
+            if legacyID != monitorID, var legacy = assignmentStore.assignment(for: legacyID) {
+                legacy.monitorIdentifier = monitorID
+                assignmentStore.updateAssignment(legacy)
+                assignmentStore.removeAssignment(for: legacyID)
+                LuminaLog.persistence.info("Migrated assignment \(legacyID) → \(monitorID)")
+            }
+        }
+
         guard let assignment = assignmentStore.assignment(for: monitorID),
               assignment.isEnabled else { return false }
 
@@ -474,12 +493,17 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// Fired when the frontmost app or active Space changes. Occlusion notifications can lag a
     /// fullscreen/space transition, so we re-query each window's occlusion shortly after.
+    /// Debounces occlusion re-scans: rapid ⌘-tabbing / space flips fire this notification many
+    /// times in a row, and each un-debounced scan re-applied policy to every renderer.
+    private var occlusionRescanWorkItem: DispatchWorkItem?
+
     @objc private func activeContextChanged() {
         // App/Space changed: the app has been running so occlusion is reliable here — do a full
         // re-query (may pause a now-covered display or resume a newly-revealed one).
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-            self?.seedOcclusionStates(failOpen: false)
-        }
+        occlusionRescanWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.seedOcclusionStates(failOpen: false) }
+        occlusionRescanWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
     }
 
     /// Re-queries occlusion for every wallpaper window.
@@ -596,7 +620,12 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// exceeds the tolerance. Paused/occluded renderers (rate 0) are skipped so we don't fight
     /// the power policy or restart playback the user deliberately stopped.
     private func correctDriftIfNeeded() {
-        let active = renderers.filter { $0.isLoaded && $0.currentPlaybackRate > 0 }
+        // Only compare renderers playing the *same* media as the reference — circular drift
+        // math is meaningless across clips of different lengths and would cause spurious
+        // re-sync hitches (or mask real drift).
+        let loaded = renderers.filter { $0.isLoaded && $0.currentPlaybackRate > 0 }
+        guard let referenceRenderer = loaded.first else { return }
+        let active = loaded.filter { $0.loadedURL == referenceRenderer.loadedURL }
         guard active.count >= 2 else { return }
 
         let reference = active[0].currentPlaybackTime()
@@ -798,14 +827,12 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Simple string compare works well enough for semver during early releases (1.0, 1.1, 1.2, etc.)
         if currentVersion != lastShown {
             LuminaLog.app.info("New version detected: \(currentVersion) (previously saw \(lastShown))")
-            
-            // Mark as seen so we only show once per version
-            UserDefaults.standard.set(currentVersion, forKey: lastShownChangelogKey)
-            
-            // Show the changelog to the user automatically on first launch of a new release.
-            // This is the key future-proof behavior you asked for.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-                self.showWhatsNew()
+
+            // Deliberately NOT marked as seen here — the version is persisted in the sheet's
+            // onDismiss handler, so a crash/quit before the user actually sees the notes
+            // doesn't swallow them forever.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+                self?.showWhatsNew()
             }
         }
     }
@@ -870,6 +897,12 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let screens = NSScreen.screens
         for (index, screen) in screens.enumerated() {
             if MonitorInfo.identifier(for: screen, index: index) == monitorID {
+                // NSScreen.screens can briefly disagree with the (debounce-reconciled)
+                // renderers array after hot-plug/wake — an unchecked index would crash.
+                guard index < renderers.count else {
+                    scheduleReconcile()
+                    return nil
+                }
                 return index
             }
         }
@@ -1111,8 +1144,39 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: - Status Item & Menu (enhanced for B: UX + C: debug)
 
+    /// The LS menu-bar icon, loaded from disk exactly once. updateStatusItem() runs on every
+    /// power-policy change (thermal, low power, focus), so reloading the PNG there was
+    /// repeated main-thread disk I/O for an image that never changes.
+    private lazy var statusBarIcon: NSImage = {
+        let lsPaths = [
+            "Sources/Lumina/Resources/Icons/LuminaLSLogo_Menu@2x.png",
+            "Sources/Lumina/Resources/Icons/LuminaLSLogo_Menu.png"
+        ]
+        for p in lsPaths {
+            if FileManager.default.fileExists(atPath: p),
+               let img = NSImage(contentsOfFile: p) {
+                img.isTemplate = true
+                img.size = NSSize(width: 23, height: 18)
+                return img
+            }
+        }
+        if let url = Bundle.module.url(forResource: "LuminaLSLogo_Menu@2x", withExtension: "png", subdirectory: "Icons"),
+           let img = NSImage(contentsOf: url) {
+            img.isTemplate = true
+            img.size = NSSize(width: 23, height: 18)
+            return img
+        }
+        return makeLuminaStatusImage()
+    }()
+
     private func setupStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+
+        if let button = statusItem.button {
+            button.image = statusBarIcon
+            button.title = ""
+        }
+        
         updateStatusItem(for: .normal)
 
         // Minimal menu bar: open the app, or quit. Everything else (power toggles,
@@ -1162,42 +1226,20 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// Loads the unique custom menu bar icon generated with Grok Imagine.
     /// Uses the bundled resource when available (works for `swift run`, Xcode, and packaged .app).
-    private func loadCustomLuminaMenuIcon() -> NSImage? {
-        // Preferred: Load from the SPM resource bundle (or Xcode bundle after project conversion)
-        if let iconURL = Bundle.module.url(forResource: "LuminaMenuIcon@2x", withExtension: "png", subdirectory: "Icons") ??
-                         Bundle.module.url(forResource: "LuminaMenuIcon", withExtension: "png", subdirectory: "Icons") {
-            if let image = NSImage(contentsOf: iconURL) {
-                image.isTemplate = true
-                image.size = NSSize(width: 18, height: 18)
-                return image
-            }
-        }
-
-        // Fallbacks for development before full bundling / when running from certain directories
-        let devCandidates = [
-            "Sources/Lumina/Resources/Icons/LuminaMenuIcon@2x.png",
-            "../Sources/Lumina/Resources/Icons/LuminaMenuIcon@2x.png",
-            "Resources/Icons/LuminaMenuIcon@2x.png",
+        private func loadCustomLuminaMenuIcon() -> NSImage? {
+        // LS symbol - the one the user wants for the menu bar icon
+        let candidates = [
+            "Sources/Lumina/Resources/Icons/LuminaLSLogo_Menu@2x.png",
+            "Sources/Lumina/Resources/Icons/LuminaLSLogo_Menu.png"
         ]
-        for path in devCandidates {
+        for path in candidates {
             if FileManager.default.fileExists(atPath: path),
                let image = NSImage(contentsOfFile: path) {
                 image.isTemplate = true
-                image.size = NSSize(width: 18, height: 18)
+                image.size = NSSize(width: 23, height: 18)
                 return image
             }
         }
-
-        // Last resort: next to the executable
-        if let execURL = Bundle.main.executableURL {
-            let iconURL = execURL.deletingLastPathComponent().appendingPathComponent("LuminaMenuIcon@2x.png")
-            if let image = NSImage(contentsOf: iconURL) {
-                image.isTemplate = true
-                image.size = NSSize(width: 18, height: 18)
-                return image
-            }
-        }
-
         return nil
     }
 
@@ -1205,10 +1247,7 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let button = statusItem.button
         let hasVideo = currentVideoURL != nil
 
-        // Set (or ensure) the proper NSImage icon. Never use .title with emoji for the glyph.
-        if button?.image == nil {
-            button?.image = makeLuminaStatusImage()
-        }
+        button?.image = statusBarIcon   // cached — no disk I/O on policy changes
         button?.title = ""  // Critical: prevent any residual title text from causing alignment shift
 
         // All dynamic state now lives in the tooltip (hover) and the top menu item ("Wallpaper: ...").
@@ -1384,4 +1423,7 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
             print("Note: docs/PROTOTYPE_TESTING.md may need to be created/visible after first build.")
         }
     }
+
+
+
 }
