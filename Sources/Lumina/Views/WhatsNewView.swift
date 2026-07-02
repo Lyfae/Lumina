@@ -10,12 +10,15 @@ struct WhatsNewView: View {
     let entries: [ChangelogEntry]
     let onDismiss: () -> Void
     let onViewReleaseNotes: () -> Void
-    
+
+    /// Loaded once — decoding the JPEG inside `body` re-read it from disk on the main
+    /// thread on every recomputation (scroll, resize, animation).
+    @State private var headerImage: NSImage?
+
     var body: some View {
         VStack(spacing: 0) {
             // Re-use the beautiful Grok Imagine header for brand consistency
-            if let imageURL = Bundle.module.url(forResource: "OnboardingHeader", withExtension: "jpg", subdirectory: "Images"),
-               let headerImage = NSImage(contentsOf: imageURL) {
+            if let headerImage {
                 Image(nsImage: headerImage)
                     .resizable()
                     .aspectRatio(contentMode: .fill)
@@ -90,6 +93,11 @@ struct WhatsNewView: View {
         }
         .frame(width: 520, height: 560)
         .background(Color.black)
+        .onAppear {
+            guard headerImage == nil,
+                  let imageURL = Bundle.module.url(forResource: "OnboardingHeader", withExtension: "jpg", subdirectory: "Images") else { return }
+            headerImage = NSImage(contentsOf: imageURL)
+        }
     }
 }
 

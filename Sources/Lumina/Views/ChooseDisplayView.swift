@@ -157,7 +157,7 @@ private struct MonitorDisplayCard: View {
                 assignment: assignment,
                 liveCropRect: nil,
                 liveScaling: nil,
-                targetAspect: 16.0 / 9.0
+                targetAspect: monitor.aspectRatio   // ultrawide/portrait displays previewed correctly
             )
         } else {
             RoundedRectangle(cornerRadius: 8)

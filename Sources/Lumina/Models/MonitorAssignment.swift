@@ -56,6 +56,13 @@ public struct MonitorAssignment: Codable, Equatable {
     /// Normalized crop rectangle (0.0–1.0).
     /// Origin is top-left. (0,0,1,1) = no cropping.
     public var cropRect: CGRect = CGRect(x: 0, y: 0, width: 1, height: 1)
+
+    /// For video media: the normalized time (0...1) or absolute seconds at which to "freeze" or start the wallpaper.
+    /// When set, the renderer will seek to this time.
+    public var videoFrameTime: Double? = nil
+
+    /// When true (for video sources), use the videoFrameTime as a static frozen frame instead of playing video.
+    public var useStaticVideoFrame: Bool = false
     
     // MARK: - Playback Settings
     public var playbackSpeed: Double = 1.0
@@ -109,7 +116,7 @@ public struct MonitorAssignment: Codable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case schemaVersion, monitorIdentifier, filePath, bookmarkData, mediaType,
              scaling, brightness, opacity, saturation, hue, audioVolume, grayscale,
-             loopMode, cropRect, playbackSpeed, isMuted, keepOnStartup, isEnabled,
+             loopMode, cropRect, videoFrameTime, useStaticVideoFrame, playbackSpeed, isMuted, keepOnStartup, isEnabled,
              lastSuccessfulLoad, lastError,
              loopFadeEnabled, loopFadeDuration, loopFadeEasing,
              crossfadeDuration, crossfadeEasing,
@@ -137,6 +144,8 @@ public struct MonitorAssignment: Codable, Equatable {
         grayscale = try container.decodeIfPresent(Bool.self, forKey: .grayscale) ?? false
         loopMode = try container.decodeIfPresent(LoopMode.self, forKey: .loopMode) ?? .loop
         cropRect = try container.decodeIfPresent(CGRect.self, forKey: .cropRect) ?? CGRect(x: 0, y: 0, width: 1, height: 1)
+        videoFrameTime = try container.decodeIfPresent(Double.self, forKey: .videoFrameTime)
+        useStaticVideoFrame = try container.decodeIfPresent(Bool.self, forKey: .useStaticVideoFrame) ?? false
         playbackSpeed = try container.decodeIfPresent(Double.self, forKey: .playbackSpeed) ?? 1.0
         isMuted = try container.decodeIfPresent(Bool.self, forKey: .isMuted) ?? true
         keepOnStartup = try container.decodeIfPresent(Bool.self, forKey: .keepOnStartup) ?? false
@@ -217,9 +226,9 @@ extension MonitorAssignment {
         return (path as NSString).lastPathComponent
     }
     
-    /// Whether this assignment has any media assigned.
+    /// Whether this assignment has any media assigned (single file or slideshow).
     public var hasMedia: Bool {
-        return filePath != nil && bookmarkData != nil
+        return (filePath != nil && bookmarkData != nil) || !slideshowItems.isEmpty
     }
     
     /// Creates a clean copy with sensitive data cleared (useful for logging).
@@ -266,7 +275,7 @@ extension MonitorAssignment {
                 // file move or OS update even when the file was perfectly reachable. We start
                 // security-scoped access (best effort; a no-op for non-sandboxed builds) and use
                 // the URL as long as the file actually exists.
-                _ = url.startAccessingSecurityScopedResource()
+                Self.startScopedAccessOnce(for: url)
                 if FileManager.default.fileExists(atPath: url.path) {
                     return url
                 }
@@ -285,6 +294,23 @@ extension MonitorAssignment {
         }
 
         return nil
+    }
+
+    /// Paths for which scoped access has already been started this launch. resolvedURL() is
+    /// called from render paths, previews, and library filtering — starting access on every
+    /// call (without a matching stop) leaks kernel access counts and can exhaust the sandbox
+    /// limit in a long session. Access is intentionally kept open for the app's lifetime
+    /// because renderers hold the returned URL for continuous playback.
+    private nonisolated(unsafe) static var scopedAccessStartedPaths = Set<String>()
+    private static let scopedAccessLock = NSLock()
+
+    private static func startScopedAccessOnce(for url: URL) {
+        scopedAccessLock.lock()
+        defer { scopedAccessLock.unlock() }
+        guard !scopedAccessStartedPaths.contains(url.path) else { return }
+        if url.startAccessingSecurityScopedResource() {
+            scopedAccessStartedPaths.insert(url.path)
+        }
     }
 
     /// Whether the stored security-scoped bookmark is stale and should be recreated.

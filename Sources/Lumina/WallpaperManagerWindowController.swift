@@ -16,7 +16,9 @@ final class WallpaperManagerWindowController: NSWindowController {
     /// Window frame snapshot taken when crop mode opens — restored on close even if growth was clamped.
     private var preCropWindowFrame: NSRect?
 
-    @State private var selectedMonitorID: String? = nil   // Shared selection between windows
+    // Shared selection between windows. Plain stored property — @State is only valid inside
+    // SwiftUI Views; on an NSWindowController it silently does nothing reactive.
+    private var selectedMonitorID: String? = nil
 
     init(appDelegate: LuminaApp) {
         self.appDelegate = appDelegate
@@ -39,9 +41,11 @@ final class WallpaperManagerWindowController: NSWindowController {
         super.init(window: window)
         
         // Host main SwiftUI view (now acts as a control hub)
+        // [weak self]: the window retains the hosting view, which retains this binding —
+        // a strong capture would create a retain cycle keeping the controller alive forever.
         let rootView = WallpaperManagerView(store: store, selectedMonitorID: Binding(
-            get: { self.selectedMonitorID },
-            set: { self.selectedMonitorID = $0 }
+            get: { [weak self] in self?.selectedMonitorID },
+            set: { [weak self] in self?.selectedMonitorID = $0 }
         ))
         
         let hostingView = NSHostingView(rootView: rootView)
@@ -139,9 +143,10 @@ final class WallpaperManagerWindowController: NSWindowController {
             let controller = PhysicalSetupWindowController(
                 store: store,
                 selectedMonitorID: Binding(
-                    get: { self.selectedMonitorID },
-                    set: { self.selectedMonitorID = $0 }
-                )
+                    get: { [weak self] in self?.selectedMonitorID },
+                    set: { [weak self] in self?.selectedMonitorID = $0 }
+                ),
+                managerWindow: self.window
             )
             self.physicalSetupWindow = controller
             controller.showWindow(nil)

@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import AVFoundation
 
 /// Side panel that appears when a user selects a monitor in the layout.
 /// Contains live preview + all per-monitor settings, organized into collapsible sections.
@@ -12,6 +13,10 @@ struct MonitorDetailPanel: View {
 
     // Preview resize state
     @State private var previewHeight: CGFloat = 220
+    /// Height snapshot taken when the resize drag begins — DragGesture.translation is the
+    /// cumulative offset from the gesture start, so it must be applied to a fixed baseline.
+    @State private var previewHeightAtDragStart: CGFloat?
+    @State private var resizeCursorPushed = false
     @State private var previewOpacity: Double = 1.0
 
     // When true, the live preview becomes an interactive crop editor (drag to move,
@@ -27,6 +32,7 @@ struct MonitorDetailPanel: View {
     @State private var playbackSpeed: Double = 1.0
     @State private var localCropRect: CGRect = CGRect(x: 0, y: 0, width: 1, height: 1)
     @State private var videoPreviewTime: Double = 0.15
+    @State private var videoDuration: Double = 0
     @State private var loopFadeEnabled: Bool = false
     @State private var loopFadeDuration: Double = 1.5
     @State private var loopFadeEasing: MonitorAssignment.FadeEasing = .easeInOut
@@ -150,6 +156,17 @@ struct MonitorDetailPanel: View {
                 userInfo: ["visible": visible]
             )
         }
+        .onDisappear {
+            // If the panel goes away while crop mode is open, tell the window controller to
+            // shrink back — otherwise the grown window frame sticks around.
+            if cropEditMode {
+                NotificationCenter.default.post(
+                    name: .cropEditorVisibilityChanged,
+                    object: nil,
+                    userInfo: ["visible": false]
+                )
+            }
+        }
     }
 
     /// True when the staged (preview) settings differ from what's currently applied to the
@@ -176,6 +193,8 @@ struct MonitorDetailPanel: View {
         store.setScaling(for: monitor, scaling: selectedScaling)
         store.setPlaybackSpeed(for: monitor, speed: playbackSpeed)
         store.setCropRect(for: monitor, cropRect: localCropRect)
+        // Note: videoFrameTime + static/video choice is set explicitly via the buttons in crop mode
+        // (not auto-saved on every Apply, to respect the user's "Freeze" vs "Video start" choice)
         store.setBrightness(for: monitor, brightness: brightness)
         store.setOpacity(for: monitor, opacity: opacity)
         store.setColorCorrection(for: monitor, saturation: saturation, hue: hue, grayscale: grayscale)
@@ -244,14 +263,15 @@ struct MonitorDetailPanel: View {
                                     localCropRect = newRect
                                 },
                                 assignment: a,
-                                previewTime: a.mediaType == .video ? videoPreviewTime : nil
+                                previewTime: a.mediaType == .video ? videoPreviewTime : nil,
+                                targetAspect: monitor.aspectRatio
                             )
                         } else {
                             WallpaperPreview(
                                 assignment: a,
                                 liveCropRect: localCropRect,
                                 liveScaling: selectedScaling,
-                                targetAspect: 16.0 / 9.0,
+                                targetAspect: monitor.aspectRatio,
                                 isLivePlayback: true,
                                 previewTime: nil,
                                 brightness: brightness,
@@ -275,19 +295,89 @@ struct MonitorDetailPanel: View {
 
                 if cropEditMode {
                     HStack(spacing: 10) {
-                        Button("Reset to Full") {
+                        Button("Reset Crop") {
+                            // Reset to full so CropRectangle auto-sets the proper horizontal crop box on the original
                             localCropRect = CGRect(x: 0, y: 0, width: 1, height: 1)
+                            videoPreviewTime = 0.15
                         }
                         .buttonStyle(.bordered)
                         .controlSize(.small)
+                        .help("Reset to a horizontal crop rect matching your monitor (smaller than full frame)")
 
                         Spacer()
 
-                        Text("Drag to move • drag corners to resize")
+                        Text("Horizontal crop box locked to monitor aspect • drag to move, corners to resize (smaller only recommended)")
                             .font(.caption2).foregroundStyle(.tertiary)
                     }
                     .padding(.horizontal, 12)
-                    .padding(.bottom, 4)
+                    .padding(.bottom, 2)
+
+                    // Video time scrubber (only for video media)
+                    if a.mediaType == .video {
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text("Scrub to choose frame")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                Spacer()
+                                if videoDuration > 0 {
+                                    let t = videoPreviewTime * videoDuration
+                                    Text(String(format: "%.1fs / %.1fs", t, videoDuration))
+                                        .font(.caption2.monospacedDigit())
+                                        .foregroundStyle(.tertiary)
+                                } else {
+                                    Text("scrub to pick frame")
+                                        .font(.caption2)
+                                        .foregroundStyle(.tertiary)
+                                }
+                            }
+
+                            Slider(
+                                value: $videoPreviewTime,
+                                in: 0...1
+                            )
+                            .onChange(of: videoPreviewTime) { _, _ in
+                                // Live update the preview frame in CropRectangle
+                            }
+
+                            if let a = store.assignment(for: monitor.id), let t = a.videoFrameTime {
+                                let mode = a.useStaticVideoFrame ? "Static frame" : "Video start"
+                                Text("Current: \(mode) at \(String(format: "%.1f", t * (videoDuration > 0 ? videoDuration : 1)))s")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+
+                            HStack(spacing: 8) {
+                                Button {
+                                    store.setVideoFrameTime(for: monitor, time: videoPreviewTime, useStatic: true)
+                                } label: {
+                                    Label("Freeze as Static Image", systemImage: "photo")
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .controlSize(.small)
+                                .help("Use the current frame as a still wallpaper (no video playback)")
+
+                                Button {
+                                    store.setVideoFrameTime(for: monitor, time: videoPreviewTime, useStatic: false)
+                                } label: {
+                                    Label("Video starting at this time", systemImage: "play.rectangle")
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                                .help("Play the video, but start/seek to this frame with the crop applied")
+                            }
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.bottom, 6)
+                        .task(id: a.filePath) {
+                            // Load real duration for the scrubber
+                            guard let url = a.resolvedURL() ?? a.filePath.map({ URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) }) else { return }
+                            let asset = AVURLAsset(url: url)
+                            if let dur = try? await asset.load(.duration) {
+                                videoDuration = dur.seconds
+                            }
+                        }
+                    }
                 } else if !a.slideshowItems.isEmpty {
                     // Visual hint that the desktop is running a slideshow even though
                     // the inline preview only shows single-media at the moment.
@@ -327,12 +417,33 @@ struct MonitorDetailPanel: View {
             .frame(height: 18)
             .contentShape(Rectangle())
             .onHover { hovering in
-                if hovering { NSCursor.resizeUpDown.push() } else { NSCursor.pop() }
+                if hovering {
+                    if !resizeCursorPushed {
+                        NSCursor.resizeUpDown.push()
+                        resizeCursorPushed = true
+                    }
+                } else if resizeCursorPushed {
+                    NSCursor.pop()
+                    resizeCursorPushed = false
+                }
+            }
+            .onDisappear {
+                // Balance the cursor stack if the view goes away while hovered —
+                // otherwise the resize cursor sticks app-wide.
+                if resizeCursorPushed {
+                    NSCursor.pop()
+                    resizeCursorPushed = false
+                }
             }
             .gesture(
                 DragGesture(minimumDistance: 1)
                     .onChanged { drag in
-                        previewHeight = max(140, min(500, previewHeight + drag.translation.height))
+                        let base = previewHeightAtDragStart ?? previewHeight
+                        previewHeightAtDragStart = base
+                        previewHeight = max(140, min(500, base + drag.translation.height))
+                    }
+                    .onEnded { _ in
+                        previewHeightAtDragStart = nil
                     }
             )
         }
@@ -341,7 +452,14 @@ struct MonitorDetailPanel: View {
     /// Floating button on the preview that toggles interactive crop editing.
     private var cropToggleButton: some View {
         Button {
-            withAnimation(.easeInOut(duration: 0.15)) { cropEditMode.toggle() }
+            withAnimation(.easeInOut(duration: 0.15)) {
+                let wasEditing = cropEditMode
+                cropEditMode.toggle()
+                if !wasEditing, cropEditMode, localCropRect == CGRect(x: 0, y: 0, width: 1, height: 1) {
+                    // Set to full so CropRectangle's auto-init sets the proper horizontal box on the full original
+                    localCropRect = CGRect(x: 0, y: 0, width: 1, height: 1)
+                }
+            }
         } label: {
             Image(systemName: cropEditMode ? "checkmark.circle.fill" : "crop")
                 .font(.system(size: 13, weight: .semibold))
@@ -720,6 +838,7 @@ struct MonitorDetailPanel: View {
             selectedScaling = .fill
             playbackSpeed = 1.0
             localCropRect = CGRect(x: 0, y: 0, width: 1, height: 1)
+            videoPreviewTime = 0.15
             loopFadeEnabled = false
             loopFadeDuration = 1.5
             loopFadeEasing = .easeInOut
@@ -753,6 +872,9 @@ struct MonitorDetailPanel: View {
             keepOnStartup = a.keepOnStartup
             playbackSpeed = a.playbackSpeed
             localCropRect = a.cropRect
+            if let ft = a.videoFrameTime {
+                videoPreviewTime = ft   // initialize scrubber from saved (0 = "start at beginning" is valid)
+            }
             loopFadeEnabled = a.loopFadeEnabled
             loopFadeDuration = a.loopFadeDuration
             loopFadeEasing = a.loopFadeEasing
@@ -772,6 +894,7 @@ struct MonitorDetailPanel: View {
             keepOnStartup = false
             playbackSpeed = 1.0
             localCropRect = CGRect(x: 0, y: 0, width: 1, height: 1)
+            videoPreviewTime = 0.15
             loopFadeEnabled = false
             loopFadeDuration = 1.5
             loopFadeEasing = .easeInOut

@@ -276,11 +276,30 @@ struct SlideshowConfigView: View {
 
     private func handleDrop(_ providers: [NSItemProvider]) -> Bool {
         var accepted = false
-        for provider in providers where provider.canLoadObject(ofClass: URL.self) {
-            accepted = true
-            _ = provider.loadObject(ofClass: URL.self) { url, _ in
-                guard let url, url.isFileURL else { return }
-                DispatchQueue.main.async { addImage(url) }
+        for provider in providers {
+            // Finder exposes dropped files as `public.file-url` Data, which
+            // loadObject(ofClass: URL.self) often fails to see — read the raw
+            // type identifier and decode the URL ourselves.
+            if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+                accepted = true
+                provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
+                    let url: URL?
+                    if let data = item as? Data {
+                        url = URL(dataRepresentation: data, relativeTo: nil)
+                    } else if let u = item as? URL {
+                        url = u
+                    } else {
+                        url = nil
+                    }
+                    guard let url, url.isFileURL else { return }
+                    DispatchQueue.main.async { addImage(url) }
+                }
+            } else if provider.canLoadObject(ofClass: URL.self) {
+                accepted = true
+                _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                    guard let url, url.isFileURL else { return }
+                    DispatchQueue.main.async { addImage(url) }
+                }
             }
         }
         return accepted

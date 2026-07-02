@@ -18,6 +18,11 @@ struct WallpaperPreview: View {
     /// Only used when `isLivePlayback == false` (for the crop scrubber)
     var previewTime: Double? = nil
 
+    /// When true, skip applying the outer aspectRatio modifier. Use when the caller
+    /// is already forcing an exact frame size that matches the desired aspect
+    /// (e.g. the full-source background inside CropRectangle).
+    var ignoreAspectRatio: Bool = false
+
     // Live visual-effect overlays so the preview is true WYSIWYG (matches what "Apply to
     // Wallpaper" will push to the desktop). Defaults are no-ops.
     var brightness: Double = 0      // -0.5...0.5
@@ -88,10 +93,14 @@ struct WallpaperPreview: View {
                 }
             }
         }
-        .aspectRatio(targetAspect, contentMode: .fit)
+        .aspectRatioIfNeeded(targetAspect: targetAspect, ignore: ignoreAspectRatio)
         .onAppear {
             setupLivePlaybackIfNeeded()
-            loadThumbnailIfNeeded()
+            // The live AVPlayer covers video previews — decoding a parallel thumbnail
+            // would just double the I/O and memory for nothing.
+            if !(isLivePlayback && assignment?.mediaType == .video) {
+                loadThumbnailIfNeeded()
+            }
         }
         .onDisappear {
             cleanupPlayer()
@@ -102,8 +111,11 @@ struct WallpaperPreview: View {
             setupLivePlaybackIfNeeded()
             loadThumbnailIfNeeded()
         }
-        .onChange(of: effectiveCrop) { _, _ in
-            // Crop changes are visual only — no need to reload
+        .onChange(of: previewTime) { _, _ in
+            // Scrubber moved — regenerate the frame thumbnail at the new time.
+            guard !(isLivePlayback && assignment?.mediaType == .video) else { return }
+            thumbnail = nil
+            loadThumbnailIfNeeded()
         }
     }
 
@@ -162,7 +174,7 @@ struct WallpaperPreview: View {
     @ViewBuilder
     private func liveVideoView(assignment: MonitorAssignment, size: CGSize) -> some View {
         if let player = player {
-            PlayerLayerView(player: player)
+            PlayerLayerView(player: player, videoGravity: gravityForScaling(effectiveScaling))
                 .frame(width: size.width, height: size.height)
                 .clipped()
                 .overlay(cropOverlay(size: size))
@@ -212,16 +224,26 @@ struct WallpaperPreview: View {
     /// This avoids pulling in AVPlayerView (the cause of the "VideoPlayerView" demangle crash in .accessory apps).
     private struct PlayerLayerView: NSViewRepresentable {
         let player: AVPlayer
+        var videoGravity: AVLayerVideoGravity = .resizeAspectFill
 
         func makeNSView(context: Context) -> PlayerHostingView {
             let view = PlayerHostingView()
             view.playerLayer.player = player
+            view.playerLayer.videoGravity = videoGravity
             view.wantsLayer = true
             return view
         }
 
         func updateNSView(_ nsView: PlayerHostingView, context: Context) {
             nsView.playerLayer.player = player
+            nsView.playerLayer.videoGravity = videoGravity
+        }
+
+        // AVPlayerLayer strongly retains its player; without this the layer can keep the
+        // player decoding after SwiftUI tears the view down.
+        static func dismantleNSView(_ nsView: PlayerHostingView, coordinator: ()) {
+            nsView.playerLayer.player?.pause()
+            nsView.playerLayer.player = nil
         }
 
         final class PlayerHostingView: NSView {
@@ -266,7 +288,17 @@ struct WallpaperPreview: View {
         self.playerLooper = looper
     }
 
+    /// Match the desktop renderer's scaling in the live preview (was hardcoded to letterbox).
+    private func gravityForScaling(_ scaling: VideoScaling) -> AVLayerVideoGravity {
+        switch scaling {
+        case .fit:     return .resizeAspect
+        case .fill:    return .resizeAspectFill
+        case .stretch: return .resize
+        }
+    }
+
     private func cleanupPlayer() {
+        playerLooper?.disableLooping()
         player?.pause()
         player = nil
         playerLooper = nil
@@ -299,6 +331,7 @@ struct WallpaperPreview: View {
         // #SendingClosureRisksDataRace entirely. Inside the task we use nonisolated(unsafe)
         // copy of the captured mediaType before the cross-actor call. This is safe for the
         // immutable enum and breaks the isolation-region tracking for the send.
+        let expectedPath = assign.filePath
         Task { [url, mediaType, previewTimeCopy] in
             nonisolated(unsafe) let sendableMediaType = mediaType
             let loadedImage = await ThumbnailService.shared.thumbnail(
@@ -309,9 +342,24 @@ struct WallpaperPreview: View {
             )
 
             await MainActor.run {
+                // Unstructured Task survives view identity changes — drop stale results if
+                // the user switched to a different file while this decode was in flight.
+                guard self.assignment?.filePath == expectedPath else { return }
                 self.thumbnail = loadedImage
                 self.isLoading = false
             }
+        }
+    }
+}
+
+
+private extension View {
+    @ViewBuilder
+    func aspectRatioIfNeeded(targetAspect: CGFloat, ignore: Bool) -> some View {
+        if ignore {
+            self
+        } else {
+            self.aspectRatio(targetAspect, contentMode: .fit)
         }
     }
 }

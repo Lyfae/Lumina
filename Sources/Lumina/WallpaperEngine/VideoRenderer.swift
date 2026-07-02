@@ -131,6 +131,7 @@ public final class AVVideoRenderer: @unchecked Sendable {
     // MARK: - Loop Mode (loop / once / bounce)
     private var loopMode: MonitorAssignment.LoopMode = .loop
     private var endTimeObserver: NSObjectProtocol?
+    private var reverseBoundaryObserver: Any?
 
     // MARK: - Brightness
     private var brightnessLayer: CALayer?
@@ -462,7 +463,9 @@ public final class AVVideoRenderer: @unchecked Sendable {
 
     public func currentPlaybackTime() -> TimeInterval {
         guard let player else { return 0 }
-        return player.currentTime().seconds
+        let time = player.currentTime()
+        guard time.isValid, time.isNumeric else { return 0 }   // .seconds is NaN for invalid/indefinite
+        return time.seconds
     }
 
     /// Duration of the currently playing item, or 0 if unknown/indefinite.
@@ -478,7 +481,18 @@ public final class AVVideoRenderer: @unchecked Sendable {
             MainActor.assumeIsolated { slideshow.teardown() }
         }
         slideshow = nil
+
+        // Fully tear down the player and its observers — clear() is also the load-failure
+        // path, and leaving the player/observers alive kept the broken decoder running and
+        // let a later applyPolicy(.normal) resume it.
+        removeAllPlayerObservers()
+        looper?.disableLooping()
+        looper = nil
+        player?.pause()
         player?.replaceCurrentItem(with: nil)
+        playerLayer?.player = nil
+        player = nil
+
         imageLayer?.removeAnimation(forKey: "gif")
         gifAnimation = nil
         imageLayer?.contents = nil
@@ -486,6 +500,22 @@ public final class AVVideoRenderer: @unchecked Sendable {
         loadedURL = nil
         currentURL = nil
         // The layer will show black/transparent
+    }
+
+    /// Removes every time observer / KVO / NotificationCenter observer attached to the
+    /// current player. Shared by clear() and cleanup().
+    private func removeAllPlayerObservers() {
+        if let observer = loopBoundaryObserver {
+            player?.removeTimeObserver(observer)
+            loopBoundaryObserver = nil
+        }
+        removeReverseBoundaryObserver()
+        itemStatusObserver = nil
+        loadStatusObserver = nil
+        if let obs = endTimeObserver {
+            NotificationCenter.default.removeObserver(obs)
+            endTimeObserver = nil
+        }
     }
 
     public func applyPolicy(_ policy: WallpaperPlaybackPolicy) {
@@ -635,7 +665,7 @@ public final class AVVideoRenderer: @unchecked Sendable {
                 CATransaction.begin()
                 CATransaction.setAnimationDuration(self.loopFadeDuration / 2.0)
                 CATransaction.setAnimationTimingFunction(self.currentFadeEasing.caTimingFunction)
-                pl.opacity = 1.0
+                pl.opacity = Float(self.currentOpacity)   // respect user opacity, not hardcoded 1.0
                 CATransaction.commit()
             }
         }
@@ -720,18 +750,7 @@ public final class AVVideoRenderer: @unchecked Sendable {
     }
 
     public func cleanup() {
-        // Remove loop boundary observer
-        if let observer = loopBoundaryObserver {
-            player?.removeTimeObserver(observer)
-            loopBoundaryObserver = nil
-        }
-        itemStatusObserver = nil
-        loadStatusObserver = nil
-
-        if let obs = endTimeObserver {
-            NotificationCenter.default.removeObserver(obs)
-            endTimeObserver = nil
-        }
+        removeAllPlayerObservers()
 
         // Remove brightness overlay
         brightnessLayer?.removeFromSuperlayer()
@@ -897,10 +916,11 @@ public final class AVVideoRenderer: @unchecked Sendable {
                 CATransaction.commit()
 
             case .bounce:
-                // Reverse direction
-                player.seek(to: .zero) { _ in
-                    player.rate = -1.0   // play backwards
-                }
+                // Reverse from the end position (actionAtItemEnd == .none leaves the player
+                // parked at the end). Seeking to .zero here would start the reverse pass at
+                // the beginning and immediately trigger the forward flip.
+                let reverseRate = -(self.effectiveRateForCurrentPolicy() ?? 1.0)
+                player.rate = reverseRate   // play backwards
                 // When we hit the beginning while reversing, flip back to forward
                 self.installReverseBoundaryFlip(player: player, item: item)
 
@@ -911,19 +931,26 @@ public final class AVVideoRenderer: @unchecked Sendable {
     }
 
     private func installReverseBoundaryFlip(player: AVQueuePlayer, item: AVPlayerItem) {
-        // Remove any prior boundary observer for reverse
-        // (We reuse the same pattern as loop crossfade observers)
-        // For simplicity we add a time observer near t=0 while rate is negative.
-        // Lightweight periodic check while reversing. We intentionally do *not* capture
-        // the observer token inside the closure (would be declared-before-use error).
-        // The timer is extremely short-lived and will be released after the flip.
+        // AVPlayer retains periodic-observer blocks until removeTimeObserver is called,
+        // so the token must be stored and removed — otherwise every bounce cycle stacks
+        // another 20 Hz observer that fires forever.
+        removeReverseBoundaryObserver()
+
         let interval = CMTime(seconds: 0.05, preferredTimescale: 600)
-        _ = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak player] time in
+        reverseBoundaryObserver = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self, weak player] time in
             guard let p = player, p.rate < 0 else { return }
             if time.seconds <= 0.05 {
-                p.rate = 1.0
-                // The observer will naturally be deallocated shortly after rate changes.
+                // Flip back to forward at the user's effective speed (respecting throttle policy).
+                p.rate = self?.effectiveRateForCurrentPolicy() ?? 1.0
+                self?.removeReverseBoundaryObserver()
             }
+        }
+    }
+
+    private func removeReverseBoundaryObserver() {
+        if let obs = reverseBoundaryObserver {
+            player?.removeTimeObserver(obs)
+            reverseBoundaryObserver = nil
         }
     }
 

@@ -18,7 +18,9 @@ import AppKit
 public final class FullscreenDetector {
 
     private weak var powerManager: PowerManager?
-    private var timer: Timer?
+    // nonisolated(unsafe): only ever touched on the main actor while alive; read once
+    // from the (nonisolated) deinit, which is race-free for this access pattern.
+    nonisolated(unsafe) private var timer: Timer?
     private var isCurrentlyObscured: Bool = false
 
     /// How often we do a full window list scan (seconds).
@@ -30,8 +32,12 @@ public final class FullscreenDetector {
         startMonitoring()
     }
 
-    // Note: In a long-lived app we rely on explicit stop or app termination.
-    // Deinit cleanup is intentionally light to satisfy strict concurrency in the prototype.
+    deinit {
+        // Timer and NotificationCenter observers strongly reference self / keep firing;
+        // without cleanup a deallocated detector would leave a leaked timer behind.
+        timer?.invalidate()
+        NotificationCenter.default.removeObserver(self)
+    }
 
     // MARK: - Public API
 
@@ -118,8 +124,13 @@ public final class FullscreenDetector {
 
                 // Heuristic: window covers most or all of the screen
                 // (allows small tolerance for menu bar, notch, etc.)
+                // Parenthesized explicitly: `A || B && C` parses as `A || (B && C)`, and the
+                // near-fullscreen branch must also require near-full *width* — otherwise any
+                // tall window (side panel, split view) triggers a global pause.
                 if windowFrame.contains(screenFrame.insetBy(dx: 8, dy: 8)) ||
-                   windowFrame.intersects(screenFrame) && windowFrame.size.height >= screenFrame.height * 0.92 {
+                   (windowFrame.intersects(screenFrame)
+                    && windowFrame.size.height >= screenFrame.height * 0.92
+                    && windowFrame.size.width  >= screenFrame.width  * 0.92) {
                     // Additional check: make sure it's not our own windows or Finder desktop
                     if let ownerName = windowInfo[kCGWindowOwnerName as String] as? String,
                        ownerName.contains("Finder") || ownerName.contains("Lumina") {
