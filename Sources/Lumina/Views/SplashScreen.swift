@@ -114,18 +114,13 @@ struct SplashScreenView: View {
                 startPoint: .top, endPoint: .bottom
             )
 
-            // Aurora glows — two large blurred orbs that drift very slowly.
-            // GPU-composited blur on two shapes; negligible cost for a 3-second splash.
-            Circle()
-                .fill(Color(red: 0.25, green: 0.45, blue: 0.95).opacity(0.32))
-                .frame(width: 340, height: 340)
-                .blur(radius: 70)
+            // Aurora glows — two large soft orbs that drift very slowly. Radial gradients
+            // instead of .blur: identical look, cheaper, and they render correctly in every
+            // compositing path (layer-filter blurs can drop out in offscreen rendering).
+            auroraOrb(Color(red: 0.25, green: 0.45, blue: 0.95), opacity: 0.38, diameter: 460)
                 .offset(x: auroraPhase ? -120 : -70, y: auroraPhase ? -90 : -130)
 
-            Circle()
-                .fill(Color(red: 0.55, green: 0.30, blue: 0.85).opacity(0.28))
-                .frame(width: 300, height: 300)
-                .blur(radius: 70)
+            auroraOrb(Color(red: 0.55, green: 0.30, blue: 0.85), opacity: 0.34, diameter: 420)
                 .offset(x: auroraPhase ? 140 : 90, y: auroraPhase ? 110 : 150)
 
             // Fine vignette to focus the monogram.
@@ -134,6 +129,17 @@ struct SplashScreenView: View {
                 center: .center, startRadius: 90, endRadius: 320
             )
         }
+    }
+
+    /// A soft-edged glow orb: fully colored at the center, fading to clear at the rim.
+    private func auroraOrb(_ color: Color, opacity: Double, diameter: CGFloat) -> some View {
+        RadialGradient(
+            colors: [color.opacity(opacity), color.opacity(opacity * 0.5), .clear],
+            center: .center,
+            startRadius: 0,
+            endRadius: diameter / 2
+        )
+        .frame(width: diameter, height: diameter)
     }
 
     // MARK: Lifecycle
