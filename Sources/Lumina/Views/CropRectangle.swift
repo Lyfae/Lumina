@@ -19,10 +19,23 @@ struct CropRectangle: View {
     /// This ensures the selected region matches what the target display will show.
     var targetAspect: CGFloat? = nil
 
+    /// Pre-resolved source aspect from the parent — avoids a 16:9 placeholder layout that
+    /// jumps when the async probe finishes (the main cause of the preview shifting on enter).
+    var sourceAspect: CGFloat? = nil
+
+    // Match WallpaperPreview WYSIWYG effects so entering crop mode doesn't change brightness/color.
+    var brightness: Double = 0
+    var previewOpacity: Double = 1
+    var saturation: Double = 1
+    var hueDegrees: Double = 0
+    var grayscale: Bool = false
+
     @State private var isDragging = false
     @State private var dragStartRect: CGRect = .zero
     @State private var activeHandle: CropHandle? = nil
     @State private var resolvedSourceAspect: CGFloat = 16.0 / 9.0
+
+    private let previewCornerRadius: CGFloat = 10
 
     private let minSize: CGFloat = 0.05
     private let handleSize: CGFloat = 14
@@ -68,6 +81,14 @@ struct CropRectangle: View {
             let rect = denormalizedRect(in: mediaR)
 
             ZStack {
+                // Same chrome as WallpaperPreview so the swap into crop mode doesn't resize the frame.
+                RoundedRectangle(cornerRadius: previewCornerRadius)
+                    .fill(Color.black.opacity(0.85))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: previewCornerRadius)
+                            .stroke(Color.accentColor.opacity(0.35), lineWidth: 1)
+                    )
+
                 // Background: show the actual wallpaper content (full, uncropped)
                 // so the user can visually choose the crop region.
                 // Use mediaR so vertical sources show full undistorted (not squeezed to screen aspect).
@@ -78,20 +99,23 @@ struct CropRectangle: View {
                         liveScaling: .fit,
                         targetAspect: effectiveSourceAspect,
                         previewTime: previewTime,
-                        ignoreAspectRatio: true
+                        ignoreAspectRatio: true,
+                        brightness: brightness,
+                        previewOpacity: previewOpacity,
+                        saturation: saturation,
+                        hueDegrees: hueDegrees,
+                        grayscale: grayscale
                     )
                     .frame(width: mediaR.width, height: mediaR.height)
                     .position(x: mediaR.midX, y: mediaR.midY)
-                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                    .clipShape(RoundedRectangle(cornerRadius: previewCornerRadius - 2))
                 } else {
-                    // Fallback when no media is assigned yet
                     Color.black.opacity(0.7)
                 }
 
                 // Subtle border to clearly show the bounds of the *full original frame*
-                // (the area you can crop from)
-                RoundedRectangle(cornerRadius: 4)
-                    .stroke(Color.white.opacity(0.4), lineWidth: 1)
+                RoundedRectangle(cornerRadius: previewCornerRadius - 2)
+                    .stroke(Color.primary.opacity(0.28), lineWidth: 1)
                     .frame(width: mediaR.width, height: mediaR.height)
                     .position(x: mediaR.midX, y: mediaR.midY)
 
@@ -114,45 +138,49 @@ struct CropRectangle: View {
                 }
             }
         }
-        .clipShape(RoundedRectangle(cornerRadius: 4))
-        .overlay(
-            RoundedRectangle(cornerRadius: 6)
-                .stroke(Color.white.opacity(0.25), lineWidth: 1)
-        )
+        .clipShape(RoundedRectangle(cornerRadius: previewCornerRadius))
         .task(id: assignment?.filePath) {
-            resolvedSourceAspect = await computeSourceAspectRatio() ?? 16.0 / 9.0
+            if let sourceAspect, sourceAspect > 0 {
+                resolvedSourceAspect = sourceAspect
+            }
+            let computed = await Self.resolveSourceAspect(for: assignment) ?? sourceAspect ?? 16.0 / 9.0
+            if abs(computed - resolvedSourceAspect) > 0.001 {
+                resolvedSourceAspect = computed
+            }
+        }
+        .onChange(of: sourceAspect) { _, newValue in
+            if let newValue, newValue > 0 {
+                resolvedSourceAspect = newValue
+            }
         }
         .task(id: [targetAspect, resolvedSourceAspect]) {
-            guard let _ = targetAspect, normalizedLockAspect > 0 else { return }
-            let normAR = normalizedLockAspect
-            let currentAspect = cropRect.width / max(cropRect.height, 0.001)
-            let targetNormAspect = normAR
-            
-            // Always ensure we have a proper horizontal box when targetAspect is known.
-            // This supports different aspect ratios (vertical video + horizontal monitor).
-            let needsReset = cropRect == CGRect(x: 0, y: 0, width: 1, height: 1) || abs(currentAspect - targetNormAspect) > 0.05
-            
-            if needsReset {
-                // Start with a reasonably sized horizontal crop box on the full original.
-                // Scale is chosen so the box is clearly horizontal but not full frame.
-                let scale: CGFloat = 0.75
-                var w: CGFloat = min(0.9, scale)
-                var h: CGFloat = w / targetNormAspect
-                
-                // If the computed height is too tall for the source, shrink width
-                if h > 0.9 {
-                    h = 0.6
-                    w = h * targetNormAspect
-                }
-                
-                let x = (1 - w) / 2
-                let y = (1 - h) / 2   // centered vertically on the tall frame
-                
-                let newR = CGRect(x: max(0, x), y: max(0, y), width: min(1, w), height: min(1, h))
-                if newR != cropRect {
-                    cropRect = newR
-                    onChange(newR)
-                }
+            guard targetAspect != nil, normalizedLockAspect > 0 else { return }
+
+            // Only auto-initialize when no crop has been chosen yet (full-frame sentinel).
+            // Re-entering the editor with a saved crop must preserve position/size — do not
+            // reset just because resolvedSourceAspect finishes loading asynchronously.
+            guard cropRect == CGRect(x: 0, y: 0, width: 1, height: 1) else { return }
+
+            let targetNormAspect = normalizedLockAspect
+
+            // Start with a reasonably sized horizontal crop box on the full original.
+            let scale: CGFloat = 0.75
+            var w: CGFloat = min(0.9, scale)
+            var h: CGFloat = w / targetNormAspect
+
+            // If the computed height is too tall for the source, shrink width
+            if h > 0.9 {
+                h = 0.6
+                w = h * targetNormAspect
+            }
+
+            let x = (1 - w) / 2
+            let y = (1 - h) / 2   // centered vertically on the tall frame
+
+            let newR = CGRect(x: max(0, x), y: max(0, y), width: min(1, w), height: min(1, h))
+            if newR != cropRect {
+                cropRect = newR
+                onChange(newR)
             }
         }
     }
@@ -175,12 +203,11 @@ struct CropRectangle: View {
         ).intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
     }
 
-    private func computeSourceAspectRatio() async -> CGFloat? {
-        guard let assignment = assignment else { return nil }
+    static func resolveSourceAspect(for assignment: MonitorAssignment?) async -> CGFloat? {
+        guard let assignment else { return nil }
         let url: URL? = assignment.resolvedURL() ?? (assignment.filePath.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) })
-        guard let url = url else { return nil }
+        guard let url else { return nil }
 
-        // Video
         let asset = AVURLAsset(url: url)
         if let tracks = try? await asset.loadTracks(withMediaType: AVMediaType.video), let track = tracks.first {
             if let naturalSize = try? await track.load(.naturalSize), naturalSize.width > 0, naturalSize.height > 0 {
@@ -191,7 +218,6 @@ struct CropRectangle: View {
                 if w > 0, h > 0 { return w / h }
             }
         }
-        // Fallback to thumbnail size
         let mediaType = assignment.mediaType
         nonisolated(unsafe) let sendableMediaType = mediaType
         let thumb = await ThumbnailService.shared.thumbnail(for: url, mediaType: sendableMediaType, maxSize: CGSize(width: 64, height: 64))

@@ -22,6 +22,7 @@ struct MonitorDetailPanel: View {
     // When true, the live preview becomes an interactive crop editor (drag to move,
     // corners to resize) — no separate crop preview needed.
     @State private var cropEditMode: Bool = false
+    @State private var previewSourceAspect: CGFloat = 16.0 / 9.0
 
     // Presents the dedicated slideshow queue/configuration sheet.
     @State private var showSlideshowConfig: Bool = false
@@ -144,6 +145,13 @@ struct MonitorDetailPanel: View {
         // Reloading when the media itself changes resets the staged adjustments to the new
         // assignment's values (so picking new media doesn't leave stale pending edits).
         .onChange(of: assignment?.filePath) { _, _ in loadCurrentValues() }
+        .task(id: previewAssignment?.filePath) {
+            if let a = previewAssignment,
+               let aspect = await CropRectangle.resolveSourceAspect(for: a),
+               aspect > 0 {
+                previewSourceAspect = aspect
+            }
+        }
         // Slideshow builder. On dismiss, resync local state from the (possibly updated) assignment.
         .sheet(isPresented: $showSlideshowConfig, onDismiss: { loadCurrentValues() }) {
             SlideshowConfigView(monitor: monitor, store: store,
@@ -264,7 +272,13 @@ struct MonitorDetailPanel: View {
                                 },
                                 assignment: a,
                                 previewTime: a.mediaType == .video ? videoPreviewTime : nil,
-                                targetAspect: monitor.aspectRatio
+                                targetAspect: monitor.aspectRatio,
+                                sourceAspect: previewSourceAspect,
+                                brightness: brightness,
+                                previewOpacity: opacity,
+                                saturation: saturation,
+                                hueDegrees: hue,
+                                grayscale: grayscale
                             )
                         } else {
                             WallpaperPreview(
@@ -463,10 +477,11 @@ struct MonitorDetailPanel: View {
         } label: {
             Image(systemName: cropEditMode ? "checkmark.circle.fill" : "crop")
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(cropEditMode ? Color.accentColor : .white)
+                .foregroundStyle(cropEditMode ? Color.white : Color.white)
                 .padding(7)
-                .background(.ultraThinMaterial, in: Circle())
-                .overlay(Circle().strokeBorder(.white.opacity(0.25), lineWidth: 0.5))
+                .background(cropEditMode ? Color.accentColor : Color.black.opacity(0.55), in: Circle())
+                .overlay(Circle().strokeBorder(Color.white.opacity(0.35), lineWidth: 0.5))
+                .shadow(color: .black.opacity(0.35), radius: 2, y: 1)
         }
         .buttonStyle(.plain)
         .help(cropEditMode ? "Done — finish cropping" : "Crop / Zoom on the preview")

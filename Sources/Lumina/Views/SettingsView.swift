@@ -168,7 +168,10 @@ struct SettingsView: View {
                 title: "Automatically check for updates",
                 subtitle: "Check GitHub for new versions on launch (shows a notification when available).",
                 isOn: Binding(
-                    get: { UserDefaults.standard.bool(forKey: "Lumina.AutoCheckUpdates") },
+                    get: {
+                        if UserDefaults.standard.object(forKey: "Lumina.AutoCheckUpdates") == nil { return true }
+                        return UserDefaults.standard.bool(forKey: "Lumina.AutoCheckUpdates")
+                    },
                     set: { UserDefaults.standard.set($0, forKey: "Lumina.AutoCheckUpdates") }
                 )
             )
@@ -240,10 +243,6 @@ struct SettingsView: View {
     private var aboutSection: some View {
         SettingsCard(icon: "info.circle.fill", title: "About & Help") {
             linkRow(title: "About & Status", icon: "info.circle") { store.showAboutStatus() }
-            LuminaDivider()
-            linkRow(title: "Welcome to Lumina", icon: "hand.wave") { store.showWelcomeScreen() }
-            LuminaDivider()
-            linkRow(title: "What's New", icon: "sparkles") { store.showCurrentChangelog() }
             LuminaDivider()
             linkRow(title: "Check for Updates", icon: "arrow.down.circle") { store.checkForUpdates() }
         }

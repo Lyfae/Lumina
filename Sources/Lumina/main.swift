@@ -124,7 +124,17 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         }
         
-        // Version / changelog check (runs on every launch, cheap)
+        // Optional update check on launch (Settings → General).
+        if UserDefaults.standard.object(forKey: "Lumina.AutoCheckUpdates") == nil {
+            UserDefaults.standard.set(true, forKey: "Lumina.AutoCheckUpdates")
+        }
+        if UserDefaults.standard.bool(forKey: "Lumina.AutoCheckUpdates") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
+                self?.checkForUpdates(silent: true)
+            }
+        }
+
+        // New-version changelog: open About & Status once per version.
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
             self.checkForNewVersionAndShowChangelogIfNeeded()
         }
@@ -710,7 +720,8 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private var onboardingWindowController: NSWindowController?
-    private var whatsNewWindowController: NSWindowController?
+    private var aboutWindowController: NSWindowController?
+    private var updateWindowController: NSWindowController?
 
     private func showOnboarding(forced: Bool = false) {
         // For normal (non-forced) shows, respect the "never show again" flag.
@@ -753,87 +764,151 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
     
-    /// Public API for user-facing "Welcome" / "What's New" buttons.
-    /// - If force == true, always shows the screen (used by explicit "Show Welcome" buttons).
-    /// - If force == false, respects the "never show again" flag.
-    func showWelcomeScreen(force: Bool = false) {
-        if !force && UserDefaults.standard.bool(forKey: "Lumina.HasShownOnboarding") {
-            return
-        }
-        // For forced show (user clicked a button), we do NOT touch the flag.
-        // Only the checkbox inside the welcome view can set the permanent "never show" flag.
-        DispatchQueue.main.async {
-            self.showOnboarding(forced: force)
-        }
-    }
-    
-    /// Presents the rich SwiftUI "What's New" window for the current version.
-    /// Used both for automatic update notifications and when the user explicitly
-    /// clicks "Welcome & What's New".
-    func showWhatsNew() {
-        let version = currentVersion
-        
-        // If we already have one open, just bring it forward
-        if let existing = whatsNewWindowController?.window {
+    /// Opens About & Status (welcome copy, live status, full changelog).
+    @objc func showAboutStatus() {
+        if let existing = aboutWindowController?.window {
             existing.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
             return
         }
-        
+
         let hosting = NSHostingController(
-            rootView: WhatsNewView(
-                version: version,
-                entries: WhatsNewView.entriesForCurrentVersion(version),
-                onDismiss: { [weak self] in
-                    // Mark this version as seen so we don't show it again automatically
-                    UserDefaults.standard.set(version, forKey: self?.lastShownChangelogKey ?? "")
-                    self?.whatsNewWindowController?.close()
-                    self?.whatsNewWindowController = nil
-                },
-                onViewReleaseNotes: {
-                    if let url = URL(string: "https://github.com/Lyfae/Lumina/releases") {
-                        NSWorkspace.shared.open(url)
-                    }
+            rootView: AboutStatusView(
+                appVersion: currentVersion,
+                buildNumber: currentBuildNumber,
+                statusSummary: buildStatusSummary(),
+                onPrintDebug: { [weak self] in self?.printDebugStatus() },
+                onOpenTestingGuide: { [weak self] in self?.openTestingDocInFinder() },
+                onClose: { [weak self] in
+                    UserDefaults.standard.set(self?.currentVersion ?? "", forKey: self?.lastShownChangelogKey ?? "")
+                    self?.aboutWindowController?.close()
+                    self?.aboutWindowController = nil
                 }
             )
         )
-        
+
         let window = NSWindow(contentViewController: hosting)
-        window.title = "What's New in Lumina"
+        window.title = "About Lumina Studio"
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
-        window.setFrameAutosaveName("Lumina.WhatsNew")
+        window.setFrameAutosaveName("Lumina.AboutStatus")
         window.center()
-        
+
         let controller = NSWindowController(window: window)
-        self.whatsNewWindowController = controller
-        
+        aboutWindowController = controller
         controller.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
-    
-    // MARK: - Version & Changelog (for future updates)
-    
+
+    /// Checks GitHub for a newer release. When `silent` is true, only prompts if an update exists.
+    func checkForUpdates(silent: Bool = false) {
+        Task { [weak self] in
+            guard let self else { return }
+            let result = await UpdateChecker.check(currentVersion: currentVersion)
+            await MainActor.run {
+                switch result {
+                case .upToDate:
+                    if !silent {
+                        let alert = NSAlert()
+                        alert.messageText = "You're Up to Date"
+                        alert.informativeText = "Lumina \(self.currentVersion) is the latest release on GitHub."
+                        alert.alertStyle = .informational
+                        alert.addButton(withTitle: "OK")
+                        alert.runModal()
+                    }
+                case .updateAvailable(let info):
+                    self.presentUpdateSheet(info)
+                case .error(let message):
+                    if !silent {
+                        let alert = NSAlert()
+                        alert.messageText = "Update Check Failed"
+                        alert.informativeText = message
+                        alert.alertStyle = .warning
+                        alert.addButton(withTitle: "Open Releases")
+                        alert.addButton(withTitle: "Cancel")
+                        if alert.runModal() == .alertFirstButtonReturn {
+                            UpdateChecker.openReleasesPage()
+                        }
+                    } else {
+                        LuminaLog.app.info("Silent update check failed: \(message)")
+                    }
+                }
+            }
+        }
+    }
+
+    private func presentUpdateSheet(_ info: UpdateChecker.ReleaseInfo) {
+        if let existing = updateWindowController?.window {
+            existing.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+
+        let hosting = NSHostingController(
+            rootView: UpdateAvailableView(
+                currentVersion: currentVersion,
+                newVersion: info.version,
+                downloadURL: info.downloadURL,
+                onInstall: { dmgURL in
+                    NSWorkspace.shared.open(dmgURL)
+                },
+                onLater: { [weak self] in
+                    self?.updateWindowController?.close()
+                    self?.updateWindowController = nil
+                }
+            )
+        )
+
+        let window = NSWindow(contentViewController: hosting)
+        window.title = "Update Available"
+        window.styleMask = [.titled, .closable]
+        window.center()
+
+        let controller = NSWindowController(window: window)
+        updateWindowController = controller
+        controller.showWindow(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private var currentBuildNumber: String {
+        Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1"
+    }
+
+    private func buildStatusSummary() -> String {
+        let loaded = currentVideoURL?.lastPathComponent ?? "None"
+        let policyStr = describePolicy(powerManager?.currentPolicy ?? .normal)
+        let lpm = powerManager?.pauseOnLowPowerMode ?? true
+        let thermal = powerManager?.pauseOnHighThermal ?? true
+        let fullscreen = powerManager?.respectFullscreenApps ?? true
+
+        return """
+        Video loaded: \(loaded)
+        Current policy: \(policyStr)
+
+        Power settings:
+        • Pause on Low Power Mode: \(lpm ? "ON" : "OFF")
+        • Pause on High Thermal: \(thermal ? "ON" : "OFF")
+        • Pause on Fullscreen Apps: \(fullscreen ? "ON" : "OFF")
+
+        Displays: \(NSScreen.screens.count) • Renderers: \(renderers.count)
+        """
+    }
+
+    // MARK: - Version & Changelog
+
     private var currentVersion: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0"
     }
-    
+
     private let lastShownChangelogKey = "Lumina.LastShownChangelogVersion"
-    
-    /// Checks if this is a new version since the user last saw a changelog.
-    /// Call this on launch and/or when opening the manager.
+
+    /// Opens About & Status once when the app version changes since the user last viewed it.
     func checkForNewVersionAndShowChangelogIfNeeded() {
         let lastShown = UserDefaults.standard.string(forKey: lastShownChangelogKey) ?? "0.0"
-        
-        // Simple string compare works well enough for semver during early releases (1.0, 1.1, 1.2, etc.)
-        if currentVersion != lastShown {
-            LuminaLog.app.info("New version detected: \(currentVersion) (previously saw \(lastShown))")
+        guard UpdateChecker.compareVersions(currentVersion, lastShown) == .orderedDescending else { return }
 
-            // Deliberately NOT marked as seen here — the version is persisted in the sheet's
-            // onDismiss handler, so a crash/quit before the user actually sees the notes
-            // doesn't swallow them forever.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
-                self?.showWhatsNew()
-            }
+        LuminaLog.app.info("New version detected: \(currentVersion) (previously saw \(lastShown))")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+            self?.showAboutStatus()
         }
     }
 
@@ -1266,49 +1341,7 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSApplication.shared.terminate(nil)
     }
 
-    // MARK: - About / Status (B) + Debug (C)
-
-    @objc func showAboutStatus() {
-        let loaded = currentVideoURL?.lastPathComponent ?? "None"
-        let policyStr = describePolicy(powerManager?.currentPolicy ?? .normal)
-        let lpm = powerManager?.pauseOnLowPowerMode ?? true
-        let thermal = powerManager?.pauseOnHighThermal ?? true
-
-        let info = """
-        Lumina — Native Low-Power Live Wallpaper
-
-        Video loaded: \(loaded)
-        Current policy: \(policyStr)
-
-        Power settings:
-        • Pause on Low Power Mode: \(lpm ? "ON" : "OFF")
-        • Pause on High Thermal: \(thermal ? "ON" : "OFF")
-        • Pause on Fullscreen Apps: \(powerManager?.respectFullscreenApps ?? true ? "ON" : "OFF")
-
-        Quick instructions:
-        • Menu bar icon → Lumina Studio (⌘M) for the full manager.
-        • Add videos, GIFs, or images to the library and assign per display.
-        • Use live preview, then Apply to Wallpaper. Slideshows, crop, and effects supported.
-        • Auto-pauses on Low Power Mode, high thermals, and fullscreen apps.
-
-        For advanced power/performance testing see docs/PROTOTYPE_TESTING.md.
-        """
-
-        let alert = NSAlert()
-        alert.messageText = "Lumina — About / Status"
-        alert.informativeText = info
-        alert.alertStyle = .informational
-        alert.addButton(withTitle: "OK")
-        alert.addButton(withTitle: "Print Full Debug")
-        alert.addButton(withTitle: "Open Testing Guide (in Finder)")
-
-        let response = alert.runModal()
-        if response == .alertSecondButtonReturn {
-            printDebugStatus()
-        } else if response == .alertThirdButtonReturn {
-            openTestingDocInFinder()
-        }
-    }
+    // MARK: - About / Status + Debug
 
     @objc private func printDebugStatus() {
         print("═══════════════════════════════════════")

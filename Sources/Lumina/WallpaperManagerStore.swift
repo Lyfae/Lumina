@@ -545,24 +545,14 @@ final class WallpaperManagerStore: ObservableObject {
         refreshDisplays()
     }
     
-    /// Exposes the user-facing Welcome / What's New screen from the UI layer.
-    func showWelcomeScreen() {
-        // appDelegate?.showWelcomeScreen(force: true)
-    }
-    
-    /// Shows the changelog for the current version (used by the prominent button + menu).
-    func showCurrentChangelog() {
-        // appDelegate?.showWhatsNew()
-    }
-
-    /// Triggers a check for newer versions of Lumina (opens release notes or update UI).
-    func checkForUpdates() {
-        // appDelegate?.checkForUpdates()
-    }
-
-    /// Shows the About / Status panel (moved from the menu bar into Settings).
+    /// Shows About & Status (welcome copy, live status, full changelog).
     func showAboutStatus() {
         appDelegate?.showAboutStatus()
+    }
+
+    /// Checks GitHub for a newer Lumina release.
+    func checkForUpdates() {
+        appDelegate?.checkForUpdates(silent: false)
     }
 
     /// Re-applies the power policy to all renderers after a power preference changes,
