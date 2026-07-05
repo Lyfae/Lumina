@@ -38,7 +38,7 @@ struct CropRectangle: View {
     private let previewCornerRadius: CGFloat = 10
 
     private let minSize: CGFloat = 0.05
-    private let handleSize: CGFloat = 14
+    private var handleSize: CGFloat { DisplayScale.points(14) }
 
     private var effectiveSourceAspect: CGFloat {
         resolvedSourceAspect
@@ -100,6 +100,7 @@ struct CropRectangle: View {
                         targetAspect: effectiveSourceAspect,
                         previewTime: previewTime,
                         ignoreAspectRatio: true,
+                        showsChrome: false,
                         brightness: brightness,
                         previewOpacity: previewOpacity,
                         saturation: saturation,

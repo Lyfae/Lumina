@@ -42,7 +42,7 @@ struct SlideshowConfigView: View {
             LuminaDivider()
             footer
         }
-        .frame(width: 560, height: 660)
+        .scaledFrame(width: 560, height: 660)
         .background(Color.luminaBase)
         .tint(themeManager.current.color)
         .onAppear(perform: load)
@@ -199,7 +199,7 @@ struct SlideshowConfigView: View {
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
-                .frame(width: 160)
+                .scaledFrame(width: 160)
             }
 
             Toggle(isOn: $kenBurnsEnabled) {
@@ -271,7 +271,10 @@ struct SlideshowConfigView: View {
         panel.canChooseFiles = true
         panel.allowsMultipleSelection = true
         guard panel.runModal() == .OK else { return }
-        for url in panel.urls { addImage(url) }
+        for url in panel.urls {
+            _ = FileAccess.registerUserSelectedFile(url)
+            addImage(url)
+        }
     }
 
     private func handleDrop(_ providers: [NSItemProvider]) -> Bool {
@@ -340,10 +343,10 @@ private struct SlideshowQueueRow: View {
             Text("\(position)")
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.tertiary)
-                .frame(width: 18)
+                .scaledFrame(width: 18)
 
             thumbView
-                .frame(width: 64, height: 36)
+                .scaledFrame(width: 64, height: 36)
                 .clipShape(RoundedRectangle(cornerRadius: 5))
                 .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Color.luminaBorder, lineWidth: 0.5))
 
@@ -399,7 +402,7 @@ private struct LibraryImageThumb: View {
                     Color.gray.opacity(0.15).overlay(ProgressView().scaleEffect(0.5))
                 }
             }
-            .frame(width: 92, height: 52)
+            .scaledFrame(width: 92, height: 52)
             .clipShape(RoundedRectangle(cornerRadius: 6))
             .overlay(
                 RoundedRectangle(cornerRadius: 6)

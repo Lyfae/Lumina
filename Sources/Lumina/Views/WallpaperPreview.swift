@@ -23,6 +23,9 @@ struct WallpaperPreview: View {
     /// (e.g. the full-source background inside CropRectangle).
     var ignoreAspectRatio: Bool = false
 
+    /// When false, omit the black card chrome — used when embedded inside CropRectangle.
+    var showsChrome: Bool = true
+
     // Live visual-effect overlays so the preview is true WYSIWYG (matches what "Apply to
     // Wallpaper" will push to the desktop). Defaults are no-ops.
     var brightness: Double = 0      // -0.5...0.5
@@ -47,12 +50,14 @@ struct WallpaperPreview: View {
     var body: some View {
         GeometryReader { geometry in
             ZStack {
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(Color.black.opacity(0.85))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(Color.accentColor.opacity(0.35), lineWidth: 1)
-                    )
+                if showsChrome {
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(Color.black.opacity(0.85))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(Color.accentColor.opacity(0.35), lineWidth: 1)
+                        )
+                }
 
                 if let assign = assignment {
                     Group {

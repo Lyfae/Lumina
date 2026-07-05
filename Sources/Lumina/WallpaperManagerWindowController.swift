@@ -24,17 +24,16 @@ final class WallpaperManagerWindowController: NSWindowController {
         self.appDelegate = appDelegate
         store.appDelegate = appDelegate
 
+        let defaultSize = DisplayScale.managerWindowSize
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1180, height: 840),
+            contentRect: NSRect(x: 0, y: 0, width: defaultSize.width, height: defaultSize.height),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
 
         window.title = "Lumina Studio"
-        // Adaptive: the user can freely resize the window; we only enforce a sensible floor
-        // so the two-column layout never collapses. The chosen size persists across launches.
-        window.contentMinSize = NSSize(width: 960, height: 720)
+        window.contentMinSize = DisplayScale.managerWindowMinSize
         window.center()
         window.setFrameAutosaveName("Lumina.WallpaperManager")
 
@@ -179,7 +178,7 @@ final class WallpaperManagerWindowController: NSWindowController {
             }
 
             // Grow the window vertically to accommodate the crop editor (~180pt)
-            let growth: CGFloat = 180
+            let growth = DisplayScale.points(180)
             let currentFrame = window.frame
             let newHeight = currentFrame.height + growth
 

@@ -82,7 +82,7 @@ struct ChooseDisplayView: View {
             .padding(.horizontal, 24)
             .padding(.vertical, 14)
         }
-        .frame(minWidth: 580, minHeight: 320)
+        .scaledMinFrame(width: 580, height: 320)
         .background(Color(NSColor.windowBackgroundColor))
     }
 }

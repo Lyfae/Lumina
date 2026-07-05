@@ -246,7 +246,7 @@ extension MonitorAssignment {
         
         do {
             let bookmark = try url.bookmarkData(
-                options: [.withSecurityScope],
+                options: FileAccess.bookmarkCreationOptions,
                 includingResourceValuesForKeys: nil,
                 relativeTo: nil
             )
@@ -265,7 +265,7 @@ extension MonitorAssignment {
             var isStale = false
             if let url = try? URL(
                 resolvingBookmarkData: data,
-                options: [.withSecurityScope, .withoutUI],
+                options: FileAccess.bookmarkResolutionOptions,
                 relativeTo: nil,
                 bookmarkDataIsStale: &isStale
             ) {
@@ -304,13 +304,28 @@ extension MonitorAssignment {
     private nonisolated(unsafe) static var scopedAccessStartedPaths = Set<String>()
     private static let scopedAccessLock = NSLock()
 
-    private static func startScopedAccessOnce(for url: URL) {
+    /// Starts security-scoped access once per path for the app's lifetime.
+    @discardableResult
+    static func beginScopedAccess(for url: URL) -> Bool {
         scopedAccessLock.lock()
         defer { scopedAccessLock.unlock() }
-        guard !scopedAccessStartedPaths.contains(url.path) else { return }
+        guard !scopedAccessStartedPaths.contains(url.path) else { return true }
         if url.startAccessingSecurityScopedResource() {
             scopedAccessStartedPaths.insert(url.path)
+            return true
         }
+        return !FileAccess.isSandboxed
+    }
+
+    /// Whether this path already has an active security-scoped grant for the app's lifetime.
+    static func hasActiveScopedAccess(for url: URL) -> Bool {
+        scopedAccessLock.lock()
+        defer { scopedAccessLock.unlock() }
+        return scopedAccessStartedPaths.contains(url.path)
+    }
+
+    private static func startScopedAccessOnce(for url: URL) {
+        beginScopedAccess(for: url)
     }
 
     /// Whether the stored security-scoped bookmark is stale and should be recreated.

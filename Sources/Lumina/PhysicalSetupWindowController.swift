@@ -16,8 +16,9 @@ final class PhysicalSetupWindowController: NSWindowController {
         self._selectedMonitorID = selectedMonitorID
         self.managerWindow = managerWindow
         
+        let defaultSize = DisplayScale.physicalSetupWindowSize
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 620, height: 420),
+            contentRect: NSRect(x: 0, y: 0, width: defaultSize.width, height: defaultSize.height),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
@@ -98,6 +99,7 @@ final class PhysicalSetupWindowController: NSWindowController {
         panel.canChooseFiles = true
         
         guard panel.runModal() == .OK, let url = panel.url else { return }
+        _ = FileAccess.registerUserSelectedFile(url)
         
         // Assign via the store
         store.chooseVideoForMonitorID(monitorID: monitorID, url: url)
@@ -187,6 +189,6 @@ private struct PhysicalSetupWindowView: View {
             .padding(.horizontal)
             .padding(.bottom, 12)
         }
-        .frame(minWidth: 520, minHeight: 380)
+        .scaledMinFrame(width: 520, height: 380)
     }
 }

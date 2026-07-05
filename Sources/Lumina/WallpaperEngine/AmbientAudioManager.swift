@@ -181,6 +181,7 @@ final class AmbientAudioManager: NSObject, ObservableObject {
         panel.allowsMultipleSelection = true
         guard panel.runModal() == .OK else { return }
         for url in panel.urls {
+            _ = FileAccess.registerUserSelectedFile(url)
             addToLibrary(url: url)
         }
         if let first = panel.urls.first {

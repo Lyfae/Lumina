@@ -150,6 +150,16 @@ enum SelfTest {
         // Top-left crop should push the expanded layer up so the top-left maps to the visible top-left.
         check("video crop Y-flip origin", abs(vf.minX - 0) < 0.001 && abs(vf.minY - (-800)) < 0.001)
 
+        // 10. Semver comparison (update checker + changelog gating)
+        check("semver 0.2.0 newer than 0.1.0",
+              UpdateChecker.isVersion("0.2.0", newerThan: "0.1.0"))
+        check("semver 0.10.0 newer than 0.9.0",
+              UpdateChecker.isVersion("0.10.0", newerThan: "0.9.0"))
+        check("semver equal not newer",
+              !UpdateChecker.isVersion("0.2.0", newerThan: "0.2.0"))
+        check("semver strips v prefix",
+              UpdateChecker.normalizeVersion("v0.2.0") == "0.2.0")
+
         print("─────────────────────────────────────────")
         print("Self-test: \(passed) passed, \(failed) failed")
         return failed == 0 ? 0 : 1

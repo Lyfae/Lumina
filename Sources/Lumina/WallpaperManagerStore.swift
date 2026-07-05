@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import Combine
 
 /// Observable store for the Wallpaper Manager.
 /// Manages monitor detection and per-monitor video assignments.
@@ -20,36 +21,78 @@ final class WallpaperManagerStore: ObservableObject {
     /// When enabled, all active wallpapers will attempt to start playback at the same time
     /// (useful for multi-monitor setups so videos don't drift or start at different times).
     @Published var syncPlaybackAcrossDisplays: Bool = false
-    
-    weak var appDelegate: LuminaApp?
-    
+
+    /// Cached library grid — rebuilt when assignments change (avoids resolving bookmarks every SwiftUI frame).
+    @Published private(set) var recentMedia: [RecentMedia] = []
+
+    weak var appDelegate: LuminaApp? {
+        didSet { bindAssignmentStoreIfNeeded() }
+    }
+
+    private var assignmentCancellable: AnyCancellable?
+
     init() {
         refreshDisplays()
         syncPersistencePreference()
         loadSyncPlaybackSetting()
     }
-    
+
+    private func bindAssignmentStoreIfNeeded() {
+        assignmentCancellable = nil
+        guard let central = appDelegate?.assignmentStore else { return }
+        assignmentCancellable = central.$assignments
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.rebuildRecentMedia() }
+        rebuildRecentMedia()
+    }
+
+    /// Rebuilds the library grid from AssignmentStore. Called on assignment changes only.
+    func rebuildRecentMedia() {
+        var seenPaths = Set<String>()
+        var result: [RecentMedia] = []
+
+        for (_, assignment) in appDelegate?.assignmentStore.assignments ?? [:] {
+            let url: URL? = assignment.resolvedURL() ?? assignment.filePath.map {
+                URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath)
+            }
+            guard let url else { continue }
+
+            let expandedPath = url.path
+            if seenPaths.contains(expandedPath) { continue }
+            seenPaths.insert(expandedPath)
+
+            result.append(RecentMedia(
+                id: expandedPath,
+                url: url,
+                mediaType: assignment.mediaType,
+                displayName: url.lastPathComponent
+            ))
+        }
+
+        recentMedia = result.sorted {
+            $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
+        }
+    }
+
     // MARK: - Display Detection (with better identification)
-    
+
     func refreshDisplays() {
-        // Always pull the authoritative preference from the central store
         syncPersistencePreference()
-        
+
         let screens = NSScreen.screens
-        
+
         monitors = screens.enumerated().map { index, screen in
             let resolution = "\(Int(screen.frame.width))×\(Int(screen.frame.height))"
             let isPrimary = screen == NSScreen.main
             let id = MonitorInfo.identifier(for: screen, index: index)
-            
-            // Show assigned name only when persistence is enabled in the central store
+
             var assignedName: String? = nil
             if persistAssignments,
                let assignment = self.assignment(for: id),
                let path = assignment.filePath {
                 assignedName = URL(fileURLWithPath: path).lastPathComponent
             }
-            
+
             return MonitorInfo(
                 id: id,
                 name: screen.localizedName.isEmpty ? "Display \(index + 1)" : screen.localizedName,
@@ -77,6 +120,7 @@ final class WallpaperManagerStore: ObservableObject {
         panel.canChooseFiles = true
         
         guard panel.runModal() == .OK, let url = panel.url else { return }
+        _ = FileAccess.registerUserSelectedFile(url)
         
         // The app delegate path is the single source of truth for assignment creation,
         // bookmark handling, persistence (when keepOnStartup is set), and renderer loading.
@@ -158,49 +202,6 @@ final class WallpaperManagerStore: ObservableObject {
         let displayName: String
     }
     
-    /// Returns a de-duplicated list of recently used wallpapers from the current assignments.
-    /// Users can click these to instantly apply the same media to another selected display.
-    ///
-    /// Uses resolvedURL() (with security-scoped bookmark access) when available so that
-    /// ThumbnailService can successfully open the file for AVAssetImageGenerator.
-    var recentMedia: [RecentMedia] {
-        var seenPaths = Set<String>()
-        var result: [RecentMedia] = []
-        
-        for (_, assignment) in appDelegate?.assignmentStore.assignments ?? [:] {
-            // Show all used wallpapers in the left grid/library, regardless of the
-            // "Keep on startup" flag. The keep flag only controls auto-restoration on launch.
-            // This way newly loaded wallpapers immediately appear in the canvas for easy re-use.
-            
-            // Use the plain file path here (cheap). `recentMedia` is recomputed on every SwiftUI
-            // render pass, so resolving a security-scoped bookmark per item per render was a real
-            // performance drain AND leaked access counts. ThumbnailService starts/stops its own
-            // security-scoped access on the URL it's given, and the actual render path
-            // (assignVideoToMonitor) re-resolves bookmarks, so the grid only needs a path. We fall
-            // back to bookmark resolution only when no file path is stored (rare).
-            let url: URL? = {
-                if let path = assignment.filePath {
-                    return URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
-                }
-                return assignment.resolvedURL()
-            }()
-
-            guard let url else { continue }
-            
-            let expandedPath = url.path
-            if seenPaths.contains(expandedPath) { continue }
-            seenPaths.insert(expandedPath)
-            
-            let name = url.lastPathComponent
-            let mt = assignment.mediaType
-            
-            result.append(RecentMedia(id: expandedPath, url: url, mediaType: mt, displayName: name))
-        }
-        
-        // Sort by name for stable, predictable order
-        return result.sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
-    }
-    
     /// Applies an existing media file (from the recent canvas or any known URL) to a specific monitor.
     /// This is the key action behind "click a previous video to change the screensaver on the selected display".
     func applyRecentMedia(to monitorID: String, url: URL) {
@@ -223,8 +224,8 @@ final class WallpaperManagerStore: ObservableObject {
 
         // Remove every assignment (library-import or monitor) that references this path
         let toRemove = central.assignments.filter { (_, assignment) in
-            let path = assignment.resolvedURL()?.path
-                ?? assignment.filePath.map { ($0 as NSString).expandingTildeInPath }
+            let path = assignment.filePath.map { ($0 as NSString).expandingTildeInPath }
+                ?? assignment.resolvedURL()?.path
             return path == id
         }.map { $0.key }
 
@@ -259,8 +260,9 @@ final class WallpaperManagerStore: ObservableObject {
         }
 
         // We create a minimal record in the central store so it shows up in recentMedia.
-        // We do not call assignVideoToMonitor here, so nothing changes on the actual displays.
         let tempMonitorID = "library-import-\(UUID().uuidString)"
+        
+        _ = FileAccess.registerUserSelectedFile(url)
         
         var assignment = MonitorAssignment(monitorIdentifier: tempMonitorID)
         assignment.filePath = url.path
@@ -274,6 +276,7 @@ final class WallpaperManagerStore: ObservableObject {
         appDelegate?.assignmentStore.updateAssignment(assignment)
         
         // Force a refresh so the left grid updates immediately
+        rebuildRecentMedia()
         refreshDisplays()
         
         print("Imported media to library: \(url.lastPathComponent)")

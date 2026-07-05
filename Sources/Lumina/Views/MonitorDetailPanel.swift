@@ -12,7 +12,7 @@ struct MonitorDetailPanel: View {
     var showHeader: Bool = true
 
     // Preview resize state
-    @State private var previewHeight: CGFloat = 220
+    @State private var previewHeight: CGFloat = 0
     /// Height snapshot taken when the resize drag begins — DragGesture.translation is the
     /// cumulative offset from the gesture start, so it must be applied to a fixed baseline.
     @State private var previewHeightAtDragStart: CGFloat?
@@ -140,7 +140,10 @@ struct MonitorDetailPanel: View {
             actionButtons
                 .padding(16)
         }
-        .onAppear { loadCurrentValues() }
+        .onAppear {
+            if previewHeight < 1 { previewHeight = DisplayScale.points(220) }
+            loadCurrentValues()
+        }
         .onChange(of: monitor.id) { _, _ in loadCurrentValues() }
         // Reloading when the media itself changes resets the staged adjustments to the new
         // assignment's values (so picking new media doesn't leave stale pending edits).
@@ -454,7 +457,7 @@ struct MonitorDetailPanel: View {
                     .onChanged { drag in
                         let base = previewHeightAtDragStart ?? previewHeight
                         previewHeightAtDragStart = base
-                        previewHeight = max(140, min(500, base + drag.translation.height))
+                        previewHeight = max(DisplayScale.points(140), min(DisplayScale.points(500), base + drag.translation.height))
                     }
                     .onEnded { _ in
                         previewHeightAtDragStart = nil
@@ -1076,13 +1079,13 @@ private struct SettingsGroup<Content: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             // Consistent header treatment across all groups (strong visual rhythm)
-            HStack(spacing: 8) {
+            HStack(spacing: DisplayScale.points(10)) {
                 Image(systemName: icon)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 16)
+                    .font(.system(size: UIScaleManager.shared.iconSize(.card), weight: .semibold))
+                    .foregroundStyle(ThemeManager.shared.current.color)
+                    .frame(width: DisplayScale.points(24), alignment: .center)
                 Text(title)
-                    .font(.subheadline.weight(.semibold))
+                    .font(.system(size: DisplayScale.points(14), weight: .semibold))
                     .foregroundStyle(.primary)
             }
             .padding(.horizontal, 14)

@@ -7,7 +7,7 @@ import AppKit
 @MainActor
 final class NowPlayingWidgetController: NSObject {
     private var panel: NSPanel?
-    private static let size = NSSize(width: 440, height: 176)
+    private var panelSize: NSSize { DisplayScale.musicWidgetSize }
 
     /// Brings the widget on screen, creating it on first use and parking it in the
     /// top-right corner of the main display.
@@ -23,8 +23,9 @@ final class NowPlayingWidgetController: NSObject {
     }
 
     private func makePanel() -> NSPanel {
+        let size = panelSize
         let panel = NSPanel(
-            contentRect: NSRect(origin: .zero, size: Self.size),
+            contentRect: NSRect(origin: .zero, size: size),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -39,7 +40,7 @@ final class NowPlayingWidgetController: NSObject {
         let host = NSHostingView(rootView: NowPlayingWidgetView(onClose: { [weak self] in
             self?.hide()
         }))
-        host.frame = NSRect(origin: .zero, size: Self.size)
+        host.frame = NSRect(origin: .zero, size: size)
         host.autoresizingMask = [.width, .height]
         panel.contentView = host
         return panel
@@ -49,8 +50,8 @@ final class NowPlayingWidgetController: NSObject {
         guard let visible = NSScreen.main?.visibleFrame else { return }
         let size = panel.frame.size
         panel.setFrameOrigin(NSPoint(
-            x: visible.maxX - size.width - 24,
-            y: visible.maxY - size.height - 24
+            x: visible.maxX - size.width - DisplayScale.points(24),
+            y: visible.maxY - size.height - DisplayScale.points(24)
         ))
     }
 }
@@ -68,30 +69,31 @@ struct NowPlayingWidgetView: View {
     private var accent: Color { theme.current.color }
 
     var body: some View {
-        HStack(spacing: 16) {
+        HStack(spacing: DisplayScale.points(16)) {
             albumArt
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: DisplayScale.points(8)) {
                 titleRow
                 progressBar
                 transportRow
             }
         }
-        .padding(18)
+        .padding(DisplayScale.points(18))
         .background(
-            RoundedRectangle(cornerRadius: 26, style: .continuous)
+            RoundedRectangle(cornerRadius: DisplayScale.points(26), style: .continuous)
                 .fill(Color(white: 0.11))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 26, style: .continuous)
+            RoundedRectangle(cornerRadius: DisplayScale.points(26), style: .continuous)
                 .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
         )
-        .padding(6)   // breathing room for the drop shadow
+        .padding(DisplayScale.points(6))
+        .scaledFrame(width: 440, height: 176)
     }
 
     // MARK: Album art
 
     private var albumArt: some View {
-        RoundedRectangle(cornerRadius: 18, style: .continuous)
+        RoundedRectangle(cornerRadius: DisplayScale.points(18), style: .continuous)
             .fill(
                 LinearGradient(
                     colors: [accent.opacity(0.95), accent.opacity(0.55)],
@@ -99,10 +101,10 @@ struct NowPlayingWidgetView: View {
                     endPoint: .bottomTrailing
                 )
             )
-            .frame(width: 92, height: 92)
+            .scaledFrame(width: 92, height: 92)
             .overlay(
                 Image(systemName: audio.isPlaying ? "waveform" : "music.note")
-                    .font(.system(size: 34, weight: .semibold))
+                    .font(.system(size: DisplayScale.points(34), weight: .semibold))
                     .foregroundStyle(.white)
                     .symbolEffect(.variableColor.iterative, isActive: audio.isPlaying)
             )
@@ -115,21 +117,21 @@ struct NowPlayingWidgetView: View {
         HStack(alignment: .top, spacing: 8) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(displayTitle)
-                    .font(.system(size: 17, weight: .bold))
+                    .font(.system(size: DisplayScale.points(17), weight: .bold))
                     .foregroundStyle(.white)
                     .lineLimit(1)
                     .truncationMode(.tail)
                 Text("Ambient Audio")
-                    .font(.system(size: 12.5, weight: .medium))
+                    .font(.system(size: DisplayScale.points(12.5), weight: .medium))
                     .foregroundStyle(.white.opacity(0.55))
                     .lineLimit(1)
             }
             Spacer(minLength: 4)
             Button(action: onClose) {
                 Image(systemName: "xmark")
-                    .font(.system(size: 11, weight: .bold))
+                    .font(.system(size: DisplayScale.points(11), weight: .bold))
                     .foregroundStyle(.white.opacity(0.6))
-                    .frame(width: 22, height: 22)
+                    .scaledFrame(width: 22, height: 22)
                     .background(Circle().fill(Color.white.opacity(0.08)))
             }
             .buttonStyle(.plain)
@@ -178,14 +180,14 @@ struct NowPlayingWidgetView: View {
                         }
                 )
             }
-            .frame(height: 5)
+            .frame(height: DisplayScale.points(5))
 
             HStack {
                 Text(timeString(scrubFraction.map { $0 * audio.duration } ?? audio.currentTime))
                 Spacer()
                 Text("-" + timeString(max(0, audio.duration - (scrubFraction.map { $0 * audio.duration } ?? audio.currentTime))))
             }
-            .font(.system(size: 10.5, weight: .medium).monospacedDigit())
+            .font(.system(size: DisplayScale.points(10.5), weight: .medium).monospacedDigit())
             .foregroundStyle(.white.opacity(0.45))
         }
     }
@@ -213,9 +215,9 @@ struct NowPlayingWidgetView: View {
             // Primary play/pause — the visual anchor of the widget.
             Button { audio.toggle() } label: {
                 Image(systemName: audio.isPlaying ? "pause.fill" : "play.fill")
-                    .font(.system(size: 20, weight: .heavy))
+                    .font(.system(size: DisplayScale.points(20), weight: .heavy))
                     .foregroundStyle(.black)
-                    .frame(width: 50, height: 50)
+                    .scaledFrame(width: 50, height: 50)
                     .background(Circle().fill(.white))
             }
             .buttonStyle(.plain)
@@ -253,9 +255,9 @@ struct NowPlayingWidgetView: View {
     ) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: size, weight: .semibold))
+                .font(.system(size: DisplayScale.points(size), weight: .semibold))
                 .foregroundStyle(active ? accent : Color.white.opacity(0.85))
-                .frame(width: 34, height: 34)
+                .scaledFrame(width: 34, height: 34)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

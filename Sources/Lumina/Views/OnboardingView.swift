@@ -1,116 +1,113 @@
 import SwiftUI
 
-/// First-run / onboarding experience that educates users about power impact.
-/// Includes a "Never show again" option so it doesn't annoy users on every launch.
+/// First-run welcome shown once when the user opens Lumina Studio.
 struct OnboardingView: View {
-    var onContinue: (Bool) -> Void   // Bool = should never show again
+    var onContinue: () -> Void
 
-    @State private var neverShowAgain: Bool = true
+    @StateObject private var themeManager = ThemeManager.shared
+
+    private let inkGradient: [Color] = [
+        Color(red: 0.62, green: 0.87, blue: 1.0),
+        Color(red: 0.72, green: 0.62, blue: 1.0),
+        Color(red: 1.0, green: 0.78, blue: 0.55)
+    ]
 
     var body: some View {
         VStack(spacing: 0) {
-            // Header image (same Grok Imagine asset used in What's New for brand consistency)
-            if let imageURL = Bundle.module.url(forResource: "OnboardingHeader", withExtension: "jpg", subdirectory: "Images"),
-               let headerImage = NSImage(contentsOf: imageURL) {
-                Image(nsImage: headerImage)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .frame(height: 130)
-                    .clipped()
-            } else {
-                ZStack {
-                    Color.black
-                    Image(systemName: "sparkles")
-                        .font(.system(size: 42))
-                        .foregroundStyle(.yellow)
-                }
-                .frame(height: 130)
+            // Brand header — same cursive LS as splash/menu bar (no missing bundle image).
+            ZStack {
+                LinearGradient(
+                    colors: [
+                        Color(red: 0.06, green: 0.08, blue: 0.16),
+                        Color(red: 0.10, green: 0.07, blue: 0.18)
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                CursiveLSView(
+                    lineWidth: 2.6,
+                    color: .white,
+                    animate: false,
+                    gradientColors: inkGradient,
+                    glowRadius: 5
+                )
+                .scaledFrame(width: 120, height: 68)
             }
+            .frame(height: DisplayScale.points(130))
+            .clipped()
 
             VStack(alignment: .leading, spacing: 20) {
-                // Title + subtitle (matching What's New visual treatment)
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Welcome to Lumina")
-                        .font(.largeTitle.bold())
-                        .foregroundStyle(.white)
-
-                    Text("A native, ultra-low-power live wallpaper engine for macOS.")
-                        .font(.title3)
-                        .foregroundStyle(.yellow)
+                    Text("Welcome to Lumina Studio")
+                        .font(.title2.bold())
+                    Text("Native live wallpapers for macOS — free, battery-aware, and per-display.")
+                        .font(.subheadline)
+                        .foregroundStyle(themeManager.current.color)
                 }
                 .padding(.top, 8)
 
-                Divider()
-                    .background(Color.white.opacity(0.15))
+                LuminaDivider()
 
-                // Education content in a ScrollView for consistency with What's New
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
                         FeatureRow(
                             icon: "battery.100.bolt",
                             title: "Designed for Battery Life",
-                            description: "Lumina uses hardware-accelerated playback and smart power management. It automatically pauses or throttles when you're on battery, in Low Power Mode, or under thermal pressure."
+                            description: "Hardware-accelerated playback with smart pausing on battery, Low Power Mode, and thermal pressure."
                         )
-
                         FeatureRow(
                             icon: "slider.horizontal.3",
                             title: "You Stay in Control",
-                            description: "Use the Performance Profile menu in the menu bar to instantly switch between Maximum Battery Saving, Balanced, or High Quality modes."
+                            description: "Preview crop, speed, scaling, and effects live — then Apply to Wallpaper when you're ready."
                         )
-
                         FeatureRow(
-                            icon: "info.circle",
-                            title: "What to Expect",
-                            description: "Beautiful video wallpapers with almost no impact on AC power. Automatic power saving on battery. Full per-monitor control with live crop, speed, and scaling. Completely free and open source."
+                            icon: "display.2",
+                            title: "Every Display, Independently",
+                            description: "Set different wallpapers per monitor, sync playback, or run slideshows with Ken Burns."
                         )
                     }
                     .padding(.vertical, 4)
                 }
-                .frame(maxHeight: 260)
+                .frame(maxHeight: DisplayScale.points(260))
 
                 Spacer(minLength: 8)
 
-                // Footer actions (styled to match the What's New sheet)
-                HStack(spacing: 12) {
-                    Toggle("Don't show this again", isOn: $neverShowAgain)
-                        .toggleStyle(.checkbox)
-                        .foregroundStyle(.secondary)
-
+                HStack {
                     Spacer()
-
-                    Button("Done") {
-                        onContinue(neverShowAgain)
+                    Button("Get Started") {
+                        onContinue()
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
+                    .keyboardShortcut(.defaultAction)
                 }
             }
             .padding(.horizontal, 28)
             .padding(.vertical, 24)
         }
-        .frame(width: 520, height: 560)
-        .background(Color.black)
+        .scaledFrame(width: 520, height: 560)
+        .background(Color.luminaBase)
+        .tint(themeManager.current.color)
     }
 }
 
-/// Small reusable component for clean, modular feature rows.
 private struct FeatureRow: View {
     let icon: String
     let title: String
     let description: String
 
+    @StateObject private var themeManager = ThemeManager.shared
+
     var body: some View {
         HStack(alignment: .top, spacing: 14) {
             Image(systemName: icon)
-                .font(.title2)
-                .foregroundStyle(.yellow)
-                .frame(width: 28, alignment: .center)
+                .font(.title3)
+                .foregroundStyle(themeManager.current.color)
+                .scaledFrame(width: 28, alignment: .center)
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
                     .font(.headline)
-                    .foregroundStyle(.white)
-
                 Text(description)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)

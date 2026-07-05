@@ -13,6 +13,7 @@ struct SettingsView: View {
     @StateObject private var themeManager = ThemeManager.shared
     @StateObject private var appearanceManager = AppearanceManager.shared
     @StateObject private var audioManager = AmbientAudioManager.shared
+    @StateObject private var uiScale = UIScaleManager.shared
 
     // Launch-at-login mirrors the system service status.
     @State private var launchAtLogin: Bool = false
@@ -36,6 +37,7 @@ struct SettingsView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     appearanceSection
+                    interfaceSection
                     generalSection
                     batterySection
                     aboutSection
@@ -44,7 +46,7 @@ struct SettingsView: View {
             }
             .frame(maxHeight: .infinity)
         }
-        .frame(width: 460, height: 560)
+        .scaledFrame(width: 460, height: 560)
         .background(Color.luminaBase)
         .tint(themeManager.current.color)
         .alert("Couldn’t change Launch at Login",
@@ -116,6 +118,58 @@ struct SettingsView: View {
                 }
             }
         }
+    }
+
+    // MARK: - Interface scale
+
+    private var interfaceSection: some View {
+        SettingsCard(icon: "textformat.size", title: "Interface Size") {
+            settingRow(
+                title: "Icon & control scale",
+                subtitle: "Make buttons, thumbnails, and toolbar icons larger or more compact."
+            ) {
+                Picker("", selection: uiScaleBinding) {
+                    ForEach(UIScaleManager.Preset.allCases) { preset in
+                        Text(preset.label).tag(preset)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+            }
+
+            HStack(spacing: DisplayScale.points(14)) {
+                ForEach(UIScaleManager.Preset.allCases) { preset in
+                    VStack(spacing: DisplayScale.points(6)) {
+                        Image(systemName: "square.grid.2x2.fill")
+                            .font(.system(size: preset.sampleIconSize, weight: .semibold))
+                            .foregroundStyle(uiScale.preset == preset ? themeManager.current.color : .secondary)
+                        Text(preset.label)
+                            .font(.system(size: DisplayScale.points(10), weight: .medium))
+                            .foregroundStyle(uiScale.preset == preset ? .primary : .secondary)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, DisplayScale.points(10))
+                    .background(
+                        RoundedRectangle(cornerRadius: DisplayScale.points(8), style: .continuous)
+                            .fill(uiScale.preset == preset ? themeManager.current.color.opacity(0.12) : Color.primary.opacity(0.04))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: DisplayScale.points(8), style: .continuous)
+                            .strokeBorder(uiScale.preset == preset ? themeManager.current.color.opacity(0.4) : Color.clear, lineWidth: 1)
+                    )
+                    .contentShape(Rectangle())
+                    .onTapGesture { uiScale.set(preset) }
+                }
+            }
+
+            Text(uiScale.preset.subtitle)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var uiScaleBinding: Binding<UIScaleManager.Preset> {
+        Binding(get: { uiScale.preset }, set: { uiScale.set($0) })
     }
 
     // MARK: - General
@@ -346,13 +400,13 @@ private struct SettingsCard<Content: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 8) {
+            HStack(spacing: DisplayScale.points(10)) {
                 Image(systemName: icon)
-                    .font(.caption.weight(.semibold))
+                    .font(.system(size: UIScaleManager.shared.iconSize(.card), weight: .semibold))
                     .foregroundStyle(.secondary)
-                    .frame(width: 16)
+                    .frame(width: DisplayScale.points(22))
                 Text(title)
-                    .font(.subheadline.weight(.semibold))
+                    .font(.system(size: DisplayScale.points(14), weight: .semibold))
             }
             .padding(.horizontal, 14)
             .padding(.top, 12)

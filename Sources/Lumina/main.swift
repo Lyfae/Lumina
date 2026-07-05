@@ -87,6 +87,10 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         SplashWindowController.present()
 
         setupStatusItem()
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(refreshStatusBarIcon),
+            name: .luminaUIScaleDidChange, object: nil
+        )
         setupPowerManager()
         setupWallpaperWindowsAndRenderers()
 
@@ -116,13 +120,8 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         LuminaLog.app.info("Lumina started (menu-bar only). Use the menu bar icon → Wallpaper Manager (⌘M)")
 
-        // Show onboarding on first launch (unless user chose "never show again").
-        // We also re-check when the Wallpaper Manager opens so it feels tied to the manager experience.
-        if !UserDefaults.standard.bool(forKey: "Lumina.HasShownOnboarding") {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                self.showOnboarding()
-            }
-        }
+        // Onboarding is shown once when the user first opens Lumina Studio (not at launch —
+        // avoids stacking a broken/extra window right after the splash).
         
         // Optional update check on launch (Settings → General).
         if UserDefaults.standard.object(forKey: "Lumina.AutoCheckUpdates") == nil {
@@ -145,6 +144,7 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // stop all playback and remove the desktop wallpaper windows so nothing lingers.
         powerManager?.pauseManually()
         stopDriftWatcher()
+        updateCheckTask?.cancel()
         reconcileWorkItem?.cancel()
         occlusionRescanWorkItem?.cancel()
         for renderer in renderers {
@@ -697,6 +697,7 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         panel.allowsMultipleSelection = false
 
         guard panel.runModal() == .OK, let url = panel.url else { return }
+        _ = FileAccess.registerUserSelectedFile(url)
 
         loadVideo(url: url)
     }
@@ -722,28 +723,36 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var onboardingWindowController: NSWindowController?
     private var aboutWindowController: NSWindowController?
     private var updateWindowController: NSWindowController?
+    private var updateCheckTask: Task<Void, Never>?
 
     private func showOnboarding(forced: Bool = false) {
-        // For normal (non-forced) shows, respect the "never show again" flag.
         if !forced && UserDefaults.standard.bool(forKey: "Lumina.HasShownOnboarding") {
+            return
+        }
+        if let existing = onboardingWindowController?.window {
+            existing.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
             return
         }
 
         let hosting = NSHostingController(
-            rootView: OnboardingView { neverShowAgain in
-                // Only mark as "shown forever" if the user explicitly checked "Don't show this again".
-                // If they left it unchecked, we will show it again on next launch / next manager open.
-                if neverShowAgain {
-                    UserDefaults.standard.set(true, forKey: "Lumina.HasShownOnboarding")
-                }
+            rootView: OnboardingView {
+                UserDefaults.standard.set(true, forKey: "Lumina.HasShownOnboarding")
                 self.onboardingWindowController?.close()
                 self.onboardingWindowController = nil
             }
         )
 
-        let window = NSWindow(contentViewController: hosting)
-        window.title = forced ? "Welcome to Lumina" : "Welcome to Lumina"
-        window.styleMask = [.titled, .closable, .miniaturizable]
+        let size = DisplayScale.nsSize(width: 520, height: 560)
+        let window = NSWindow(
+            contentRect: NSRect(origin: .zero, size: size),
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "Welcome to Lumina Studio"
+        window.contentViewController = hosting
+        window.isReleasedWhenClosed = false
         window.center()
 
         let controller = NSWindowController(window: window)
@@ -753,14 +762,11 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
     
-    /// Called from WallpaperManagerWindowController when the manager opens.
-    /// Shows onboarding (if not permanently dismissed) in the context of using the manager.
+    /// Shows onboarding once when the manager opens for the first time.
     func maybeShowOnboardingForManager() {
-        if !UserDefaults.standard.bool(forKey: "Lumina.HasShownOnboarding") {
-            // Small delay so the manager window has time to appear first
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-                self.showOnboarding()
-            }
+        guard !UserDefaults.standard.bool(forKey: "Lumina.HasShownOnboarding") else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            self?.showOnboarding()
         }
     }
     
@@ -787,9 +793,17 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
             )
         )
 
-        let window = NSWindow(contentViewController: hosting)
+        let size = DisplayScale.nsSize(width: 540, height: 620)
+        let window = NSWindow(
+            contentRect: NSRect(origin: .zero, size: size),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
         window.title = "About Lumina Studio"
-        window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+        window.contentViewController = hosting
+        window.contentMinSize = size
+        window.isReleasedWhenClosed = false
         window.setFrameAutosaveName("Lumina.AboutStatus")
         window.center()
 
@@ -801,9 +815,11 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// Checks GitHub for a newer release. When `silent` is true, only prompts if an update exists.
     func checkForUpdates(silent: Bool = false) {
-        Task { [weak self] in
+        updateCheckTask?.cancel()
+        updateCheckTask = Task { [weak self] in
             guard let self else { return }
             let result = await UpdateChecker.check(currentVersion: currentVersion)
+            guard !Task.isCancelled else { return }
             await MainActor.run {
                 switch result {
                 case .upToDate:
@@ -858,9 +874,17 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
             )
         )
 
-        let window = NSWindow(contentViewController: hosting)
+        let size = DisplayScale.nsSize(width: 420, height: 380)
+        let window = NSWindow(
+            contentRect: NSRect(origin: .zero, size: size),
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
         window.title = "Update Available"
-        window.styleMask = [.titled, .closable]
+        window.contentViewController = hosting
+        window.contentMinSize = size
+        window.isReleasedWhenClosed = false
         window.center()
 
         let controller = NSWindowController(window: window)
@@ -903,6 +927,9 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// Opens About & Status once when the app version changes since the user last viewed it.
     func checkForNewVersionAndShowChangelogIfNeeded() {
+        // First-run onboarding already covers welcome content — don't stack another window.
+        guard UserDefaults.standard.bool(forKey: "Lumina.HasShownOnboarding") else { return }
+
         let lastShown = UserDefaults.standard.string(forKey: lastShownChangelogKey) ?? "0.0"
         guard UpdateChecker.compareVersions(currentVersion, lastShown) == .orderedDescending else { return }
 
@@ -949,6 +976,7 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // display (and frees its image cycling), so the two modes never run at once.
         assignment.slideshowItems = []
         assignment.lastError = nil   // fresh load; recordLoadFailure will re-set this if it fails
+        _ = FileAccess.registerUserSelectedFile(url)
         assignment.updateBookmark(from: url)
 
         // Re-apply every previously saved setting for this monitor (scaling, speed, mute, crop,
@@ -1219,15 +1247,22 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: - Status Item & Menu (enhanced for B: UX + C: debug)
 
-    /// The LS menu-bar icon, rendered once from the cursive monogram path.
-    /// Programmatic rendering avoids brittle bundle path lookups in the packaged .app.
-    private lazy var statusBarIcon: NSImage = LuminaMenuIcon.make()
+    private func makeStatusBarIcon() -> NSImage {
+        LuminaMenuIcon.make(
+            size: DisplayScale.menuBarIconSize,
+            lineWidth: DisplayScale.menuBarIconLineWidth
+        )
+    }
+
+    @objc private func refreshStatusBarIcon() {
+        statusItem?.button?.image = makeStatusBarIcon()
+    }
 
     private func setupStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
 
         if let button = statusItem.button {
-            button.image = statusBarIcon
+            button.image = makeStatusBarIcon()
             button.title = ""
         }
         
@@ -1248,7 +1283,7 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let button = statusItem.button
         let hasVideo = currentVideoURL != nil
 
-        button?.image = statusBarIcon   // cached — no disk I/O on policy changes
+        button?.image = makeStatusBarIcon()
         button?.title = ""  // Critical: prevent any residual title text from causing alignment shift
 
         // All dynamic state now lives in the tooltip (hover) and the top menu item ("Wallpaper: ...").

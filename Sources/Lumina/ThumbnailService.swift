@@ -69,9 +69,9 @@ actor ThumbnailService {
     }
 
     private func generateVideoThumbnail(url: URL, maxSize: CGSize, normalizedTime: Double? = nil) async -> NSImage? {
-        // Best-effort: start security-scoped access if this is a plain file URL.
-        // Callers (recentMedia etc.) should already provide a resolved URL, but this helps on early launch.
-        let didStartAccess = url.startAccessingSecurityScopedResource()
+        // Don't revoke app-level grants that MonitorAssignment holds for playback.
+        let alreadyOpen = MonitorAssignment.hasActiveScopedAccess(for: url)
+        let didStartAccess = alreadyOpen ? false : url.startAccessingSecurityScopedResource()
 
         defer {
             if didStartAccess {
@@ -111,9 +111,8 @@ actor ThumbnailService {
     }
 
     private func generateImageThumbnail(url: URL, maxSize: CGSize) -> NSImage? {
-        // Decode a downsampled thumbnail directly via ImageIO — never loads the full-resolution
-        // image into memory (a big win when the library has large photos / GIFs).
-        let didStartAccess = url.startAccessingSecurityScopedResource()
+        let alreadyOpen = MonitorAssignment.hasActiveScopedAccess(for: url)
+        let didStartAccess = alreadyOpen ? false : url.startAccessingSecurityScopedResource()
         defer { if didStartAccess { url.stopAccessingSecurityScopedResource() } }
 
         let maxPixel = Int((max(maxSize.width, maxSize.height) * 2).rounded())  // ~retina

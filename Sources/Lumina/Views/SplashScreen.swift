@@ -45,30 +45,30 @@ struct SplashScreenView: View {
 
             VStack(spacing: 18) {
                 CursiveLSView(
-                    lineWidth: 3.4,
+                    lineWidth: DisplayScale.points(3.4),
                     color: .white,
                     animate: !reduceMotion,
                     animationDuration: 2.2,
                     gradientColors: inkGradient,
-                    glowRadius: 7,
+                    glowRadius: DisplayScale.points(7),
                     onDrawingComplete: { revealWordmarkAndScheduleDismiss() }
                 )
-                .padding(.top, 10)
+                .padding(.top, DisplayScale.points(10))
 
                 Text("Lumina Studio")
-                    .font(.system(size: 24, weight: .semibold, design: .serif))
+                    .font(.system(size: DisplayScale.points(24), weight: .semibold, design: .serif))
                     .foregroundStyle(.white)
                     .tracking(0.6)
                     .opacity(wordmarkVisible ? 1 : 0)
                     .offset(y: wordmarkVisible ? 0 : 8)
             }
-            .padding(.horizontal, 44)
-            .padding(.vertical, 38)
+            .padding(.horizontal, DisplayScale.points(44))
+            .padding(.vertical, DisplayScale.points(38))
         }
-        .frame(width: 440, height: 320)
-        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .scaledFrame(width: 440, height: 320)
+        .clipShape(RoundedRectangle(cornerRadius: DisplayScale.points(22), style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
+            RoundedRectangle(cornerRadius: DisplayScale.points(22), style: .continuous)
                 .strokeBorder(
                     LinearGradient(
                         colors: [.white.opacity(0.22), .white.opacity(0.05)],
@@ -186,7 +186,7 @@ final class SplashWindowController {
     }
 
     private func show() {
-        let size = NSSize(width: 440, height: 320)
+        let size = DisplayScale.splashWindowSize
 
         // .nonactivatingPanel: the splash must never steal key focus — Lumina is a
         // menu-bar accessory app and the user may be mid-typing elsewhere at login.

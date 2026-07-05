@@ -46,6 +46,7 @@ struct WallpaperManagerView: View {
     @Binding var selectedMonitorID: String?
 
     @StateObject private var themeManager = ThemeManager.shared
+    @StateObject private var uiScale = UIScaleManager.shared
     // NOTE: AmbientAudioManager is deliberately NOT observed here. It publishes currentTime
     // 4×/sec during playback, which would invalidate the entire manager tree (library grid,
     // live preview, crop UI) on every tick. Only AudioFooterBar observes it.
@@ -85,7 +86,7 @@ struct WallpaperManagerView: View {
         // Adaptive: the view fills whatever size the user resizes the window to. We only set a
         // floor so the two-column layout never collapses (mirrors the window's contentMinSize).
         coreContent
-            .frame(minWidth: 960, minHeight: 720)
+            .scaledMinFrame(width: 1000, height: 740)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Color.luminaBase)
             .tint(themeManager.current.color)
@@ -105,43 +106,55 @@ struct WallpaperManagerView: View {
     // MARK: - Header Bar
 
     private var headerBar: some View {
-        HStack(spacing: 12) {
-            HStack(spacing: 8) {
-                Text("Lumina Studio")
-                    .font(.title3.bold())
+        HStack(spacing: DisplayScale.points(14)) {
+            HStack(spacing: DisplayScale.points(10)) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: uiScale.iconSize(.filter), weight: .semibold))
+                    .foregroundStyle(themeManager.current.color)
+                    .frame(width: DisplayScale.points(32), height: DisplayScale.points(32))
+                    .background(themeManager.current.color.opacity(0.12), in: RoundedRectangle(cornerRadius: DisplayScale.points(8), style: .continuous))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Lumina Studio")
+                        .font(.system(size: DisplayScale.points(17), weight: .bold))
+                    Text("Wallpaper Manager")
+                        .font(.system(size: DisplayScale.points(11)))
+                        .foregroundStyle(.secondary)
+                }
             }
-            Spacer()
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass").foregroundStyle(.tertiary).font(.caption)
+
+            Spacer(minLength: DisplayScale.points(12))
+
+            HStack(spacing: DisplayScale.points(8)) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: uiScale.iconSize(.card)))
+                    .foregroundStyle(.tertiary)
                 TextField("Search library…", text: $searchQuery)
-                    .textFieldStyle(.plain).font(.callout)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: DisplayScale.points(14)))
             }
-            .padding(.horizontal, 10).padding(.vertical, 6)
-            .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
-            .frame(width: 200)
+            .padding(.horizontal, DisplayScale.points(12))
+            .padding(.vertical, DisplayScale.points(8))
+            .background(Color.luminaCard, in: RoundedRectangle(cornerRadius: DisplayScale.points(10), style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: DisplayScale.points(10), style: .continuous)
+                    .strokeBorder(Color.luminaBorder, lineWidth: 1)
+            )
+            .frame(minWidth: DisplayScale.points(180), maxWidth: DisplayScale.points(280))
 
-            Button {
-                // Simple, on-demand alignment: restart every matching video/GIF wallpaper
-                // together so displays that drifted (or started at different times) line up.
+            LuminaToolbarButton(
+                title: "Sync",
+                icon: "arrow.triangle.2.circlepath",
+                help: "Restart matching video/GIF wallpapers in sync across displays"
+            ) {
                 store.restartDisplaysInSync()
-            } label: {
-                Label("Sync Displays", systemImage: "arrow.triangle.2.circlepath")
-                    .font(.caption)
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .help("Restart all matching video/GIF wallpapers together so they play in sync")
 
-            Button {
+            LuminaToolbarButton(title: "Settings", icon: "gearshape.fill") {
                 showSettings = true
-            } label: {
-                Image(systemName: "gearshape.fill").font(.callout)
             }
-            .buttonStyle(.borderless)
-            .help("Settings")
-            .accessibilityLabel("Settings")
         }
-        .padding(.horizontal, 20).padding(.vertical, 14)
+        .padding(.horizontal, LuminaLayout.contentPadding)
+        .padding(.vertical, DisplayScale.points(12))
         .background(.bar)
         .sheet(isPresented: $showSettings) {
             SettingsView(store: store, onClose: { showSettings = false })
@@ -167,50 +180,49 @@ struct WallpaperManagerView: View {
 
     private var libraryColumn: some View {
         VStack(spacing: 0) {
-            // Filter tabs — full-area hit targets with underline selection indicator
-            HStack(spacing: 0) {
-                ForEach(LibraryFilter.allCases) { filter in
-                    Button {
-                        withAnimation(.easeInOut(duration: 0.15)) { selectedFilter = filter }
-                    } label: {
-                        VStack(spacing: 3) {
-                            Image(systemName: filter.icon).font(.callout)
-                            Text(filter.label).font(.caption2)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 10)
-                        .contentShape(Rectangle())
-                        .foregroundStyle(selectedFilter == filter ? themeManager.current.color : .secondary)
-                        .background(
-                            selectedFilter == filter
-                                ? themeManager.current.color.opacity(0.08)
-                                : Color.clear
-                        )
-                        .overlay(alignment: .bottom) {
-                            if selectedFilter == filter {
-                                Rectangle()
-                                    .fill(themeManager.current.color)
-                                    .frame(height: 2)
+            VStack(alignment: .leading, spacing: DisplayScale.points(12)) {
+                LuminaSectionHeader(
+                    title: "Library",
+                    subtitle: "Tap a wallpaper to apply it to the selected display",
+                    trailing: "\(filteredMedia.count)"
+                )
+
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: DisplayScale.points(8)) {
+                        ForEach(LibraryFilter.allCases) { filter in
+                            LuminaFilterChip(
+                                label: filter.label,
+                                icon: filter.icon,
+                                isSelected: selectedFilter == filter,
+                                help: filter.helpText
+                            ) {
+                                withAnimation(.easeInOut(duration: 0.15)) { selectedFilter = filter }
                             }
                         }
                     }
-                    .buttonStyle(.plain)
-                    .help(filter.helpText)
-                    .accessibilityLabel(filter.label)
-                    .accessibilityHint(filter.helpText)
-                    .accessibilityAddTraits(selectedFilter == filter ? .isSelected : [])
+                    .padding(.horizontal, 1)
                 }
             }
-            .background(.quaternary.opacity(0.4))
+            .padding(.horizontal, LuminaLayout.contentPadding)
+            .padding(.top, DisplayScale.points(16))
+            .padding(.bottom, DisplayScale.points(12))
+            .background(Color.luminaBase)
 
             LuminaDivider()
 
-            // Grid
             ScrollView {
                 if filteredMedia.isEmpty {
                     emptyLibraryView
                 } else {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 155), spacing: 10)], spacing: 10) {
+                    LazyVGrid(
+                        columns: [
+                            GridItem(
+                                .adaptive(minimum: LuminaLayout.thumbnailWidth, maximum: LuminaLayout.thumbnailWidth + DisplayScale.points(24)),
+                                spacing: LuminaLayout.sectionSpacing
+                            )
+                        ],
+                        spacing: LuminaLayout.sectionSpacing
+                    ) {
                         ForEach(filteredMedia) { recent in
                             let isCurrent = isCurrentWallpaper(recent: recent)
                             WallpaperGridItem(
@@ -221,27 +233,32 @@ struct WallpaperManagerView: View {
                                 onFavorite: { favoritesManager.toggle(recent.id) },
                                 onRemove: { store.removeFromLibrary(id: recent.id) }
                             )
+                            .padding(DisplayScale.points(4))
                         }
                     }
-                    .padding(12)
+                    .padding(.horizontal, LuminaLayout.contentPadding)
+                    .padding(.vertical, DisplayScale.points(16))
                 }
             }
             .frame(maxHeight: .infinity)
 
-            // Bottom toolbar
-            HStack(spacing: 10) {
+            LuminaDivider()
+
+            VStack(spacing: DisplayScale.points(8)) {
                 Button { addMediaToLibrary() } label: {
-                    Label("Add to Library", systemImage: "plus.circle.fill").font(.caption)
+                    Label("Add to Library", systemImage: "plus.circle.fill")
+                        .font(.system(size: DisplayScale.points(14), weight: .semibold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, DisplayScale.points(10))
                 }
-                .buttonStyle(.borderless)
-                Spacer()
-                Text("\(filteredMedia.count) item\(filteredMedia.count == 1 ? "" : "s")")
-                    .font(.caption2).foregroundStyle(.tertiary)
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
             }
-            .padding(.horizontal, 14).padding(.vertical, 10)
+            .padding(.horizontal, LuminaLayout.contentPadding)
+            .padding(.vertical, DisplayScale.points(14))
             .background(.bar)
         }
-        .frame(width: 400)
+        .frame(width: LuminaLayout.libraryColumnWidth)
         .background(Color.luminaBase)
     }
 
@@ -249,45 +266,55 @@ struct WallpaperManagerView: View {
 
     private var configurationColumn: some View {
         VStack(spacing: 0) {
-            // Monitor header
-            HStack(spacing: 10) {
+            HStack(spacing: DisplayScale.points(12)) {
                 if let monitor = currentTargetMonitor {
-                    HStack(spacing: 8) {
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text("Configuring").font(.caption).foregroundStyle(.tertiary)
-                            Text(monitorLabel(for: monitor)).font(.subheadline.bold())
+                    HStack(spacing: DisplayScale.points(10)) {
+                        Image(systemName: "display")
+                            .font(.system(size: UIScaleManager.shared.iconSize(.filter), weight: .semibold))
+                            .foregroundStyle(themeManager.current.color)
+                            .frame(width: UIScaleManager.shared.touchTarget(), height: UIScaleManager.shared.touchTarget())
+                            .background(themeManager.current.color.opacity(0.1), in: RoundedRectangle(cornerRadius: DisplayScale.points(10), style: .continuous))
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Active Display")
+                                .font(.system(size: DisplayScale.points(11)))
+                                .foregroundStyle(.tertiary)
+                            Text(monitorLabel(for: monitor))
+                                .font(.system(size: DisplayScale.points(15), weight: .bold))
                         }
 
-                        // Prominent "pinned" status — best practice for surfacing
-                        // important persistence state at the top of the context.
                         if let assignment = store.assignment(for: monitor.id),
                            assignment.keepOnStartup {
                             HStack(spacing: 4) {
                                 Image(systemName: "pin.fill")
-                                    .font(.caption2.weight(.bold))
+                                    .font(.system(size: DisplayScale.points(11), weight: .bold))
                                 Text("Pinned")
-                                    .font(.caption2.weight(.semibold))
+                                    .font(.system(size: DisplayScale.points(11), weight: .semibold))
                             }
                             .foregroundStyle(.yellow)
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 2)
-                            .background(.yellow.opacity(0.15))
-                            .clipShape(Capsule())
-                            .help("This wallpaper will automatically restore when Lumina launches")
+                            .padding(.horizontal, DisplayScale.points(9))
+                            .padding(.vertical, DisplayScale.points(4))
+                            .background(.yellow.opacity(0.15), in: Capsule())
+                            .help("Restores automatically when Lumina launches")
                         }
                     }
                 } else {
-                    Text("No Display Selected").font(.subheadline).foregroundStyle(.secondary)
+                    Label("No Display Selected", systemImage: "display.trianglebadge.exclamationmark")
+                        .font(.system(size: DisplayScale.points(14), weight: .medium))
+                        .foregroundStyle(.secondary)
                 }
                 Spacer()
                 Button {
                     NotificationCenter.default.post(name: .togglePhysicalSetupWindow, object: nil)
                 } label: {
-                    Label("Switch Display", systemImage: "display.2").font(.caption)
+                    Label("Switch Display", systemImage: "display.2")
+                        .font(.system(size: DisplayScale.points(13), weight: .semibold))
                 }
-                .buttonStyle(.bordered).controlSize(.small)
+                .buttonStyle(.bordered)
+                .controlSize(.regular)
             }
-            .padding(.horizontal, 16).padding(.vertical, 10)
+            .padding(.horizontal, LuminaLayout.contentPadding)
+            .padding(.vertical, DisplayScale.points(14))
             .background(.bar)
 
             LuminaDivider()
@@ -299,13 +326,24 @@ struct WallpaperManagerView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 Spacer()
-                VStack(spacing: 14) {
-                    Image(systemName: "display.2").font(.system(size: 44)).foregroundStyle(.quaternary)
-                    Text("Choose a display to configure").font(.title3).foregroundStyle(.secondary)
+                VStack(spacing: DisplayScale.points(18)) {
+                    Image(systemName: "display.2")
+                        .font(.system(size: UIScaleManager.shared.iconSize(.hero)))
+                        .foregroundStyle(themeManager.current.color.opacity(0.35))
+                    Text("Choose a display")
+                        .font(.system(size: DisplayScale.points(20), weight: .semibold))
+                    Text("Pick which monitor you want to configure, then select a wallpaper from your library.")
+                        .font(.system(size: DisplayScale.points(13)))
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: DisplayScale.points(320))
                     Button("Choose Display…") {
                         NotificationCenter.default.post(name: .togglePhysicalSetupWindow, object: nil)
-                    }.buttonStyle(.borderedProminent)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
                 }
+                .padding(LuminaLayout.contentPadding)
                 .frame(maxWidth: .infinity)
                 Spacer()
             }
@@ -361,24 +399,35 @@ struct WallpaperManagerView: View {
         panel.allowedContentTypes = [.movie, .image, .gif]
         panel.canChooseFiles = true
         guard panel.runModal() == .OK, let url = panel.url else { return }
+        _ = FileAccess.registerUserSelectedFile(url)
         store.addMediaToLibrary(url: url)
     }
 
     // MARK: - Empty Library View
 
     @ViewBuilder private var emptyLibraryView: some View {
-        VStack(spacing: 14) {
-            Image(systemName: selectedFilter == .favorites ? "star" : "photo.badge.plus")
-                .font(.system(size: 40)).foregroundStyle(.quaternary)
+        VStack(spacing: DisplayScale.points(16)) {
+            Image(systemName: selectedFilter == .favorites ? "star.fill" : "photo.badge.plus.fill")
+                .font(.system(size: UIScaleManager.shared.iconSize(.hero)))
+                .foregroundStyle(themeManager.current.color.opacity(0.4))
             Text(selectedFilter == .favorites ? "No favorites yet" :
-                 searchQuery.isEmpty ? "Library is empty" : "No results for \"\(searchQuery)\"")
-                .font(.callout).foregroundStyle(.secondary)
+                 searchQuery.isEmpty ? "Your library is empty" : "No results for \"\(searchQuery)\"")
+                .font(.system(size: DisplayScale.points(15), weight: .semibold))
+            Text(selectedFilter == .favorites
+                 ? "Star wallpapers in the grid to find them quickly here."
+                 : "Add videos, GIFs, or images — then tap one to set it on the selected display.")
+                .font(.system(size: DisplayScale.points(12)))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: DisplayScale.points(260))
             if searchQuery.isEmpty && selectedFilter == .all {
-                Button("Add to Library") { addMediaToLibrary() }.buttonStyle(.borderedProminent)
+                Button("Add to Library") { addMediaToLibrary() }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
             }
         }
-        .frame(maxWidth: .infinity, minHeight: 200)
-        .padding(40)
+        .frame(maxWidth: .infinity, minHeight: DisplayScale.points(240))
+        .padding(LuminaLayout.contentPadding)
     }
 }
 
@@ -390,6 +439,7 @@ struct WallpaperManagerView: View {
 private struct AudioFooterBar: View {
     @StateObject private var themeManager = ThemeManager.shared
     @StateObject private var audioManager = AmbientAudioManager.shared
+    @StateObject private var uiScale = UIScaleManager.shared
     @State private var showQueue: Bool = false
 
     var body: some View {
@@ -402,45 +452,41 @@ private struct AudioFooterBar: View {
 
             // Now-playing bar — larger, roomier, adaptive (the progress track absorbs
             // any extra width as the window grows).
-            HStack(spacing: 16) {
+            HStack(spacing: DisplayScale.points(16)) {
                 nowPlayingArtwork
 
-                // Title + subtitle
                 VStack(alignment: .leading, spacing: 2) {
                     Text(nowPlayingTitle)
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(.system(size: DisplayScale.points(14), weight: .semibold))
                         .lineLimit(1).truncationMode(.tail)
                         .foregroundStyle(audioManager.trackURL != nil ? .primary : .secondary)
                     Text("Ambient Audio")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(.system(size: DisplayScale.points(11))).foregroundStyle(.secondary)
                 }
-                .frame(minWidth: 120, idealWidth: 170, maxWidth: 220, alignment: .leading)
+                .frame(minWidth: DisplayScale.points(120), idealWidth: DisplayScale.points(170), maxWidth: DisplayScale.points(220), alignment: .leading)
 
-                // Transport — bigger, evenly spaced controls
-                HStack(spacing: 16) {
-                    // Loop toggle — highlights when repeat is on.
+                HStack(spacing: DisplayScale.points(14)) {
                     transportIcon(
                         "repeat",
-                        size: 14,
                         active: audioManager.loops,
                         help: audioManager.loops ? "Looping on — track repeats" : "Looping off"
                     ) {
                         audioManager.setLoops(!audioManager.loops)
                     }
 
-                    transportIcon("backward.end.fill", size: 15, help: "Previous track") {
+                    transportIcon("backward.end.fill", help: "Previous track") {
                         audioManager.previousTrack()
                     }
                     .disabled(audioManager.library.count < 2)
 
-                    transportIcon("gobackward.10", size: 15, help: "Skip back 10 seconds") {
+                    transportIcon("gobackward.10", help: "Skip back 10 seconds") {
                         audioManager.seek(by: -10)
                     }
                     .disabled(audioManager.trackURL == nil)
 
                     Button { audioManager.toggle() } label: {
                         Image(systemName: audioManager.isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                            .font(.system(size: 34))
+                            .font(.system(size: DisplayScale.points(36)))
                             .foregroundStyle(audioManager.trackURL != nil ? themeManager.current.color : .secondary)
                     }
                     .buttonStyle(.plain)
@@ -448,14 +494,12 @@ private struct AudioFooterBar: View {
                     .accessibilityLabel(audioManager.isPlaying ? "Pause" : "Play")
                     .disabled(audioManager.trackURL == nil)
 
-                    transportIcon("goforward.10", size: 15, help: "Skip forward 10 seconds") {
+                    transportIcon("goforward.10", help: "Skip forward 10 seconds") {
                         audioManager.seek(by: 10)
                     }
                     .disabled(audioManager.trackURL == nil)
 
-                    // Skip to next track — always available when a track is loaded; with a single
-                    // track it restarts from the top so the control is never a dead end.
-                    transportIcon("forward.end.fill", size: 15, help: "Skip to next track") {
+                    transportIcon("forward.end.fill", help: "Skip to next track") {
                         if audioManager.library.count >= 2 {
                             audioManager.nextTrack()
                         } else {
@@ -507,27 +551,28 @@ private struct AudioFooterBar: View {
                 .help("Add audio tracks to your music library")
 
                 if audioManager.trackURL != nil {
-                    transportIcon("xmark.circle.fill", size: 16, help: "Stop and clear current track") {
+                    transportIcon("xmark.circle.fill", help: "Stop and clear current track") {
                         audioManager.clearTrack()
                     }
                 }
 
                 transportIcon(
                     "list.bullet.rectangle",
-                    size: 16,
                     active: showQueue,
                     help: showQueue ? "Hide queue" : "Show music queue"
                 ) {
                     withAnimation(.easeInOut(duration: 0.18)) { showQueue.toggle() }
                 }
             }
-            .padding(.horizontal, 20).padding(.vertical, 14)
+            .padding(.horizontal, LuminaLayout.contentPadding)
+            .padding(.vertical, DisplayScale.points(14))
         }
     }
 
     /// Small rounded album-art tile used in the now-playing bar.
     private var nowPlayingArtwork: some View {
-        RoundedRectangle(cornerRadius: 10, style: .continuous)
+        let side = DisplayScale.points(50)
+        return RoundedRectangle(cornerRadius: DisplayScale.points(10), style: .continuous)
             .fill(
                 LinearGradient(
                     colors: [themeManager.current.color.opacity(0.9),
@@ -535,10 +580,10 @@ private struct AudioFooterBar: View {
                     startPoint: .topLeading, endPoint: .bottomTrailing
                 )
             )
-            .frame(width: 46, height: 46)
+            .frame(width: side, height: side)
             .overlay(
                 Image(systemName: audioManager.isPlaying ? "waveform" : "music.note")
-                    .font(.system(size: 18, weight: .semibold))
+                    .font(.system(size: uiScale.iconSize(.filter), weight: .semibold))
                     .foregroundStyle(.white)
             )
             .opacity(audioManager.trackURL != nil ? 1 : 0.5)
@@ -553,16 +598,15 @@ private struct AudioFooterBar: View {
     /// A flat icon button for the now-playing bar with a consistent hit target.
     private func transportIcon(
         _ symbol: String,
-        size: CGFloat,
         active: Bool = false,
         help: String,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: size, weight: .medium))
+                .font(.system(size: uiScale.iconSize(.transport), weight: .medium))
                 .foregroundStyle(active ? themeManager.current.color : .secondary)
-                .frame(width: 26, height: 26)
+                .frame(width: uiScale.touchTarget(), height: uiScale.touchTarget())
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -671,12 +715,16 @@ struct WallpaperGridItem: View {
     @State private var isLoading = true
     @State private var loadFailed = false
     @State private var isHovered = false
+    @StateObject private var uiScale = UIScaleManager.shared
 
     var body: some View {
+        let thumbW = LuminaLayout.thumbnailWidth
+        let thumbH = LuminaLayout.thumbnailHeight
+
         ZStack(alignment: .bottomLeading) {
             // Thumbnail
             thumbnailContent
-                .frame(width: 155, height: 87)
+                .frame(width: thumbW, height: thumbH)
                 .clipShape(RoundedRectangle(cornerRadius: 8))
 
             // Type badge (bottom-leading)
@@ -687,12 +735,13 @@ struct WallpaperGridItem: View {
             if isHovered {
                 RoundedRectangle(cornerRadius: 8)
                     .fill(.black.opacity(0.45))
-                    .frame(width: 155, height: 87)
+                    .frame(width: thumbW, height: thumbH)
                     .overlay(
-                        HStack(spacing: 12) {
+                        HStack(spacing: DisplayScale.points(16)) {
                             Button { onApply() } label: {
                                 Image(systemName: "checkmark.circle.fill")
-                                    .font(.title2).foregroundStyle(.white)
+                                    .font(.system(size: uiScale.iconSize(.transport)))
+                                    .foregroundStyle(.white)
                             }
                             .buttonStyle(.plain)
                             .help("Set as Wallpaper")
@@ -700,7 +749,7 @@ struct WallpaperGridItem: View {
 
                             Button { onFavorite() } label: {
                                 Image(systemName: isFavorite ? "star.fill" : "star")
-                                    .font(.title3)
+                                    .font(.system(size: uiScale.iconSize(.filter)))
                                     .foregroundStyle(isFavorite ? Color.yellow : .white)
                             }
                             .buttonStyle(.plain)
@@ -715,7 +764,7 @@ struct WallpaperGridItem: View {
             if isSelected {
                 RoundedRectangle(cornerRadius: 8)
                     .strokeBorder(Color.accentColor, lineWidth: 3)
-                    .frame(width: 155, height: 87)
+                    .frame(width: thumbW, height: thumbH)
                     .overlay(alignment: .topTrailing) {
                         Image(systemName: "checkmark.circle.fill")
                             .font(.system(size: 15))
@@ -726,7 +775,7 @@ struct WallpaperGridItem: View {
             } else {
                 RoundedRectangle(cornerRadius: 8)
                     .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
-                    .frame(width: 155, height: 87)
+                    .frame(width: thumbW, height: thumbH)
             }
 
             // Favorite star (always visible if favorited and not hovered)
@@ -735,7 +784,7 @@ struct WallpaperGridItem: View {
                     .font(.system(size: 11))
                     .foregroundStyle(Color.yellow)
                     .padding(5)
-                    .frame(width: 155, height: 87, alignment: .topTrailing)
+                    .frame(width: thumbW, height: thumbH, alignment: .topTrailing)
             }
         }
         .onHover { isHovered = $0 }
@@ -751,7 +800,7 @@ struct WallpaperGridItem: View {
                 .truncationMode(.middle)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 3)
-                .frame(width: 155, alignment: .leading)
+                .frame(width: thumbW, alignment: .leading)
                 .offset(y: 18)
         }
         .padding(.bottom, 18)
@@ -776,19 +825,24 @@ struct WallpaperGridItem: View {
     }
 
     @ViewBuilder private var thumbnailContent: some View {
-        if let thumb = thumbnail {
-            Image(nsImage: thumb).resizable().aspectRatio(16/9, contentMode: .fill)
-        } else if isLoading {
-            Color.gray.opacity(0.15).overlay(ProgressView().scaleEffect(0.6))
-        } else {
-            Color.gray.opacity(0.12).overlay(
-                VStack(spacing: 4) {
-                    Image(systemName: recent.mediaType == .video ? "video.slash" : "photo")
-                        .font(.title3).foregroundStyle(.secondary)
-                    Text("No preview").font(.caption2).foregroundStyle(.tertiary)
+        RoundedRectangle(cornerRadius: 8, style: .continuous)
+            .fill(Color.primary.opacity(0.06))
+            .overlay {
+                if let thumb = thumbnail {
+                    Image(nsImage: thumb)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .padding(6)
+                } else if isLoading {
+                    ProgressView().scaleEffect(0.6)
+                } else {
+                    VStack(spacing: 4) {
+                        Image(systemName: recent.mediaType == .video ? "video.slash" : "photo")
+                            .font(.title3).foregroundStyle(.secondary)
+                        Text("No preview").font(.caption2).foregroundStyle(.tertiary)
+                    }
                 }
-            )
-        }
+            }
     }
 
     @ViewBuilder private var typeBadge: some View {
