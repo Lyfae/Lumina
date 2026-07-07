@@ -25,3 +25,9 @@ Package.resolved
 # Local test media or user data (never commit personal wallpapers)
 # UserMedia/
 # Thumbnails/  (if ever cached locally outside build)
+
+# Temporary assets and archives (keep bundled Resources/ icons tracked)
+*.zip
+/dist/**/*.mov
+/dist/**/*.mp4
+/UserMedia/

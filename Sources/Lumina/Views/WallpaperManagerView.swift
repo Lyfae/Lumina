@@ -108,11 +108,7 @@ struct WallpaperManagerView: View {
     private var headerBar: some View {
         HStack(spacing: DisplayScale.points(14)) {
             HStack(spacing: DisplayScale.points(10)) {
-                Image(systemName: "sparkles")
-                    .font(.system(size: uiScale.iconSize(.filter), weight: .semibold))
-                    .foregroundStyle(themeManager.current.color)
-                    .frame(width: DisplayScale.points(32), height: DisplayScale.points(32))
-                    .background(themeManager.current.color.opacity(0.12), in: RoundedRectangle(cornerRadius: DisplayScale.points(8), style: .continuous))
+                LuminaBrandMark(side: DisplayScale.points(36))
                 VStack(alignment: .leading, spacing: 1) {
                     Text("Lumina Studio")
                         .font(.system(size: DisplayScale.points(17), weight: .bold))
@@ -393,13 +389,10 @@ struct WallpaperManagerView: View {
     }
 
     private func addMediaToLibrary() {
-        let panel = NSOpenPanel()
-        panel.title = "Add wallpaper to library"
-        panel.message = "This adds the file to your collection on the left so you can easily re-use it on any display. It will not change what is currently playing."
-        panel.allowedContentTypes = [.movie, .image, .gif]
-        panel.canChooseFiles = true
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        _ = FileAccess.registerUserSelectedFile(url)
+        guard let url = MediaAccessPolicy.runWallpaperPicker(
+            title: "Add wallpaper to library",
+            message: "This adds the file to your collection on the left so you can re-use it on any display. It will not change what is currently playing."
+        ).first else { return }
         store.addMediaToLibrary(url: url)
     }
 

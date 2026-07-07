@@ -93,14 +93,11 @@ final class PhysicalSetupWindowController: NSWindowController {
     
     private func selectWallpaperForMonitor(monitorID: String) {
         // Open a file picker for this specific monitor
-        let panel = NSOpenPanel()
-        panel.title = "Choose wallpaper for this display"
-        panel.allowedContentTypes = [.movie, .image, .gif]
-        panel.canChooseFiles = true
-        
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        _ = FileAccess.registerUserSelectedFile(url)
-        
+        guard let url = MediaAccessPolicy.runWallpaperPicker(
+            title: "Choose wallpaper for this display",
+            message: "Select a video, GIF, or image for this monitor."
+        ).first else { return }
+
         // Assign via the store
         store.chooseVideoForMonitorID(monitorID: monitorID, url: url)
         

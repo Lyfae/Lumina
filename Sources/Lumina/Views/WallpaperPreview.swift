@@ -120,7 +120,8 @@ struct WallpaperPreview: View {
             // Scrubber moved — regenerate the frame thumbnail at the new time.
             guard !(isLivePlayback && assignment?.mediaType == .video) else { return }
             thumbnail = nil
-            loadThumbnailIfNeeded()
+            isLoading = false
+            loadThumbnailIfNeeded(force: true)
         }
     }
 
@@ -309,10 +310,11 @@ struct WallpaperPreview: View {
         playerLooper = nil
     }
 
-    private func loadThumbnailIfNeeded() {
-        guard let assign = assignment,
-              thumbnail == nil,
-              !isLoading else { return }
+    private func loadThumbnailIfNeeded(force: Bool = false) {
+        guard let assign = assignment else { return }
+        if !force {
+            guard thumbnail == nil, !isLoading else { return }
+        }
 
         isLoading = true
 

@@ -143,6 +143,11 @@ public final class AVVideoRenderer: @unchecked Sendable {
     private var grayscaleEnabled: Bool = false
     private var userVolume: Double = 0.0
 
+    // MARK: - Video start / frozen frame
+    private var holdStaticFrame: Bool = false
+    private var startNormalizedTime: Double?
+    private var videoFrameReadyObserver: NSKeyValueObservation?
+
     /// Creates a renderer ready to load a video.
     public init() {}
 
@@ -394,6 +399,7 @@ public final class AVVideoRenderer: @unchecked Sendable {
             return
         }
         guard let player else { return }
+        if holdStaticFrame { return }
         if case .paused = currentPolicy {
             return // Respect policy
         }
@@ -512,6 +518,8 @@ public final class AVVideoRenderer: @unchecked Sendable {
         removeReverseBoundaryObserver()
         itemStatusObserver = nil
         loadStatusObserver = nil
+        videoFrameReadyObserver?.invalidate()
+        videoFrameReadyObserver = nil
         if let obs = endTimeObserver {
             NotificationCenter.default.removeObserver(obs)
             endTimeObserver = nil
@@ -791,6 +799,78 @@ public final class AVVideoRenderer: @unchecked Sendable {
         currentHue = 0.0
         grayscaleEnabled = false
         userVolume = 0.0
+        holdStaticFrame = false
+        startNormalizedTime = nil
+    }
+
+    // MARK: - Video frame / start time
+
+    /// Seeks to a normalized time (0…1). When `useStatic` is true the frame is frozen;
+    /// otherwise playback resumes from that point (respecting loop mode and power policy).
+    public func applyVideoFrame(normalizedTime: Double?, useStatic: Bool) {
+        holdStaticFrame = useStatic
+        startNormalizedTime = normalizedTime
+        applyVideoFrameIfReady()
+    }
+
+    private func applyVideoFrameIfReady() {
+        guard mediaKind == .video, let player, let item = player.currentItem else { return }
+
+        guard item.status == .readyToPlay else {
+            videoFrameReadyObserver?.invalidate()
+            videoFrameReadyObserver = item.observe(\.status, options: [.new]) { [weak self] item, _ in
+                guard item.status == .readyToPlay else { return }
+                DispatchQueue.main.async { self?.applyVideoFrameIfReady() }
+            }
+            return
+        }
+        videoFrameReadyObserver?.invalidate()
+        videoFrameReadyObserver = nil
+
+        let duration = item.duration.seconds
+        guard duration.isFinite, duration > 0 else { return }
+
+        let seconds: TimeInterval
+        if let t = startNormalizedTime {
+            seconds = duration * max(0, min(1, t))
+        } else {
+            seconds = 0
+        }
+
+        let cmTime = CMTime(seconds: seconds, preferredTimescale: 600)
+        player.seek(to: cmTime, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] finished in
+            guard let self, finished else { return }
+            if self.holdStaticFrame {
+                self.disableLooperForStaticFrame()
+                player.pause()
+                player.rate = 0
+            } else {
+                self.ensureLooperIfNeeded(for: item, player: player)
+                if case .paused = self.currentPolicy { return }
+                player.play()
+                if let rate = self.effectiveRateForCurrentPolicy() {
+                    player.rate = rate
+                }
+            }
+        }
+    }
+
+    private func disableLooperForStaticFrame() {
+        looper?.disableLooping()
+        looper = nil
+        if let observer = loopBoundaryObserver {
+            player?.removeTimeObserver(observer)
+            loopBoundaryObserver = nil
+        }
+    }
+
+    private func ensureLooperIfNeeded(for item: AVPlayerItem, player: AVQueuePlayer) {
+        guard loopMode == .loop else { return }
+        guard looper == nil else { return }
+        looper = AVPlayerLooper(player: player, templateItem: item)
+        if loopFadeEnabled {
+            registerLoopBoundaryObserver()
+        }
     }
 
     // MARK: - MediaRenderer Protocol
@@ -816,6 +896,9 @@ public final class AVVideoRenderer: @unchecked Sendable {
         setOpacity(assignment.opacity)
         setVolume(assignment.audioVolume)
         setColorCorrection(saturation: assignment.saturation, hue: assignment.hue, grayscale: assignment.grayscale)
+        if assignment.videoFrameTime != nil {
+            applyVideoFrame(normalizedTime: assignment.videoFrameTime, useStatic: assignment.useStaticVideoFrame)
+        }
     }
 
     public func load(url: URL, autoPlay: Bool = true) {

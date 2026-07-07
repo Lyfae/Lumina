@@ -14,6 +14,7 @@ struct SettingsView: View {
     @StateObject private var appearanceManager = AppearanceManager.shared
     @StateObject private var audioManager = AmbientAudioManager.shared
     @StateObject private var uiScale = UIScaleManager.shared
+    @StateObject private var mediaAccess = MediaAccessSettings.shared
 
     // Launch-at-login mirrors the system service status.
     @State private var launchAtLogin: Bool = false
@@ -38,6 +39,7 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 20) {
                     appearanceSection
                     interfaceSection
+                    privacySection
                     generalSection
                     batterySection
                     aboutSection
@@ -46,7 +48,7 @@ struct SettingsView: View {
             }
             .frame(maxHeight: .infinity)
         }
-        .scaledFrame(width: 460, height: 560)
+        .scaledFrame(width: 460, height: 620)
         .background(Color.luminaBase)
         .tint(themeManager.current.color)
         .alert("Couldn’t change Launch at Login",
@@ -170,6 +172,22 @@ struct SettingsView: View {
 
     private var uiScaleBinding: Binding<UIScaleManager.Preset> {
         Binding(get: { uiScale.preset }, set: { uiScale.set($0) })
+    }
+
+    // MARK: - Privacy
+
+    private var privacySection: some View {
+        SettingsCard(icon: "hand.raised.fill", title: "Privacy") {
+            toggleRow(
+                title: "Allow Documents & Downloads",
+                subtitle: "When off, Lumina only uses files from Pictures and Movies (Photos & video library). Turn on to also pick wallpapers from Documents or Downloads.",
+                isOn: $mediaAccess.allowDocumentsAndDownloads
+            )
+
+            Text(MediaAccessPolicy.restrictionHint())
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
     }
 
     // MARK: - General

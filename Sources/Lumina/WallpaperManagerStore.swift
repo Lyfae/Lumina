@@ -112,16 +112,12 @@ final class WallpaperManagerStore: ObservableObject {
     
     func chooseVideo(for monitor: MonitorInfo) {
         guard let index = monitors.firstIndex(where: { $0.id == monitor.id }) else { return }
-        
-        let panel = NSOpenPanel()
-        panel.title = "Choose wallpaper for \(monitor.name)"
-        panel.message = "This will change the wallpaper on the currently selected display."
-        panel.allowedContentTypes = [.movie, .image, .gif] // .image covers png/jpg, .gif for animated
-        panel.canChooseFiles = true
-        
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        _ = FileAccess.registerUserSelectedFile(url)
-        
+
+        guard let url = MediaAccessPolicy.runWallpaperPicker(
+            title: "Choose wallpaper for \(monitor.name)",
+            message: "This will change the wallpaper on the currently selected display."
+        ).first else { return }
+
         // The app delegate path is the single source of truth for assignment creation,
         // bookmark handling, persistence (when keepOnStartup is set), and renderer loading.
         appDelegate?.assignVideoToMonitor(monitorID: monitor.id, url: url)
@@ -182,7 +178,7 @@ final class WallpaperManagerStore: ObservableObject {
             appDelegate?.assignmentStore.forceSaveAssignments()
         }
         
-        print("Keep on startup for \(monitor.name) set to \(enabled)")
+        LuminaLog.wallpaper.info("Keep on startup for \(monitor.name) set to \(enabled)")
     }
     
     /// Helper used by the detail panel to read the current full assignment
@@ -214,7 +210,7 @@ final class WallpaperManagerStore: ObservableObject {
             monitors[index].assignedVideoName = url.lastPathComponent
         }
         
-        print("Applied recent media \(url.lastPathComponent) to \(monitorID)")
+        LuminaLog.wallpaper.info("Applied recent media \(url.lastPathComponent) to \(monitorID)")
     }
     
     /// Removes a media entry from the library grid by its stable path-based ID.
@@ -243,9 +239,13 @@ final class WallpaperManagerStore: ObservableObject {
         refreshDisplays()
     }
 
-    /// Adds a media file to the local library so it appears in the left "Wallpapers" grid.
-    /// This does **not** assign it to any display — it is purely for the collection/library.
-    func addMediaToLibrary(url: URL) {
+    /// Adds a media file to the local library. Validates folder access unless skipped (e.g. compressed output).
+    func addMediaToLibrary(url: URL, enforceAccessPolicy: Bool = true) {
+        if enforceAccessPolicy {
+            guard MediaAccessPolicy.accept(url) else { return }
+        } else {
+            _ = FileAccess.registerUserSelectedFile(url)
+        }
         // Deduplicate by file path — re-importing the same file used to add another
         // library-import entry every time, growing the persisted library without bound.
         if let central = appDelegate?.assignmentStore {
@@ -254,16 +254,14 @@ final class WallpaperManagerStore: ObservableObject {
                     && assignment.filePath.map { ($0 as NSString).expandingTildeInPath } == url.path
             }
             if alreadyInLibrary {
-                print("Media already in library: \(url.lastPathComponent)")
+                LuminaLog.wallpaper.debug("Media already in library: \(url.lastPathComponent)")
                 return
             }
         }
 
         // We create a minimal record in the central store so it shows up in recentMedia.
         let tempMonitorID = "library-import-\(UUID().uuidString)"
-        
-        _ = FileAccess.registerUserSelectedFile(url)
-        
+
         var assignment = MonitorAssignment(monitorIdentifier: tempMonitorID)
         assignment.filePath = url.path
         assignment.keepOnStartup = false
@@ -279,7 +277,7 @@ final class WallpaperManagerStore: ObservableObject {
         rebuildRecentMedia()
         refreshDisplays()
         
-        print("Imported media to library: \(url.lastPathComponent)")
+        LuminaLog.wallpaper.info("Imported media to library: \(url.lastPathComponent)")
     }
 
     // MARK: - Live Settings (scaling, speed) — wired to central store + engine
@@ -301,7 +299,7 @@ final class WallpaperManagerStore: ObservableObject {
         // Tell the engine to apply the change live on the desktop wallpaper
         appDelegate?.applyScalingToMonitor(monitorID: monitor.id, scaling: scaling)
 
-        print("Scaling for \(monitor.name) set to \(scaling)")
+        LuminaLog.wallpaper.info("Scaling for \(monitor.name) set to \(scaling)")
     }
 
     func setPlaybackSpeed(for monitor: MonitorInfo, speed: Double) {
@@ -321,7 +319,7 @@ final class WallpaperManagerStore: ObservableObject {
         // Live apply to the running renderer
         appDelegate?.applyPlaybackSpeedToMonitor(monitorID: monitor.id, speed: speed)
 
-        print("Playback speed for \(monitor.name) set to \(speed)x")
+        LuminaLog.wallpaper.info("Playback speed for \(monitor.name) set to \(speed)x")
     }
 
     func setLoopMode(for monitor: MonitorInfo, mode: MonitorAssignment.LoopMode) {
@@ -339,7 +337,7 @@ final class WallpaperManagerStore: ObservableObject {
         // Live apply to the running renderer (will reconfigure looping strategy)
         appDelegate?.applyLoopModeToMonitor(monitorID: monitor.id, mode: mode)
 
-        print("Loop mode for \(monitor.name) set to \(mode)")
+        LuminaLog.wallpaper.info("Loop mode for \(monitor.name) set to \(mode)")
     }
 
     func setLoopFade(for monitor: MonitorInfo, enabled: Bool, duration: Double,
@@ -502,7 +500,7 @@ final class WallpaperManagerStore: ObservableObject {
         // Live apply to desktop wallpaper
         appDelegate?.applyCropRectToMonitor(monitorID: monitor.id, cropRect: cropRect)
 
-        print("Crop rect updated for \(monitor.name)")
+        LuminaLog.wallpaper.info("Crop rect updated for \(monitor.name)")
     }
 
     func setVideoFrameTime(for monitor: MonitorInfo, time: Double?, useStatic: Bool = false) {
@@ -519,9 +517,13 @@ final class WallpaperManagerStore: ObservableObject {
             central.updateAssignment(newAssignment)
         }
 
-        // Live seek on desktop if possible
-        // appDelegate?.seekWallpaper(for: monitor.id, to: time ?? 0)  // TODO: wire to actual renderer seek
-        print("Video frame time updated for \(monitor.name): \(time ?? 0) (static: \(useStatic))")
+        // Live apply to desktop wallpaper immediately.
+        appDelegate?.applyVideoFrameToMonitor(
+            monitorID: monitor.id,
+            normalizedTime: time,
+            useStatic: useStatic
+        )
+        LuminaLog.wallpaper.info("Video frame updated for \(monitor.name): \(time ?? 0) (static: \(useStatic))")
     }
     
     // MARK: - Persistence Preference (delegated to central AssignmentStore)

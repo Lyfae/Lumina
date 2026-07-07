@@ -11,7 +11,7 @@
 #   3. Signs it (skipped if no Developer ID is set)
 #   4. Creates a drag-to-install DMG with hdiutil
 #
-# Requirements: macOS 13+, Xcode CLT, Swift 6+
+# Requirements: macOS 15+, Xcode CLT, Swift 6+
 #   Optional: codesign (Developer ID cert), notarytool (notarization)
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
@@ -114,7 +114,7 @@ cat > "$APP_BUNDLE/Contents/Info.plist" <<PLIST
     <key>CFBundleIconFile</key>        <string>AppIcon</string>
     <key>CFBundlePackageType</key>     <string>APPL</string>
     <key>CFBundleSignature</key>       <string>????</string>
-    <key>LSMinimumSystemVersion</key>  <string>13.0</string>
+    <key>LSMinimumSystemVersion</key>  <string>15.0</string>
     <key>NSHighResolutionCapable</key> <true/>
     <key>LSUIElement</key>             <true/>
     <key>NSHumanReadableCopyright</key><string>Copyright © 2026 Lumina Contributors. MIT License.</string>

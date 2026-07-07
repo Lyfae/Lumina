@@ -376,6 +376,10 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
                              duration: assignment.loopFadeDuration,
                              easing: assignment.loopFadeEasing)
         renderer.setLoopMode(assignment.loopMode)
+        if assignment.videoFrameTime != nil {
+            renderer.applyVideoFrame(normalizedTime: assignment.videoFrameTime,
+                                     useStatic: assignment.useStaticVideoFrame)
+        }
     }
 
     // MARK: - Display Reconfiguration
@@ -397,7 +401,7 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return
         }
 
-        print("[Lumina] Display configuration changed: \(screenDisplayIDs) → \(newIDs)")
+        LuminaLog.app.info("[Lumina] Display configuration changed: \(screenDisplayIDs) → \(newIDs)")
 
         // Index existing windows/renderers by their display ID for reuse.
         var freeWindows: [CGDirectDisplayID: DesktopWallpaperWindow] = [:]
@@ -688,16 +692,10 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: - Video Loading (Prototype)
 
     @objc private func showLoadVideoPanel() {
-        let panel = NSOpenPanel()
-        panel.title = "Choose wallpaper media"
-        panel.message = "Best results with H.264 / HEVC (H.265) videos at 24-30 fps. Also supports GIFs and static images."
-        panel.allowedContentTypes = [.movie, .image, .gif]
-        panel.canChooseFiles = true
-        panel.canChooseDirectories = false
-        panel.allowsMultipleSelection = false
-
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        _ = FileAccess.registerUserSelectedFile(url)
+        guard let url = MediaAccessPolicy.runWallpaperPicker(
+            title: "Choose wallpaper media",
+            message: "Best results with H.264 / HEVC (H.265) videos at 24–30 fps. Also supports GIFs and static images."
+        ).first else { return }
 
         loadVideo(url: url)
     }
@@ -941,8 +939,9 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: - Per-Monitor Assignment (Phase 1)
     func assignVideoToMonitor(monitorID: String, url: URL) {
+        guard MediaAccessPolicy.accept(url) else { return }
         guard let index = monitorIndex(for: monitorID) else {
-            print("Could not find renderer for monitor \(monitorID)")
+            LuminaLog.wallpaper.error("Could not find renderer for monitor \(monitorID)")
             return
         }
 
@@ -986,7 +985,7 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         assignmentStore.updateAssignment(assignment)
 
-        print("Assigned \(assignment.mediaType) to monitor \(monitorID): \(url.lastPathComponent)")
+        LuminaLog.wallpaper.info("Assigned \(assignment.mediaType) to monitor \(monitorID): \(url.lastPathComponent)")
     }
 
     // Backward compatible version (used by older call sites during transition)
@@ -1045,7 +1044,7 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         for candidate in lowPowerCandidates {
             if fm.fileExists(atPath: candidate.path) {
-                print("[Lumina] Auto-switched to low-power variant: \(candidate.lastPathComponent)")
+                LuminaLog.power.info("Auto-switched to low-power variant: \(candidate.lastPathComponent)")
                 return candidate
             }
         }
@@ -1074,7 +1073,7 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Applies a new scaling mode live to the renderer for this monitor and updates the assignment.
     func applyScalingToMonitor(monitorID: String, scaling: VideoScaling) {
         guard let index = monitorIndex(for: monitorID) else {
-            print("Could not find renderer for monitor \(monitorID) when applying scaling")
+            LuminaLog.wallpaper.error("Could not find renderer for monitor \(monitorID) when applying scaling")
             return
         }
 
@@ -1096,7 +1095,7 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Applies a new playback speed live to the renderer for this monitor.
     func applyPlaybackSpeedToMonitor(monitorID: String, speed: Double) {
         guard let index = monitorIndex(for: monitorID) else {
-            print("Could not find renderer for monitor \(monitorID) when applying speed")
+            LuminaLog.wallpaper.error("Could not find renderer for monitor \(monitorID) when applying speed")
             return
         }
 
@@ -1125,7 +1124,7 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Reconfigures the looping strategy (loop / once / bounce) on the running renderer.
     func applyLoopModeToMonitor(monitorID: String, mode: MonitorAssignment.LoopMode) {
         guard let index = monitorIndex(for: monitorID), index < renderers.count else {
-            print("Could not find renderer for monitor \(monitorID) when applying loop mode")
+            LuminaLog.wallpaper.error("Could not find renderer for monitor \(monitorID) when applying loop mode")
             return
         }
         renderers[index].setLoopMode(mode)
@@ -1215,7 +1214,7 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Applies a live crop rectangle to the renderer for this monitor.
     func applyCropRectToMonitor(monitorID: String, cropRect: CGRect) {
         guard let index = monitorIndex(for: monitorID) else {
-            print("Could not find renderer for monitor \(monitorID) when applying crop")
+            LuminaLog.wallpaper.error("Could not find renderer for monitor \(monitorID) when applying crop")
             return
         }
         renderers[index].applyCropRect(cropRect)
@@ -1224,6 +1223,16 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
             assignment.cropRect = cropRect
             assignmentStore.updateAssignment(assignment)
         }
+    }
+
+    /// Seeks the live wallpaper to a normalized time and optionally freezes it as a still.
+    func applyVideoFrameToMonitor(monitorID: String, normalizedTime: Double?, useStatic: Bool) {
+        guard let index = monitorIndex(for: monitorID) else {
+            LuminaLog.wallpaper.error("Could not find renderer for monitor \(monitorID) when applying video frame")
+            return
+        }
+        renderers[index].applyVideoFrame(normalizedTime: normalizedTime, useStatic: useStatic)
+        LuminaLog.wallpaper.info("Video frame applied to \(monitorID): t=\(normalizedTime ?? -1) static=\(useStatic)")
     }
 
     private func loadVideo(url: URL) {
@@ -1332,11 +1341,11 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func reloadLastVideo() {
         guard let url = WallpaperPersistence.restoreLastVideo() else {
-            print("No saved wallpaper to reload.")
+            LuminaLog.wallpaper.debug("No saved wallpaper to reload.")
             return
         }
         currentVideoURL = url
-        print("Reloading saved wallpaper: \(url.path)")
+        LuminaLog.wallpaper.info("Reloading saved wallpaper: \(url.path)")
         for renderer in renderers {
             renderer.load(url: url, autoPlay: true)
         }
@@ -1347,7 +1356,7 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func clearSavedWallpaper() {
         WallpaperPersistence.clearLastVideo()
-        print("Cleared saved wallpaper. It will no longer auto-load on next launch.")
+        LuminaLog.wallpaper.info("Cleared saved wallpaper. It will no longer auto-load on next launch.")
         // Optionally pause current playback
         for renderer in renderers {
             renderer.pause()
@@ -1367,7 +1376,7 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         updateCurrentWallpaperDisplay()
         updateStatusItem(for: powerManager.currentPolicy)
         statusItem.button?.toolTip = "Lumina – ready (no wallpaper)"
-        print("Current wallpaper cleared from playback (persisted bookmark preserved). Use Reload Last Video to restore.")
+        LuminaLog.wallpaper.info("Current wallpaper cleared from playback (persisted bookmark preserved). Use Reload Last Video to restore.")
     }
 
     @objc private func quit() {
@@ -1379,29 +1388,29 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: - About / Status + Debug
 
     @objc private func printDebugStatus() {
-        print("═══════════════════════════════════════")
-        print("LUMINA DEBUG STATUS @ \(Date())")
-        print("Video loaded: \(currentVideoURL?.path ?? "None")")
+        LuminaLog.app.debug("═══════════════════════════════════════")
+        LuminaLog.app.debug("LUMINA DEBUG STATUS @ \(Date())")
+        LuminaLog.app.debug("Video loaded: \(currentVideoURL?.path ?? "None")")
         if let pm = powerManager {
-            print("Policy: \(pm.currentPolicy)")
-            print("  pauseOnLPM: \(pm.pauseOnLowPowerMode)")
-            print("  pauseOnHighThermal: \(pm.pauseOnHighThermal)")
-            print("  throttleOnMediumThermal: \(pm.throttleOnMediumThermal)")
-            print("  respectFullscreen: \(pm.respectFullscreenApps)")
+            LuminaLog.app.debug("Policy: \(pm.currentPolicy)")
+            LuminaLog.app.debug("  pauseOnLPM: \(pm.pauseOnLowPowerMode)")
+            LuminaLog.app.debug("  pauseOnHighThermal: \(pm.pauseOnHighThermal)")
+            LuminaLog.app.debug("  throttleOnMediumThermal: \(pm.throttleOnMediumThermal)")
+            LuminaLog.app.debug("  respectFullscreen: \(pm.respectFullscreenApps)")
         }
         let screens = NSScreen.screens
-        print("Displays: \(screens.count) | Windows: \(wallpaperWindows.count) | Renderers: \(renderers.count)")
-        print("Occluded display IDs (paused): \(occludedDisplayIDs.sorted())")
-        print("Respect fullscreen apps: \(powerManager?.respectFullscreenApps ?? true)")
+        LuminaLog.app.debug("Displays: \(screens.count) | Windows: \(wallpaperWindows.count) | Renderers: \(renderers.count)")
+        LuminaLog.app.debug("Occluded display IDs (paused): \(occludedDisplayIDs.sorted())")
+        LuminaLog.app.debug("Respect fullscreen apps: \(powerManager?.respectFullscreenApps ?? true)")
         for (i, r) in renderers.enumerated() {
             let displayID = i < screenDisplayIDs.count ? screenDisplayIDs[i] : 0
             let name = i < screens.count ? screens[i].localizedName : "?"
             let occluded = occludedDisplayIDs.contains(displayID) ? "OCCLUDED→paused" : "visible"
             let visible = i < wallpaperWindows.count ? wallpaperWindows[i].occlusionState.contains(.visible) : false
-            print("  [\(i)] \(name) (id \(displayID)) [\(occluded), window.visible=\(visible)]")
-            print("        → \(r.statusSummary)")
+            LuminaLog.app.debug("  [\(i)] \(name) (id \(displayID)) [\(occluded), window.visible=\(visible)]")
+            LuminaLog.app.debug("        → \(r.statusSummary)")
         }
-        print("═══════════════════════════════════════")
+        LuminaLog.app.debug("═══════════════════════════════════════")
     }
 
     private func openTestingDocInFinder() {
@@ -1414,7 +1423,7 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
             // Open the project folder
             let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             NSWorkspace.shared.open(root)
-            print("Note: docs/PROTOTYPE_TESTING.md may need to be created/visible after first build.")
+            LuminaLog.app.debug("Note: docs/PROTOTYPE_TESTING.md may need to be created/visible after first build.")
         }
     }
 

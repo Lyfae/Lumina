@@ -11,6 +11,47 @@ enum LuminaLayout {
     static var sectionSpacing: CGFloat { DisplayScale.points(16) }
 }
 
+// MARK: - Brand mark (splash / menu bar LS monogram)
+
+/// Compact app icon tile — aurora background + gradient cursive LS (same artwork as splash & menu bar).
+struct LuminaBrandMark: View {
+    var side: CGFloat = 36
+
+    private let inkGradient: [Color] = [
+        Color(red: 0.62, green: 0.87, blue: 1.0),
+        Color(red: 0.72, green: 0.62, blue: 1.0),
+        Color(red: 1.0, green: 0.78, blue: 0.55)
+    ]
+
+    var body: some View {
+        let markSize = CGSize(width: side * 0.72, height: side * 0.44)
+        ZStack {
+            LinearGradient(
+                colors: [
+                    Color(red: 0.06, green: 0.08, blue: 0.16),
+                    Color(red: 0.10, green: 0.07, blue: 0.18)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            LuminaMenuIcon.fittedLSPath(in: markSize)
+                .stroke(
+                    LinearGradient(colors: inkGradient, startPoint: .leading, endPoint: .trailing),
+                    style: StrokeStyle(
+                        lineWidth: max(1.1, side * 0.055),
+                        lineCap: .round,
+                        lineJoin: .round
+                    )
+                )
+                .shadow(color: inkGradient[0].opacity(0.45), radius: side * 0.07)
+                .frame(width: markSize.width, height: markSize.height)
+        }
+        .frame(width: side, height: side)
+        .clipShape(RoundedRectangle(cornerRadius: side * 0.22, style: .continuous))
+        .accessibilityLabel("Lumina Studio")
+    }
+}
+
 // MARK: - Toolbar icon button (44pt min hit target)
 
 struct LuminaToolbarButton: View {
@@ -107,6 +148,67 @@ struct LuminaSectionHeader: View {
                     .background(Color.primary.opacity(0.06), in: Capsule())
             }
         }
+    }
+}
+
+// MARK: - Hint bubble (inline guidance)
+
+struct LuminaHintBubble: View {
+    enum Style {
+        case info, success, tip
+
+        var iconColor: Color {
+            switch self {
+            case .info: return Color.accentColor
+            case .success: return .green
+            case .tip: return .yellow
+            }
+        }
+
+        var borderColor: Color {
+            switch self {
+            case .info: return Color.accentColor.opacity(0.35)
+            case .success: return Color.green.opacity(0.4)
+            case .tip: return Color.yellow.opacity(0.45)
+            }
+        }
+    }
+
+    let icon: String
+    let message: String
+    var style: Style = .info
+    var onDismiss: (() -> Void)? = nil
+
+    var body: some View {
+        HStack(alignment: .top, spacing: DisplayScale.points(10)) {
+            Image(systemName: icon)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(style.iconColor)
+                .frame(width: DisplayScale.points(16), alignment: .center)
+                .padding(.top, 1)
+
+            Text(message)
+                .font(.caption)
+                .foregroundStyle(.primary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if let onDismiss {
+                Button(action: onDismiss) {
+                    Image(systemName: "xmark")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Dismiss")
+            }
+        }
+        .padding(DisplayScale.points(10))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.luminaCard.opacity(0.95), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(style.borderColor, lineWidth: 1)
+        )
     }
 }
 

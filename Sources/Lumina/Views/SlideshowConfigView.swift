@@ -259,21 +259,21 @@ struct SlideshowConfigView: View {
     /// Appends an image URL to the queue and saves it to the Library for reuse.
     private func addImage(_ url: URL) {
         guard Self.isImageURL(url) else { return }
-        store.addMediaToLibrary(url: url)
+        guard MediaAccessPolicy.accept(url) else { return }
+        store.addMediaToLibrary(url: url, enforceAccessPolicy: false)
         if !items.contains(url.path) { items.append(url.path) }
     }
 
     private func addImagesViaPanel() {
-        let panel = NSOpenPanel()
-        panel.title = "Add images to the slideshow"
-        panel.message = "Images are also saved to your Library so you can reuse them."
-        panel.allowedContentTypes = [.image]
-        panel.canChooseFiles = true
-        panel.allowsMultipleSelection = true
-        guard panel.runModal() == .OK else { return }
-        for url in panel.urls {
-            _ = FileAccess.registerUserSelectedFile(url)
-            addImage(url)
+        let urls = MediaAccessPolicy.runWallpaperPicker(
+            title: "Add images to the slideshow",
+            message: "Images are also saved to your Library so you can reuse them.",
+            allowedTypes: [.image],
+            allowsMultipleSelection: true
+        )
+        for url in urls {
+            store.addMediaToLibrary(url: url, enforceAccessPolicy: false)
+            if !items.contains(url.path) { items.append(url.path) }
         }
     }
 

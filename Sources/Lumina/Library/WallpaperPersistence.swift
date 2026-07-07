@@ -48,7 +48,7 @@ public struct WallpaperPersistence {
                 )
 
                 if isStale {
-                    print("[Persistence] Bookmark is stale — clearing.")
+                    LuminaLog.persistence.warning("Bookmark is stale — clearing.")
                     clearBookmarkOnly()
                     return tryFallbackPath()
                 }
@@ -56,11 +56,11 @@ public struct WallpaperPersistence {
                 if url.startAccessingSecurityScopedResource() {
                     return url
                 } else {
-                    print("[Persistence] Could not start accessing security scoped resource — clearing bookmark.")
+                    LuminaLog.persistence.error("Could not start accessing security scoped resource — clearing bookmark.")
                     clearBookmarkOnly()
                 }
             } catch {
-                print("[Persistence] Failed to resolve bookmark: \(error) — clearing.")
+                LuminaLog.persistence.error("Failed to resolve bookmark: \(error) — clearing.")
                 clearBookmarkOnly()
             }
         }

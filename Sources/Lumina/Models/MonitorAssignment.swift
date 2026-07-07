@@ -254,7 +254,7 @@ extension MonitorAssignment {
             self.lastError = nil
         } catch {
             self.lastError = "Failed to create bookmark: \(error.localizedDescription)"
-            print("[MonitorAssignment] Failed to create bookmark for \(url.path): \(error)")
+            LuminaLog.persistence.error("Failed to create bookmark for \(url.path): \(error)")
         }
     }
     

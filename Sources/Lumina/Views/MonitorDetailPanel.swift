@@ -34,6 +34,10 @@ struct MonitorDetailPanel: View {
     @State private var localCropRect: CGRect = CGRect(x: 0, y: 0, width: 1, height: 1)
     @State private var videoPreviewTime: Double = 0.15
     @State private var videoDuration: Double = 0
+    @State private var committedUseStaticFrame: Bool = false
+    @State private var showVideoFrameGuide: Bool = true
+    @State private var frameActionFeedback: String?
+    @State private var frameFeedbackTask: Task<Void, Never>?
     @State private var loopFadeEnabled: Bool = false
     @State private var loopFadeDuration: Double = 1.5
     @State private var loopFadeEasing: MonitorAssignment.FadeEasing = .easeInOut
@@ -73,6 +77,61 @@ struct MonitorDetailPanel: View {
         case .fit:     return "Full video visible with letterbox/pillarbox bars."
         case .fill:    return "Video crops to fill the screen — edges may be cut off."
         case .stretch: return "Video stretches to cover the screen — may look distorted."
+        }
+    }
+
+    /// Monitor aspect expressed in normalized crop coordinates (width ÷ height in 0–1 space).
+    private var normalizedCropAspect: CGFloat {
+        guard previewSourceAspect > 0 else { return monitor.aspectRatio }
+        return monitor.aspectRatio / previewSourceAspect
+    }
+
+    /// 1.0 = largest crop that fits; lower values = more zoomed in.
+    private var cropZoomScale: CGFloat {
+        CropRectangle.cropScale(from: localCropRect, normalizedAspect: normalizedCropAspect)
+    }
+
+    private func setCropZoomScale(_ scale: CGFloat) {
+        localCropRect = CropRectangle.centeredCrop(
+            normalizedAspect: normalizedCropAspect,
+            scale: scale
+        )
+    }
+
+    private func resetCropToDefault() {
+        localCropRect = CropRectangle.centeredCrop(
+            normalizedAspect: normalizedCropAspect,
+            scale: 0.88
+        )
+        videoPreviewTime = 0.15
+    }
+
+    private func formattedVideoTime(_ seconds: Double) -> String {
+        guard seconds.isFinite, seconds >= 0 else { return "0:00" }
+        let total = Int(seconds.rounded())
+        let m = total / 60
+        let s = total % 60
+        return m > 0 ? String(format: "%d:%02d", m, s) : String(format: "0:%02d", s)
+    }
+
+    private func showFrameFeedback(_ message: String) {
+        frameFeedbackTask?.cancel()
+        frameActionFeedback = message
+        frameFeedbackTask = Task {
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            guard !Task.isCancelled else { return }
+            await MainActor.run { frameActionFeedback = nil }
+        }
+    }
+
+    private func commitVideoFrame(useStatic: Bool) {
+        committedUseStaticFrame = useStatic
+        store.setVideoFrameTime(for: monitor, time: videoPreviewTime, useStatic: useStatic)
+        let label = formattedVideoTime(videoPreviewTime * max(videoDuration, 0))
+        if useStatic {
+            showFrameFeedback("Desktop is now a still at \(label). Your crop is applied.")
+        } else {
+            showFrameFeedback("Desktop video now plays from \(label).")
         }
     }
 
@@ -123,11 +182,6 @@ struct MonitorDetailPanel: View {
                     // Slideshow — powerful but secondary
                     SettingsGroup(icon: "photo.on.rectangle.angled", title: "Slideshow") {
                         slideshowContent
-                    }
-
-                    // Advanced / power-user options (kept small now that Keep is promoted)
-                    SettingsGroup(icon: "gearshape.2", title: "Advanced") {
-                        advancedContent
                     }
                 }
                 .padding(.horizontal, 12)
@@ -306,95 +360,14 @@ struct MonitorDetailPanel: View {
 
                     cropToggleButton
                         .padding(10)
+                        .opacity(cropEditMode ? 0 : 1)
+                        .allowsHitTesting(!cropEditMode)
                 }
                 .padding(.horizontal, 12)
                 .padding(.top, 12)
 
                 if cropEditMode {
-                    HStack(spacing: 10) {
-                        Button("Reset Crop") {
-                            // Reset to full so CropRectangle auto-sets the proper horizontal crop box on the original
-                            localCropRect = CGRect(x: 0, y: 0, width: 1, height: 1)
-                            videoPreviewTime = 0.15
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                        .help("Reset to a horizontal crop rect matching your monitor (smaller than full frame)")
-
-                        Spacer()
-
-                        Text("Horizontal crop box locked to monitor aspect • drag to move, corners to resize (smaller only recommended)")
-                            .font(.caption2).foregroundStyle(.tertiary)
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 2)
-
-                    // Video time scrubber (only for video media)
-                    if a.mediaType == .video {
-                        VStack(alignment: .leading, spacing: 4) {
-                            HStack {
-                                Text("Scrub to choose frame")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                                Spacer()
-                                if videoDuration > 0 {
-                                    let t = videoPreviewTime * videoDuration
-                                    Text(String(format: "%.1fs / %.1fs", t, videoDuration))
-                                        .font(.caption2.monospacedDigit())
-                                        .foregroundStyle(.tertiary)
-                                } else {
-                                    Text("scrub to pick frame")
-                                        .font(.caption2)
-                                        .foregroundStyle(.tertiary)
-                                }
-                            }
-
-                            Slider(
-                                value: $videoPreviewTime,
-                                in: 0...1
-                            )
-                            .onChange(of: videoPreviewTime) { _, _ in
-                                // Live update the preview frame in CropRectangle
-                            }
-
-                            if let a = store.assignment(for: monitor.id), let t = a.videoFrameTime {
-                                let mode = a.useStaticVideoFrame ? "Static frame" : "Video start"
-                                Text("Current: \(mode) at \(String(format: "%.1f", t * (videoDuration > 0 ? videoDuration : 1)))s")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                            }
-
-                            HStack(spacing: 8) {
-                                Button {
-                                    store.setVideoFrameTime(for: monitor, time: videoPreviewTime, useStatic: true)
-                                } label: {
-                                    Label("Freeze as Static Image", systemImage: "photo")
-                                }
-                                .buttonStyle(.borderedProminent)
-                                .controlSize(.small)
-                                .help("Use the current frame as a still wallpaper (no video playback)")
-
-                                Button {
-                                    store.setVideoFrameTime(for: monitor, time: videoPreviewTime, useStatic: false)
-                                } label: {
-                                    Label("Video starting at this time", systemImage: "play.rectangle")
-                                }
-                                .buttonStyle(.bordered)
-                                .controlSize(.small)
-                                .help("Play the video, but start/seek to this frame with the crop applied")
-                            }
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.bottom, 6)
-                        .task(id: a.filePath) {
-                            // Load real duration for the scrubber
-                            guard let url = a.resolvedURL() ?? a.filePath.map({ URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) }) else { return }
-                            let asset = AVURLAsset(url: url)
-                            if let dur = try? await asset.load(.duration) {
-                                videoDuration = dur.seconds
-                            }
-                        }
-                    }
+                    cropEditorToolbar(assignment: a)
                 } else if !a.slideshowItems.isEmpty {
                     // Visual hint that the desktop is running a slideshow even though
                     // the inline preview only shows single-media at the moment.
@@ -466,28 +439,176 @@ struct MonitorDetailPanel: View {
         }
     }
 
-    /// Floating button on the preview that toggles interactive crop editing.
+    /// Floating button on the preview that enters interactive crop editing.
     private var cropToggleButton: some View {
         Button {
             withAnimation(.easeInOut(duration: 0.15)) {
-                let wasEditing = cropEditMode
-                cropEditMode.toggle()
-                if !wasEditing, cropEditMode, localCropRect == CGRect(x: 0, y: 0, width: 1, height: 1) {
-                    // Set to full so CropRectangle's auto-init sets the proper horizontal box on the full original
-                    localCropRect = CGRect(x: 0, y: 0, width: 1, height: 1)
+                cropEditMode = true
+                if localCropRect == CGRect(x: 0, y: 0, width: 1, height: 1) {
+                    resetCropToDefault()
                 }
             }
         } label: {
-            Image(systemName: cropEditMode ? "checkmark.circle.fill" : "crop")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(cropEditMode ? Color.white : Color.white)
-                .padding(7)
-                .background(cropEditMode ? Color.accentColor : Color.black.opacity(0.55), in: Circle())
-                .overlay(Circle().strokeBorder(Color.white.opacity(0.35), lineWidth: 0.5))
+            Label("Crop", systemImage: "crop")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(Color.black.opacity(0.6), in: Capsule())
+                .overlay(Capsule().strokeBorder(Color.white.opacity(0.35), lineWidth: 0.5))
                 .shadow(color: .black.opacity(0.35), radius: 2, y: 1)
         }
         .buttonStyle(.plain)
-        .help(cropEditMode ? "Done — finish cropping" : "Crop / Zoom on the preview")
+        .help("Crop and position the wallpaper on this display")
+    }
+
+    @ViewBuilder
+    private func cropEditorToolbar(assignment a: MonitorAssignment) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) { cropEditMode = false }
+                } label: {
+                    Label("Done", systemImage: "checkmark.circle.fill")
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+
+                Button("Reset") { resetCropToDefault() }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .help("Center the crop and restore default zoom")
+
+                Spacer()
+
+                Text("Drag inside · pull corners")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+
+            VStack(alignment: .leading, spacing: 5) {
+                HStack {
+                    Label("Zoom", systemImage: "plus.magnifyingglass")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Text(cropZoomScale >= 0.98 ? "Fit" : String(format: "%.0f%%", cropZoomScale * 100))
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.tertiary)
+                }
+
+                Slider(
+                    value: Binding(
+                        get: { cropZoomScale },
+                        set: { setCropZoomScale($0) }
+                    ),
+                    in: 0.15...1.0
+                )
+                .controlSize(.small)
+            }
+            .help("Zoom in or out — the crop stays locked to your monitor's shape")
+
+            if a.mediaType == .video {
+                cropVideoFrameControls(assignment: a)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.bottom, 8)
+    }
+
+    @ViewBuilder
+    private func cropVideoFrameControls(assignment a: MonitorAssignment) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            LuminaDivider()
+
+            if showVideoFrameGuide {
+                LuminaHintBubble(
+                    icon: "lightbulb.fill",
+                    message: "Scrub the timeline to preview a moment, then pick how it should appear on your desktop — as a frozen still or as a playing video from that point.",
+                    style: .tip,
+                    onDismiss: { showVideoFrameGuide = false }
+                )
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Label("Pick a frame", systemImage: "film")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    if videoDuration > 0 {
+                        Text("\(formattedVideoTime(videoPreviewTime * videoDuration)) / \(formattedVideoTime(videoDuration))")
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+
+                Slider(value: $videoPreviewTime, in: 0...1)
+                    .controlSize(.small)
+
+                Text("The preview above updates as you scrub — nothing changes on your desktop until you choose an option below.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+
+            HStack(spacing: 8) {
+                Group {
+                    if committedUseStaticFrame {
+                        Button { commitVideoFrame(useStatic: true) } label: {
+                            Label("Use as still", systemImage: "photo.fill")
+                        }
+                        .buttonStyle(.borderedProminent)
+                    } else {
+                        Button { commitVideoFrame(useStatic: true) } label: {
+                            Label("Use as still", systemImage: "photo.fill")
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                }
+                .controlSize(.small)
+                .help("Freeze this exact frame on your desktop — no video playback")
+
+                Group {
+                    if !committedUseStaticFrame, a.videoFrameTime != nil {
+                        Button { commitVideoFrame(useStatic: false) } label: {
+                            Label("Start video here", systemImage: "play.rectangle.fill")
+                        }
+                        .buttonStyle(.borderedProminent)
+                    } else {
+                        Button { commitVideoFrame(useStatic: false) } label: {
+                            Label("Start video here", systemImage: "play.rectangle.fill")
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                }
+                .controlSize(.small)
+                .help("Play the video from this frame with your crop applied")
+            }
+
+            if let feedback = frameActionFeedback {
+                LuminaHintBubble(icon: "checkmark.circle.fill", message: feedback, style: .success)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            } else if let saved = a.videoFrameTime, videoDuration > 0 {
+                let label = formattedVideoTime(saved * videoDuration)
+                LuminaHintBubble(
+                    icon: committedUseStaticFrame ? "photo.fill" : "play.fill",
+                    message: committedUseStaticFrame
+                        ? "Desktop: frozen still at \(label)"
+                        : "Desktop: video playing from \(label)",
+                    style: .info
+                )
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: frameActionFeedback)
+        .task(id: a.filePath) {
+            guard let url = a.resolvedURL()
+                ?? a.filePath.map({ URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) })
+            else { return }
+            let asset = AVURLAsset(url: url)
+            if let dur = try? await asset.load(.duration) {
+                videoDuration = dur.seconds
+            }
+        }
     }
 
     // MARK: - Prominent Keep on Startup Control
@@ -564,6 +685,23 @@ struct MonitorDetailPanel: View {
                 }
                 Slider(value: $playbackSpeed, in: 0.25...4.0, step: 0.25)
                     .controlSize(.large)
+            }
+
+            // Loop Mode (video only — GIFs and stills use their own playback path)
+            if assignment?.mediaType == .video {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Loop Mode").font(.subheadline).foregroundStyle(.secondary)
+                    Picker("Loop Mode", selection: $loopMode) {
+                        ForEach(MonitorAssignment.LoopMode.allCases, id: \.self) { mode in
+                            Text(mode.label).tag(mode)
+                                .help(mode.modeDescription)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    Text(loopMode.modeDescription)
+                        .font(.caption2).foregroundStyle(.tertiary)
+                        .animation(.easeInOut(duration: 0.15), value: loopMode)
+                }
             }
 
             // Loop Crossfade (video only)
@@ -644,19 +782,16 @@ struct MonitorDetailPanel: View {
                     .animation(.easeInOut(duration: 0.15), value: selectedScaling)
             }
 
-            // Crop / Zoom is now edited directly on the live preview above — tap the crop
-            // button on the preview to enter edit mode (no separate editor needed).
-            if assignment != nil {
-                Button {
-                    withAnimation(.easeInOut(duration: 0.15)) { cropEditMode = true }
-                } label: {
-                    Label(cropEditMode ? "Editing crop on preview…" : "Crop / Zoom on Preview",
-                          systemImage: "crop")
+            // Crop is edited on the live preview — use the Crop pill on the preview image.
+            if assignment != nil, !cropEditMode {
+                HStack(spacing: 6) {
+                    Image(systemName: "crop")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text("Tap **Crop** on the preview above to position and zoom.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .disabled(cropEditMode)
-                .help("Edit the crop region directly on the live preview at the top")
             }
         }
     }
@@ -716,28 +851,6 @@ struct MonitorDetailPanel: View {
             // Grayscale
             Toggle("Grayscale", isOn: $grayscale)
                 .toggleStyle(.switch)
-        }
-    }
-
-    // MARK: - Advanced Section Content
-    // Note: "Keep on startup" has been promoted to a high-visibility control
-    // directly under the live preview for much better discoverability and importance.
-
-    private var advancedContent: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Loop Mode").font(.subheadline).foregroundStyle(.secondary)
-                Picker("Loop Mode", selection: $loopMode) {
-                    ForEach(MonitorAssignment.LoopMode.allCases, id: \.self) { mode in
-                        Text(mode.label).tag(mode)
-                            .help(mode.modeDescription)
-                    }
-                }
-                .pickerStyle(.segmented)
-                Text(loopMode.modeDescription)
-                    .font(.caption2).foregroundStyle(.tertiary)
-                    .animation(.easeInOut(duration: 0.15), value: loopMode)
-            }
         }
     }
 
@@ -857,6 +970,8 @@ struct MonitorDetailPanel: View {
             playbackSpeed = 1.0
             localCropRect = CGRect(x: 0, y: 0, width: 1, height: 1)
             videoPreviewTime = 0.15
+            committedUseStaticFrame = false
+            frameActionFeedback = nil
             loopFadeEnabled = false
             loopFadeDuration = 1.5
             loopFadeEasing = .easeInOut
@@ -890,8 +1005,9 @@ struct MonitorDetailPanel: View {
             keepOnStartup = a.keepOnStartup
             playbackSpeed = a.playbackSpeed
             localCropRect = a.cropRect
+            committedUseStaticFrame = a.useStaticVideoFrame
             if let ft = a.videoFrameTime {
-                videoPreviewTime = ft   // initialize scrubber from saved (0 = "start at beginning" is valid)
+                videoPreviewTime = ft
             }
             loopFadeEnabled = a.loopFadeEnabled
             loopFadeDuration = a.loopFadeDuration
@@ -913,6 +1029,8 @@ struct MonitorDetailPanel: View {
             playbackSpeed = 1.0
             localCropRect = CGRect(x: 0, y: 0, width: 1, height: 1)
             videoPreviewTime = 0.15
+            committedUseStaticFrame = false
+            frameActionFeedback = nil
             loopFadeEnabled = false
             loopFadeDuration = 1.5
             loopFadeEasing = .easeInOut
@@ -1037,7 +1155,7 @@ struct MonitorDetailPanel: View {
             // Immediately add the compressed copy to the persistent library so it ALWAYS stays
             // reachable in the grid — even after compressing other presets or switching the
             // display's wallpaper. This is what prevents compressed files from "disappearing".
-            store.addMediaToLibrary(url: out)
+            store.addMediaToLibrary(url: out, enforceAccessPolicy: false)
             pendingCompressedURL = out
             showUseCompressedAlert = true
         } catch VideoCompressor.CompressionError.cancelled {
@@ -1065,7 +1183,7 @@ struct MonitorDetailPanel: View {
 //
 // Design goals:
 // - All cards share the same minHeight so short boxes (Slideshow empty state,
-//   Advanced) scale visually with the taller ones (Display, Visual Effects, etc.).
+//   Visual Effects) scale visually with the taller ones (Display, Visual Effects, etc.).
 // - Strong consistent rhythm (header style, padding, internal spacing).
 // - Content stays top-aligned; extra space goes below via Spacer.
 // - No collapse/expand — everything is always visible and scrollable in one container.
@@ -1093,7 +1211,7 @@ private struct SettingsGroup<Content: View>: View {
             .padding(.bottom, 6)
 
             // Content area. Each card hugs its own content height (no forced minHeight),
-            // so short cards like Slideshow and Advanced don't leave dead space at the
+            // so short cards like Slideshow don't leave dead space at the
             // bottom. Width is still full-bleed so all cards align to one edge-to-edge column.
             VStack(alignment: .leading, spacing: 10) {
                 content()
