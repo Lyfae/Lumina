@@ -126,7 +126,10 @@ public final class AVVideoRenderer: @unchecked Sendable {
     // MARK: - Loop Crossfade
     private var loopFadeEnabled: Bool = false
     private var loopFadeDuration: Double = 1.5
-    private var loopBoundaryObserver: Any?
+    private var loopFadeTimeObserver: Any?
+    /// Allows the next fade once playback wraps to the start of a new loop.
+    private var loopFadeCycleArmed: Bool = true
+    private var lastLoopFadeSampleTime: TimeInterval = 0
 
     // MARK: - Loop Mode (loop / once / bounce)
     private var loopMode: MonitorAssignment.LoopMode = .loop
@@ -508,15 +511,21 @@ public final class AVVideoRenderer: @unchecked Sendable {
         // The layer will show black/transparent
     }
 
+    private func removeLoopFadeObserver() {
+        if let observer = loopFadeTimeObserver {
+            player?.removeTimeObserver(observer)
+            loopFadeTimeObserver = nil
+        }
+        itemStatusObserver = nil
+        loopFadeCycleArmed = true
+        lastLoopFadeSampleTime = 0
+    }
+
     /// Removes every time observer / KVO / NotificationCenter observer attached to the
     /// current player. Shared by clear() and cleanup().
     private func removeAllPlayerObservers() {
-        if let observer = loopBoundaryObserver {
-            player?.removeTimeObserver(observer)
-            loopBoundaryObserver = nil
-        }
+        removeLoopFadeObserver()
         removeReverseBoundaryObserver()
-        itemStatusObserver = nil
         loadStatusObserver = nil
         videoFrameReadyObserver?.invalidate()
         videoFrameReadyObserver = nil
@@ -587,9 +596,15 @@ public final class AVVideoRenderer: @unchecked Sendable {
     /// Configures loop-point crossfade behavior. Call after load().
     public func setLoopFade(enabled: Bool, duration: Double, easing: MonitorAssignment.FadeEasing = .easeInOut) {
         loopFadeEnabled = enabled
-        loopFadeDuration = max(0.05, duration)
+        loopFadeDuration = duration
         currentFadeEasing = easing
-        registerLoopBoundaryObserver()
+
+        guard enabled, duration > 0.001, loopMode == .loop, !holdStaticFrame else {
+            removeLoopFadeObserver()
+            return
+        }
+        loopFadeDuration = max(0.05, duration)
+        registerLoopFadeObserver()
     }
 
     /// Changes the end-of-playback behavior for the current (or next) video.
@@ -613,71 +628,97 @@ public final class AVVideoRenderer: @unchecked Sendable {
         }
     }
 
-    private func registerLoopBoundaryObserver() {
-        // Remove any existing observers first
-        if let observer = loopBoundaryObserver {
-            player?.removeTimeObserver(observer)
-            loopBoundaryObserver = nil
+    private func registerLoopFadeObserver() {
+        removeLoopFadeObserver()
+
+        guard loopFadeEnabled, loopFadeDuration > 0.001,
+              loopMode == .loop, !holdStaticFrame,
+              let player, let currentItem = player.currentItem else { return }
+
+        func installIfReady() {
+            guard currentItem.status == .readyToPlay else { return }
+            let durationSeconds = currentItem.duration.seconds
+            guard durationSeconds.isFinite, durationSeconds > 0 else { return }
+            itemStatusObserver = nil
+            installPeriodicLoopFadeObserver(videoDuration: durationSeconds)
         }
-        itemStatusObserver = nil
 
-        guard loopFadeEnabled, let player = player,
-              let currentItem = player.currentItem else { return }
+        installIfReady()
 
-        // Use KVO to observe when the item becomes ready to play.
-        // We read duration synchronously from the item once it's ready.
-        itemStatusObserver = currentItem.observe(\.status, options: [.new]) { [weak self] item, _ in
+        // `.initial` covers the common case where the item is already ready when fade is enabled.
+        itemStatusObserver = currentItem.observe(\.status, options: [.new, .initial]) { [weak self] item, _ in
             guard item.status == .readyToPlay else { return }
-            // Read duration synchronously — it's available once status is readyToPlay
-            let durationSeconds = item.duration.seconds
-            guard durationSeconds.isFinite && durationSeconds > 0 else { return }
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
+                let durationSeconds = item.duration.seconds
+                guard durationSeconds.isFinite, durationSeconds > 0 else { return }
                 self.itemStatusObserver = nil
-                self.addBoundaryObserver(videoDuration: durationSeconds)
+                self.installPeriodicLoopFadeObserver(videoDuration: durationSeconds)
             }
         }
     }
 
-    private func addBoundaryObserver(videoDuration: Double) {
-        guard loopFadeEnabled, let player = player else { return }
+    private func installPeriodicLoopFadeObserver(videoDuration: Double) {
+        guard loopFadeEnabled, loopFadeDuration > 0.001,
+              loopMode == .loop, !holdStaticFrame,
+              let player else { return }
 
-        // Remove previous boundary observer if any
-        if let obs = loopBoundaryObserver {
+        if let obs = loopFadeTimeObserver {
             player.removeTimeObserver(obs)
-            loopBoundaryObserver = nil
+            loopFadeTimeObserver = nil
         }
 
-        let fadeHalf = loopFadeDuration / 2.0
-        let triggerTime = max(0, videoDuration - fadeHalf)
-        let cmTrigger = CMTime(seconds: triggerTime, preferredTimescale: 600)
+        let fadeHalf = min(loopFadeDuration / 2.0, videoDuration * 0.45)
+        guard fadeHalf > 0.01 else { return }
 
-        let observer = player.addBoundaryTimeObserver(
-            forTimes: [NSValue(time: cmTrigger)],
-            queue: .main
-        ) { [weak self] in
-            guard let self, let pl = self.playerLayer else { return }
-            let half = self.loopFadeDuration / 2.0
-            let timingFn = self.currentFadeEasing.caTimingFunction
+        let triggerStart = max(0, videoDuration - fadeHalf)
+        let interval = CMTime(seconds: 0.033, preferredTimescale: 600)
 
-            // Fade out
-            CATransaction.begin()
-            CATransaction.setAnimationDuration(half)
-            CATransaction.setAnimationTimingFunction(timingFn)
-            pl.opacity = 0.0
-            CATransaction.commit()
+        loopFadeCycleArmed = true
+        lastLoopFadeSampleTime = 0
 
-            // Fade back in after half duration
-            DispatchQueue.main.asyncAfter(deadline: .now() + half) { [weak self] in
-                guard let self, let pl = self.playerLayer else { return }
-                CATransaction.begin()
-                CATransaction.setAnimationDuration(self.loopFadeDuration / 2.0)
-                CATransaction.setAnimationTimingFunction(self.currentFadeEasing.caTimingFunction)
-                pl.opacity = Float(self.currentOpacity)   // respect user opacity, not hardcoded 1.0
-                CATransaction.commit()
+        loopFadeTimeObserver = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
+            guard let self,
+                  self.loopFadeEnabled,
+                  self.loopMode == .loop,
+                  !self.holdStaticFrame,
+                  self.playerLayer != nil else { return }
+
+            let t = time.seconds
+            guard t.isFinite else { return }
+
+            // AVPlayerLooper jumps back to the start — re-arm for the next cycle.
+            if t < self.lastLoopFadeSampleTime - 0.25 {
+                self.loopFadeCycleArmed = true
             }
+            self.lastLoopFadeSampleTime = t
+
+            guard self.loopFadeCycleArmed, t >= triggerStart else { return }
+            self.loopFadeCycleArmed = false
+            self.performLoopCrossfade(halfDuration: fadeHalf)
         }
-        loopBoundaryObserver = observer
+    }
+
+    private func performLoopCrossfade(halfDuration: Double) {
+        guard let pl = playerLayer else { return }
+        let speed = max(0.25, userPlaybackSpeed)
+        let wallHalf = halfDuration / speed
+        let timingFn = currentFadeEasing.caTimingFunction
+
+        CATransaction.begin()
+        CATransaction.setAnimationDuration(wallHalf)
+        CATransaction.setAnimationTimingFunction(timingFn)
+        pl.opacity = 0.0
+        CATransaction.commit()
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + wallHalf) { [weak self] in
+            guard let self, let pl = self.playerLayer else { return }
+            CATransaction.begin()
+            CATransaction.setAnimationDuration(wallHalf)
+            CATransaction.setAnimationTimingFunction(self.currentFadeEasing.caTimingFunction)
+            pl.opacity = Float(self.currentOpacity)
+            CATransaction.commit()
+        }
     }
 
     // MARK: - Brightness
@@ -858,18 +899,15 @@ public final class AVVideoRenderer: @unchecked Sendable {
     private func disableLooperForStaticFrame() {
         looper?.disableLooping()
         looper = nil
-        if let observer = loopBoundaryObserver {
-            player?.removeTimeObserver(observer)
-            loopBoundaryObserver = nil
-        }
+        removeLoopFadeObserver()
     }
 
     private func ensureLooperIfNeeded(for item: AVPlayerItem, player: AVQueuePlayer) {
         guard loopMode == .loop else { return }
         guard looper == nil else { return }
         looper = AVPlayerLooper(player: player, templateItem: item)
-        if loopFadeEnabled {
-            registerLoopBoundaryObserver()
+        if loopFadeEnabled && !holdStaticFrame {
+            registerLoopFadeObserver()
         }
     }
 
@@ -969,8 +1007,8 @@ public final class AVVideoRenderer: @unchecked Sendable {
         }
 
         // Re-register loop boundary observer for the new content (crossfade at loop points only makes sense for .loop)
-        if loopFadeEnabled && loopMode == .loop {
-            registerLoopBoundaryObserver()
+        if loopFadeEnabled && loopMode == .loop && !holdStaticFrame {
+            registerLoopFadeObserver()
         }
     }
 

@@ -704,14 +704,36 @@ struct MonitorDetailPanel: View {
                 }
             }
 
-            // Loop Crossfade (video only)
+            // Loop Crossfade (video only — requires Loop mode)
             if assignment?.mediaType == .video {
                 Toggle("Fade at loop point", isOn: $loopFadeEnabled)
                     .toggleStyle(.switch)
                     .font(.subheadline)
+                    .disabled(loopMode != .loop)
+                    .help(loopMode == .loop
+                          ? "Smoothly fade out and back in each time the video loops"
+                          : "Only available when Loop Mode is set to Loop")
 
-                if loopFadeEnabled {
+                if loopMode != .loop {
+                    Text("Set Loop Mode to **Loop** to use crossfade at the loop point.")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+
+                if loopFadeEnabled && loopMode == .loop {
                     VStack(alignment: .leading, spacing: 8) {
+                        if hasUnappliedChanges && (assignment.map { a in
+                            loopFadeEnabled != a.loopFadeEnabled
+                                || abs(loopFadeDuration - a.loopFadeDuration) > 0.001
+                                || loopFadeEasing != a.loopFadeEasing
+                        } ?? false) {
+                            LuminaHintBubble(
+                                icon: "arrow.up.circle",
+                                message: "Tap **Apply to Wallpaper** below to enable the fade on your desktop.",
+                                style: .tip
+                            )
+                        }
+
                         VStack(alignment: .leading, spacing: 4) {
                             HStack {
                                 Text("Fade Duration")
@@ -721,9 +743,9 @@ struct MonitorDetailPanel: View {
                                     .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                             }
                             // 0–5000ms in 50ms steps (100 increments)
-                            Slider(value: $loopFadeDuration, in: 0.0...5.0, step: 0.05)
+                            Slider(value: $loopFadeDuration, in: 0.1...5.0, step: 0.05)
                         }
-                        .help("Total crossfade duration at each loop point (0ms = instant cut, 5000ms = slow fade)")
+                        .help("Total crossfade duration at each loop point (100ms–5000ms)")
 
                         VStack(alignment: .leading, spacing: 4) {
                             Text("Easing").font(.subheadline).foregroundStyle(.secondary)
@@ -958,8 +980,8 @@ struct MonitorDetailPanel: View {
             duration: half
         )
         withAnimation(curve) { previewOpacity = 0 }
-        DispatchQueue.main.asyncAfter(deadline: .now() + half) {
-            withAnimation(curve) { previewOpacity = 1 }
+        DispatchQueue.main.asyncAfter(deadline: .now() + half / max(0.25, playbackSpeed)) {
+            withAnimation(curve) { previewOpacity = opacity }
         }
     }
 
