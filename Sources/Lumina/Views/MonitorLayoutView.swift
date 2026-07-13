@@ -117,12 +117,12 @@ private struct MonitorLayoutContent: View {
             // Clean, readable filename label at the bottom (better contrast)
             if let name = assignment?.displayName {
                 Text(name)
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.system(size: DisplayScale.points(11), weight: .semibold))
                     .foregroundStyle(.white)
                     .lineLimit(1)
                     .truncationMode(.tail)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
+                    .padding(.horizontal, DisplayScale.points(7))
+                    .padding(.vertical, DisplayScale.points(3))
                     .background(Color.black.opacity(0.65), in: Capsule())
                     .shadow(color: .black.opacity(0.5), radius: 1, x: 0, y: 0.5)
             }

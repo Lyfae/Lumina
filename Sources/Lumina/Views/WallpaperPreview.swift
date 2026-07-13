@@ -158,17 +158,17 @@ struct WallpaperPreview: View {
             .clipShape(RoundedRectangle(cornerRadius: 8))
         }
         .overlay(alignment: .bottomTrailing) {
-            HStack(spacing: 4) {
+            HStack(spacing: DisplayScale.points(4)) {
                 let icon = mediaType == .video ? "play.rectangle.fill" :
                            mediaType == .animatedImage ? "photo.stack.fill" : "photo.fill"
                 Image(systemName: icon)
-                    .font(.caption2)
+                    .font(.system(size: DisplayScale.points(10), weight: .semibold))
                 Text(assignment.displayName)
-                    .font(.caption2)
+                    .font(.system(size: DisplayScale.points(11), weight: .medium))
                     .lineLimit(1)
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
+            .padding(.horizontal, DisplayScale.points(8))
+            .padding(.vertical, DisplayScale.points(4))
             .background(.ultraThinMaterial, in: Capsule())
             .padding(6)
             .foregroundStyle(.white)

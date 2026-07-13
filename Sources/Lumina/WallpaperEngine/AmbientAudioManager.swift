@@ -174,17 +174,17 @@ final class AmbientAudioManager: NSObject, ObservableObject {
     // MARK: - Track selection
 
     func chooseTrack() {
-        let panel = NSOpenPanel()
-        panel.title = "Choose ambient audio track"
-        panel.allowedContentTypes = [.audio, .mp3]
-        panel.canChooseFiles = true
-        panel.allowsMultipleSelection = true
-        guard panel.runModal() == .OK else { return }
-        for url in panel.urls {
-            _ = FileAccess.registerUserSelectedFile(url)
+        let urls = MediaAccessPolicy.runWallpaperPicker(
+            title: "Choose ambient audio track",
+            message: "Select audio files for the Studio music player.",
+            allowedTypes: [.audio, .mp3],
+            allowsMultipleSelection: true
+        )
+        guard !urls.isEmpty else { return }
+        for url in urls {
             addToLibrary(url: url)
         }
-        if let first = panel.urls.first {
+        if let first = urls.first {
             _ = loadTrack(url: first)
             UserDefaults.standard.set(first.path, forKey: trackURLKey)
         }

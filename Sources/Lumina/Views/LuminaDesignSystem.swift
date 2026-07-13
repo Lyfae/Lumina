@@ -13,9 +13,11 @@ enum LuminaLayout {
 
 // MARK: - Brand mark (splash / menu bar LS monogram)
 
-/// Compact app icon tile — aurora background + gradient cursive LS (same artwork as splash & menu bar).
+/// Compact app icon tile — aurora LS monogram; background adapts to light/dark mode.
 struct LuminaBrandMark: View {
     var side: CGFloat = 36
+
+    @Environment(\.colorScheme) private var colorScheme
 
     private let inkGradient: [Color] = [
         Color(red: 0.62, green: 0.87, blue: 1.0),
@@ -26,14 +28,7 @@ struct LuminaBrandMark: View {
     var body: some View {
         let markSize = CGSize(width: side * 0.72, height: side * 0.44)
         ZStack {
-            LinearGradient(
-                colors: [
-                    Color(red: 0.06, green: 0.08, blue: 0.16),
-                    Color(red: 0.10, green: 0.07, blue: 0.18)
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
+            tileBackground
             LuminaMenuIcon.fittedLSPath(in: markSize)
                 .stroke(
                     LinearGradient(colors: inkGradient, startPoint: .leading, endPoint: .trailing),
@@ -43,12 +38,109 @@ struct LuminaBrandMark: View {
                         lineJoin: .round
                     )
                 )
-                .shadow(color: inkGradient[0].opacity(0.45), radius: side * 0.07)
+                .shadow(color: inkGradient[0].opacity(colorScheme == .light ? 0.25 : 0.45), radius: side * 0.07)
                 .frame(width: markSize.width, height: markSize.height)
         }
         .frame(width: side, height: side)
         .clipShape(RoundedRectangle(cornerRadius: side * 0.22, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: side * 0.22, style: .continuous)
+                .strokeBorder(tileBorder, lineWidth: 1)
+        )
         .accessibilityLabel("Lumina Studio")
+    }
+
+    @ViewBuilder
+    private var tileBackground: some View {
+        if colorScheme == .light {
+            LinearGradient(
+                colors: [
+                    Color(red: 0.96, green: 0.97, blue: 1.0),
+                    Color(red: 0.90, green: 0.92, blue: 0.99)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        } else {
+            LinearGradient(
+                colors: [
+                    Color(red: 0.16, green: 0.14, blue: 0.24),
+                    Color(red: 0.10, green: 0.09, blue: 0.16)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        }
+    }
+
+    private var tileBorder: Color {
+        colorScheme == .light
+            ? Color.primary.opacity(0.08)
+            : Color.white.opacity(0.12)
+    }
+}
+
+// MARK: - Scaled slider (larger thumb + accent tint; light-mode track chrome)
+
+struct LuminaSlider: View {
+    @Binding var value: Double
+    let range: ClosedRange<Double>
+    var step: Double? = nil
+    /// Use in compact toolbars (e.g. audio footer) — tighter padding, still keeps light-mode contrast.
+    var compact: Bool = false
+
+    @StateObject private var theme = ThemeManager.shared
+    @StateObject private var uiScale = UIScaleManager.shared
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        Group {
+            if let step {
+                Slider(value: $value, in: range, step: step)
+            } else {
+                Slider(value: $value, in: range)
+            }
+        }
+        .controlSize(uiScale.controlSize())
+        .tint(theme.current.color)
+        .frame(minHeight: DisplayScale.points(compact ? 22 : 32))
+        .padding(.vertical, compact ? DisplayScale.points(2) : DisplayScale.points(4))
+        .padding(.horizontal, colorScheme == .light ? DisplayScale.points(compact ? 4 : 6) : 0)
+        .background(lightModeTrackBackground)
+    }
+
+    @ViewBuilder
+    private var lightModeTrackBackground: some View {
+        if colorScheme == .light {
+            RoundedRectangle(cornerRadius: DisplayScale.points(compact ? 6 : 8), style: .continuous)
+                .fill(Color.primary.opacity(0.05))
+                .overlay(
+                    RoundedRectangle(cornerRadius: DisplayScale.points(compact ? 6 : 8), style: .continuous)
+                        .strokeBorder(Color.luminaBorder, lineWidth: 1)
+                )
+        }
+    }
+}
+
+/// Label + value row used above sliders for consistent hierarchy.
+struct LuminaSliderLabel: View {
+    let title: String
+    var value: String? = nil
+
+    @StateObject private var uiScale = UIScaleManager.shared
+
+    var body: some View {
+        HStack {
+            Text(title)
+                .font(uiScale.scaledFont(13, weight: .medium))
+                .foregroundStyle(.primary)
+            Spacer()
+            if let value {
+                Text(value)
+                    .font(uiScale.scaledFont(12).monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+        }
     }
 }
 
@@ -179,27 +271,32 @@ struct LuminaHintBubble: View {
     var style: Style = .info
     var onDismiss: (() -> Void)? = nil
 
+    @StateObject private var uiScale = UIScaleManager.shared
+
     var body: some View {
         HStack(alignment: .top, spacing: DisplayScale.points(10)) {
             Image(systemName: icon)
-                .font(.caption.weight(.semibold))
+                .font(uiScale.scaledFont(12, weight: .semibold))
                 .foregroundStyle(style.iconColor)
                 .frame(width: DisplayScale.points(16), alignment: .center)
                 .padding(.top, 1)
 
             Text(message)
-                .font(.caption)
+                .font(uiScale.scaledFont(12))
                 .foregroundStyle(.primary)
                 .fixedSize(horizontal: false, vertical: true)
 
             if let onDismiss {
                 Button(action: onDismiss) {
                     Image(systemName: "xmark")
-                        .font(.caption2.weight(.semibold))
+                        .font(uiScale.scaledFont(10, weight: .semibold))
                         .foregroundStyle(.secondary)
+                        .frame(width: uiScale.touchTarget() * 0.6, height: uiScale.touchTarget() * 0.6)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .help("Dismiss")
+                .accessibilityLabel("Dismiss")
             }
         }
         .padding(DisplayScale.points(10))

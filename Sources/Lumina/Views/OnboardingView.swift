@@ -5,38 +5,19 @@ struct OnboardingView: View {
     var onContinue: () -> Void
 
     @StateObject private var themeManager = ThemeManager.shared
-
-    private let inkGradient: [Color] = [
-        Color(red: 0.62, green: 0.87, blue: 1.0),
-        Color(red: 0.72, green: 0.62, blue: 1.0),
-        Color(red: 1.0, green: 0.78, blue: 0.55)
-    ]
+    @StateObject private var mediaAccess = MediaAccessSettings.shared
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         VStack(spacing: 0) {
-            // Brand header — same cursive LS as splash/menu bar (no missing bundle image).
             ZStack {
-                LinearGradient(
-                    colors: [
-                        Color(red: 0.06, green: 0.08, blue: 0.16),
-                        Color(red: 0.10, green: 0.07, blue: 0.18)
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-                CursiveLSView(
-                    lineWidth: 2.6,
-                    color: .white,
-                    animate: false,
-                    gradientColors: inkGradient,
-                    glowRadius: 5
-                )
-                .scaledFrame(width: 120, height: 68)
+                heroBackground
+                LuminaBrandMark(side: DisplayScale.points(72))
             }
-            .frame(height: DisplayScale.points(130))
+            .frame(height: DisplayScale.points(120))
             .clipped()
 
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: DisplayScale.points(18)) {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Welcome to Lumina Studio")
                         .font(.title2.bold())
@@ -44,12 +25,12 @@ struct OnboardingView: View {
                         .font(.subheadline)
                         .foregroundStyle(themeManager.current.color)
                 }
-                .padding(.top, 8)
+                .padding(.top, 4)
 
                 LuminaDivider()
 
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
+                    VStack(alignment: .leading, spacing: DisplayScale.points(14)) {
                         FeatureRow(
                             icon: "battery.100.bolt",
                             title: "Designed for Battery Life",
@@ -65,29 +46,62 @@ struct OnboardingView: View {
                             title: "Every Display, Independently",
                             description: "Set different wallpapers per monitor, sync playback, or run slideshows with Ken Burns."
                         )
+
+                        LuminaDivider()
+
+                        MediaAccessLocationChecklist(settings: mediaAccess)
                     }
                     .padding(.vertical, 4)
                 }
-                .frame(maxHeight: DisplayScale.points(260))
+                .frame(maxHeight: DisplayScale.points(340))
 
                 Spacer(minLength: 8)
 
                 HStack {
                     Spacer()
                     Button("Get Started") {
-                        onContinue()
+                        if !mediaAccess.enabledLocations.isEmpty {
+                            onContinue()
+                        }
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
                     .keyboardShortcut(.defaultAction)
+                    .disabled(mediaAccess.enabledLocations.isEmpty)
+                    .help(mediaAccess.enabledLocations.isEmpty
+                          ? "Select at least one allowed folder"
+                          : "Continue to Lumina Studio")
                 }
             }
             .padding(.horizontal, 28)
             .padding(.vertical, 24)
         }
-        .scaledFrame(width: 520, height: 560)
+        .scaledFrame(width: 520, height: 640)
         .background(Color.luminaBase)
         .tint(themeManager.current.color)
+    }
+
+    @ViewBuilder
+    private var heroBackground: some View {
+        if colorScheme == .light {
+            LinearGradient(
+                colors: [
+                    Color(red: 0.96, green: 0.97, blue: 1.0),
+                    Color(red: 0.90, green: 0.92, blue: 0.99)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        } else {
+            LinearGradient(
+                colors: [
+                    Color(red: 0.10, green: 0.09, blue: 0.16),
+                    Color(red: 0.06, green: 0.07, blue: 0.12)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        }
     }
 }
 

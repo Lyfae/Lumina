@@ -44,7 +44,7 @@ struct SettingsView: View {
                     batterySection
                     aboutSection
                 }
-                .padding(20)
+                .padding(DisplayScale.points(20))
             }
             .frame(maxHeight: .infinity)
         }
@@ -66,17 +66,19 @@ struct SettingsView: View {
     private var header: some View {
         HStack {
             Label("Settings", systemImage: "gearshape.fill")
-                .font(.title3.bold())
+                .font(uiScale.scaledFont(17, weight: .bold))
             Spacer()
             Button(action: onClose) {
-                Image(systemName: "xmark.circle.fill").font(.title2)
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: DisplayScale.points(20)))
             }
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
             .accessibilityLabel("Close settings")
             .keyboardShortcut(.cancelAction)
         }
-        .padding(.horizontal, 20).padding(.vertical, 14)
+        .padding(.horizontal, DisplayScale.points(20))
+        .padding(.vertical, DisplayScale.points(14))
         .background(.bar)
     }
 
@@ -95,20 +97,21 @@ struct SettingsView: View {
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
-                .frame(maxWidth: 280)
+                .controlSize(uiScale.controlSize())
+                .frame(maxWidth: DisplayScale.points(280))
             }
 
             LuminaDivider()
 
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: DisplayScale.points(8)) {
                 Text("Accent Color")
-                    .font(.subheadline.weight(.medium))
-                HStack(spacing: 8) {
+                    .font(uiScale.scaledFont(13, weight: .medium))
+                HStack(spacing: DisplayScale.points(8)) {
                     ForEach(AccentTheme.allCases) { theme in
                         Button { themeManager.set(theme) } label: {
                             Circle()
                                 .fill(theme == .system ? AnyShapeStyle(Color.secondary.opacity(0.6)) : AnyShapeStyle(theme.color))
-                                .frame(width: 20, height: 20)
+                                .frame(width: DisplayScale.points(22), height: DisplayScale.points(22))
                                 .overlay(Circle().strokeBorder(themeManager.current == theme ? Color.primary : Color.clear, lineWidth: 2))
                         }
                         .buttonStyle(.plain)
@@ -126,67 +129,65 @@ struct SettingsView: View {
 
     private var interfaceSection: some View {
         SettingsCard(icon: "textformat.size", title: "Interface Size") {
-            settingRow(
-                title: "Icon & control scale",
-                subtitle: "Make buttons, thumbnails, and toolbar icons larger or more compact."
-            ) {
-                Picker("", selection: uiScaleBinding) {
-                    ForEach(UIScaleManager.Preset.allCases) { preset in
-                        Text(preset.label).tag(preset)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-            }
+            Text("Make buttons, thumbnails, and toolbar icons larger or more compact.")
+                .font(uiScale.scaledFont(11))
+                .foregroundStyle(.secondary)
 
-            HStack(spacing: DisplayScale.points(14)) {
+            HStack(spacing: DisplayScale.points(10)) {
                 ForEach(UIScaleManager.Preset.allCases) { preset in
-                    VStack(spacing: DisplayScale.points(6)) {
-                        Image(systemName: "square.grid.2x2.fill")
-                            .font(.system(size: preset.sampleIconSize, weight: .semibold))
-                            .foregroundStyle(uiScale.preset == preset ? themeManager.current.color : .secondary)
-                        Text(preset.label)
-                            .font(.system(size: DisplayScale.points(10), weight: .medium))
-                            .foregroundStyle(uiScale.preset == preset ? .primary : .secondary)
+                    Button {
+                        uiScale.set(preset)
+                    } label: {
+                        VStack(spacing: DisplayScale.points(6)) {
+                            Image(systemName: "square.grid.2x2.fill")
+                                .font(.system(size: DisplayScale.points(preset.sampleIconSize), weight: .semibold))
+                                .foregroundStyle(uiScale.preset == preset ? themeManager.current.color : .secondary)
+                            Text(preset.label)
+                                .font(.system(size: DisplayScale.points(10), weight: .medium))
+                                .foregroundStyle(uiScale.preset == preset ? .primary : .secondary)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, DisplayScale.points(10))
+                        .background(
+                            RoundedRectangle(cornerRadius: DisplayScale.points(8), style: .continuous)
+                                .fill(uiScale.preset == preset ? themeManager.current.color.opacity(0.12) : Color.primary.opacity(0.04))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: DisplayScale.points(8), style: .continuous)
+                                .strokeBorder(uiScale.preset == preset ? themeManager.current.color.opacity(0.4) : Color.clear, lineWidth: 1)
+                        )
+                        .contentShape(Rectangle())
                     }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, DisplayScale.points(10))
-                    .background(
-                        RoundedRectangle(cornerRadius: DisplayScale.points(8), style: .continuous)
-                            .fill(uiScale.preset == preset ? themeManager.current.color.opacity(0.12) : Color.primary.opacity(0.04))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: DisplayScale.points(8), style: .continuous)
-                            .strokeBorder(uiScale.preset == preset ? themeManager.current.color.opacity(0.4) : Color.clear, lineWidth: 1)
-                    )
-                    .contentShape(Rectangle())
-                    .onTapGesture { uiScale.set(preset) }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(preset.label)
+                    .accessibilityAddTraits(uiScale.preset == preset ? .isSelected : [])
                 }
             }
 
             Text(uiScale.preset.subtitle)
-                .font(.caption)
+                .font(uiScale.scaledFont(11))
                 .foregroundStyle(.secondary)
         }
-    }
-
-    private var uiScaleBinding: Binding<UIScaleManager.Preset> {
-        Binding(get: { uiScale.preset }, set: { uiScale.set($0) })
     }
 
     // MARK: - Privacy
 
     private var privacySection: some View {
         SettingsCard(icon: "hand.raised.fill", title: "Privacy") {
-            toggleRow(
-                title: "Allow Documents & Downloads",
-                subtitle: "When off, Lumina only uses files from Pictures and Movies (Photos & video library). Turn on to also pick wallpapers from Documents or Downloads.",
-                isOn: $mediaAccess.allowDocumentsAndDownloads
-            )
+            MediaAccessLocationChecklist(settings: mediaAccess, showsHeader: true)
 
-            Text(MediaAccessPolicy.restrictionHint())
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            LuminaDivider()
+
+            HStack {
+                Button("Reset to recommended defaults") {
+                    mediaAccess.resetToDefaults()
+                }
+                .buttonStyle(.borderless)
+                .font(uiScale.scaledFont(11, weight: .medium))
+                .foregroundStyle(themeManager.current.color)
+                .help("Pictures and Movies only")
+                Spacer(minLength: 0)
+            }
         }
     }
 
@@ -204,8 +205,8 @@ struct SettingsView: View {
             LuminaDivider()
 
             toggleRow(
-                title: "Remember wallpapers on startup",
-                subtitle: "Restore each display's wallpaper when Lumina launches.",
+                title: "Remember last wallpapers in Studio",
+                subtitle: "Show each display’s last wallpaper in Studio. To restore on launch, pin with Keep on startup.",
                 isOn: Binding(
                     get: { store.persistAssignments },
                     set: { store.savePersistencePreference($0) }
@@ -301,7 +302,8 @@ struct SettingsView: View {
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
-                .frame(maxWidth: 320)
+                .controlSize(uiScale.controlSize())
+                .frame(maxWidth: DisplayScale.points(320))
                 .onChange(of: performanceProfile) { _, v in
                     powerManager?.performanceProfile = v
                     store.reapplyPowerPolicy()
@@ -323,14 +325,15 @@ struct SettingsView: View {
     @ViewBuilder
     private func linkRow(title: String, icon: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            HStack(spacing: 10) {
+            HStack(spacing: DisplayScale.points(10)) {
                 Image(systemName: icon)
+                    .font(.system(size: uiScale.iconSize(.card)))
                     .foregroundStyle(themeManager.current.color)
-                    .frame(width: 18)
-                Text(title).font(.subheadline)
+                    .frame(width: DisplayScale.points(20))
+                Text(title).font(uiScale.scaledFont(13))
                 Spacer()
                 Image(systemName: "chevron.right")
-                    .font(.caption2).foregroundStyle(.tertiary)
+                    .font(uiScale.scaledFont(10)).foregroundStyle(.secondary)
             }
             .contentShape(Rectangle())
         }
@@ -349,11 +352,11 @@ struct SettingsView: View {
         subtitle: String? = nil,
         @ViewBuilder trailing: () -> Trailing
     ) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.subheadline.weight(.medium))
+        VStack(alignment: .leading, spacing: DisplayScale.points(8)) {
+            VStack(alignment: .leading, spacing: DisplayScale.points(2)) {
+                Text(title).font(uiScale.scaledFont(13, weight: .medium))
                 if let subtitle {
-                    Text(subtitle).font(.caption).foregroundStyle(.secondary)
+                    Text(subtitle).font(uiScale.scaledFont(11)).foregroundStyle(.secondary)
                 }
             }
             trailing()
@@ -363,12 +366,13 @@ struct SettingsView: View {
     @ViewBuilder
     private func toggleRow(title: String, subtitle: String, isOn: Binding<Bool>) -> some View {
         Toggle(isOn: isOn) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.subheadline.weight(.medium))
-                Text(subtitle).font(.caption).foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: DisplayScale.points(2)) {
+                Text(title).font(uiScale.scaledFont(13, weight: .medium))
+                Text(subtitle).font(uiScale.scaledFont(11)).foregroundStyle(.secondary)
             }
         }
         .toggleStyle(.switch)
+        .controlSize(uiScale.controlSize())
     }
 
     // MARK: - Actions
@@ -416,25 +420,28 @@ private struct SettingsCard<Content: View>: View {
     let title: String
     @ViewBuilder let content: () -> Content
 
+    @StateObject private var uiScale = UIScaleManager.shared
+    @StateObject private var theme = ThemeManager.shared
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: DisplayScale.points(10)) {
                 Image(systemName: icon)
-                    .font(.system(size: UIScaleManager.shared.iconSize(.card), weight: .semibold))
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: uiScale.iconSize(.card), weight: .semibold))
+                    .foregroundStyle(theme.current.color)
                     .frame(width: DisplayScale.points(22))
                 Text(title)
-                    .font(.system(size: DisplayScale.points(14), weight: .semibold))
+                    .font(uiScale.scaledFont(14, weight: .semibold))
             }
-            .padding(.horizontal, 14)
-            .padding(.top, 12)
-            .padding(.bottom, 8)
+            .padding(.horizontal, DisplayScale.points(14))
+            .padding(.top, DisplayScale.points(12))
+            .padding(.bottom, DisplayScale.points(8))
 
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: DisplayScale.points(12)) {
                 content()
             }
-            .padding(.horizontal, 14)
-            .padding(.bottom, 14)
+            .padding(.horizontal, DisplayScale.points(14))
+            .padding(.bottom, DisplayScale.points(14))
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.luminaCard, in: RoundedRectangle(cornerRadius: 10))

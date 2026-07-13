@@ -18,6 +18,7 @@ struct SlideshowConfigView: View {
     @State private var isDropTargeted: Bool = false
 
     @StateObject private var themeManager = ThemeManager.shared
+    @StateObject private var uiScale = UIScaleManager.shared
 
     private var libraryImages: [WallpaperManagerStore.RecentMedia] {
         store.recentMedia.filter { $0.mediaType == .image }
@@ -28,7 +29,6 @@ struct SlideshowConfigView: View {
             header
             LuminaDivider()
 
-            // Queue / drop canvas (also accepts dragged image files).
             queueArea
                 .onDrop(of: [.fileURL], isTargeted: $isDropTargeted, perform: handleDrop)
 
@@ -51,22 +51,31 @@ struct SlideshowConfigView: View {
     // MARK: - Header
 
     private var header: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: DisplayScale.points(10)) {
             Image(systemName: "photo.stack.fill")
+                .font(.system(size: uiScale.iconSize(.card), weight: .semibold))
                 .foregroundStyle(themeManager.current.color)
             VStack(alignment: .leading, spacing: 1) {
-                Text("Configure Slideshow").font(.headline)
-                Text(monitor.name).font(.caption).foregroundStyle(.secondary)
+                Text("Configure Slideshow")
+                    .font(uiScale.scaledFont(15, weight: .semibold))
+                Text(monitor.name)
+                    .font(uiScale.scaledFont(12))
+                    .foregroundStyle(.secondary)
             }
             Spacer()
             Button(action: onClose) {
-                Image(systemName: "xmark.circle.fill").font(.title2)
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: DisplayScale.points(20)))
             }
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
+            .frame(width: uiScale.touchTarget(), height: uiScale.touchTarget())
+            .contentShape(Rectangle())
             .keyboardShortcut(.cancelAction)
+            .accessibilityLabel("Close")
         }
-        .padding(.horizontal, 18).padding(.vertical, 14)
+        .padding(.horizontal, DisplayScale.points(18))
+        .padding(.vertical, DisplayScale.points(14))
         .background(.bar)
     }
 
@@ -91,14 +100,16 @@ struct SlideshowConfigView: View {
     }
 
     private var emptyDropState: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: DisplayScale.points(12)) {
             Image(systemName: "square.and.arrow.down.on.square")
-                .font(.system(size: 44))
+                .font(.system(size: DisplayScale.points(44)))
                 .foregroundStyle(isDropTargeted ? themeManager.current.color : Color.secondary.opacity(0.4))
             Text("Drag & drop images here")
-                .font(.callout).foregroundStyle(.secondary)
+                .font(uiScale.scaledFont(14))
+                .foregroundStyle(.secondary)
             Text("…or add them from your Library below, or with the button.")
-                .font(.caption).foregroundStyle(.tertiary)
+                .font(uiScale.scaledFont(12))
+                .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
             Button {
                 addImagesViaPanel()
@@ -106,24 +117,30 @@ struct SlideshowConfigView: View {
                 Label("Add Images…", systemImage: "plus")
             }
             .buttonStyle(.borderedProminent)
+            .controlSize(uiScale.controlSize())
             .padding(.top, 2)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(40)
+        .padding(DisplayScale.points(40))
     }
 
     private var queueList: some View {
         VStack(spacing: 0) {
             HStack {
                 Text("^[\(items.count) image](inflect: true) • drag to reorder")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(uiScale.scaledFont(12))
+                    .foregroundStyle(.secondary)
                 Spacer()
                 Text("Drop more here")
-                    .font(.caption2).foregroundStyle(.tertiary)
+                    .font(uiScale.scaledFont(11))
+                    .foregroundStyle(.secondary)
                 Button("Clear All") { items.removeAll() }
-                    .font(.caption2).buttonStyle(.plain).foregroundStyle(.secondary)
+                    .font(uiScale.scaledFont(11))
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
             }
-            .padding(.horizontal, 18).padding(.vertical, 8)
+            .padding(.horizontal, DisplayScale.points(18))
+            .padding(.vertical, DisplayScale.points(8))
 
             List {
                 ForEach(items, id: \.self) { path in
@@ -144,13 +161,14 @@ struct SlideshowConfigView: View {
     // MARK: - Library Picker
 
     private var librarySection: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: DisplayScale.points(6)) {
             Text("From your Library")
-                .font(.caption.weight(.medium)).foregroundStyle(.secondary)
-                .padding(.horizontal, 18)
+                .font(uiScale.scaledFont(12, weight: .medium))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, DisplayScale.points(18))
 
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
+                HStack(spacing: DisplayScale.points(8)) {
                     ForEach(libraryImages) { item in
                         let inQueue = items.contains(item.url.path)
                         Button {
@@ -167,30 +185,26 @@ struct SlideshowConfigView: View {
                         .help(inQueue ? "Remove from slideshow" : "Add to slideshow")
                     }
                 }
-                .padding(.horizontal, 18)
+                .padding(.horizontal, DisplayScale.points(18))
                 .padding(.bottom, 2)
             }
-            .frame(height: 70)
+            .frame(height: DisplayScale.points(70))
         }
-        .padding(.vertical, 8)
+        .padding(.vertical, DisplayScale.points(8))
     }
 
     // MARK: - Settings
 
     private var settingsBar: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: DisplayScale.points(12)) {
             VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text("Interval").font(.subheadline).foregroundStyle(.secondary)
-                    Spacer()
-                    Text("\(Int(interval))s per image")
-                        .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-                }
-                Slider(value: $interval, in: 3...60, step: 1)
+                LuminaSliderLabel(title: "Interval", value: "\(Int(interval))s per image")
+                LuminaSlider(value: $interval, range: 3...60, step: 1)
             }
 
             HStack {
-                Text("Transition").font(.subheadline).foregroundStyle(.secondary)
+                Text("Transition")
+                    .font(uiScale.scaledFont(13, weight: .medium))
                 Spacer()
                 Picker("", selection: $transition) {
                     ForEach(MonitorAssignment.SlideshowTransition.allCases, id: \.self) { t in
@@ -199,22 +213,26 @@ struct SlideshowConfigView: View {
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
+                .controlSize(uiScale.controlSize())
                 .scaledFrame(width: 160)
             }
 
             Toggle(isOn: $kenBurnsEnabled) {
                 VStack(alignment: .leading, spacing: 2) {
                     Label("Ken Burns effect", systemImage: "camera.aperture")
-                        .font(.subheadline.weight(.medium))
+                        .font(uiScale.scaledFont(13, weight: .medium))
                     Text("Slow cinematic pan & zoom on each image — like a documentary.")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(uiScale.scaledFont(11))
+                        .foregroundStyle(.secondary)
                 }
             }
             .toggleStyle(.switch)
+            .controlSize(uiScale.controlSize())
             .accessibilityLabel("Ken Burns effect")
             .accessibilityHint("Enable slow pan and zoom animation on slideshow images")
         }
-        .padding(.horizontal, 18).padding(.vertical, 14)
+        .padding(.horizontal, DisplayScale.points(18))
+        .padding(.vertical, DisplayScale.points(14))
     }
 
     // MARK: - Footer
@@ -227,11 +245,13 @@ struct SlideshowConfigView: View {
                 Label("Add Images…", systemImage: "plus")
             }
             .buttonStyle(.bordered)
+            .controlSize(uiScale.controlSize())
 
             Spacer()
 
             Button("Cancel", action: onClose)
                 .buttonStyle(.bordered)
+                .controlSize(uiScale.controlSize())
 
             Button {
                 save()
@@ -240,9 +260,11 @@ struct SlideshowConfigView: View {
                       systemImage: items.isEmpty ? "stop.circle" : "play.fill")
             }
             .buttonStyle(.borderedProminent)
+            .controlSize(uiScale.controlSize())
             .keyboardShortcut(.defaultAction)
         }
-        .padding(.horizontal, 18).padding(.vertical, 14)
+        .padding(.horizontal, DisplayScale.points(18))
+        .padding(.vertical, DisplayScale.points(14))
     }
 
     // MARK: - Actions
@@ -334,41 +356,49 @@ private struct SlideshowQueueRow: View {
     let position: Int
     let onRemove: () -> Void
 
+    @StateObject private var uiScale = UIScaleManager.shared
     @State private var thumbnail: NSImage?
 
     private var url: URL { URL(fileURLWithPath: (path as NSString).expandingTildeInPath) }
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: DisplayScale.points(12)) {
             Text("\(position)")
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(.tertiary)
+                .font(uiScale.scaledFont(12).monospacedDigit())
+                .foregroundStyle(.secondary)
                 .scaledFrame(width: 18)
 
             thumbView
                 .scaledFrame(width: 64, height: 36)
-                .clipShape(RoundedRectangle(cornerRadius: 5))
-                .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Color.luminaBorder, lineWidth: 0.5))
+                .clipShape(RoundedRectangle(cornerRadius: DisplayScale.points(5)))
+                .overlay(
+                    RoundedRectangle(cornerRadius: DisplayScale.points(5))
+                        .strokeBorder(Color.luminaBorder, lineWidth: 0.5)
+                )
 
             Text(url.lastPathComponent)
-                .font(.callout)
+                .font(uiScale.scaledFont(13, weight: .medium))
                 .lineLimit(1)
                 .truncationMode(.middle)
 
             Spacer()
 
             Image(systemName: "line.3.horizontal")
-                .foregroundStyle(.tertiary)
-                .font(.caption)
+                .foregroundStyle(.secondary)
+                .font(uiScale.scaledFont(11))
 
             Button(action: onRemove) {
                 Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: DisplayScale.points(16)))
                     .foregroundStyle(.secondary)
+                    .frame(width: uiScale.touchTarget(), height: uiScale.touchTarget())
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .help("Remove from slideshow")
+            .accessibilityLabel("Remove from slideshow")
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, DisplayScale.points(4))
         .task(id: path) {
             thumbnail = await ThumbnailService.shared.smallThumbnail(for: url, mediaType: .image)
         }
@@ -403,17 +433,17 @@ private struct LibraryImageThumb: View {
                 }
             }
             .scaledFrame(width: 92, height: 52)
-            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .clipShape(RoundedRectangle(cornerRadius: DisplayScale.points(6)))
             .overlay(
-                RoundedRectangle(cornerRadius: 6)
+                RoundedRectangle(cornerRadius: DisplayScale.points(6))
                     .strokeBorder(selected ? accent : Color.luminaBorder, lineWidth: selected ? 2 : 0.5)
             )
 
             Image(systemName: selected ? "checkmark.circle.fill" : "plus.circle.fill")
-                .font(.system(size: 14))
+                .font(.system(size: DisplayScale.points(14)))
                 .foregroundStyle(selected ? accent : .white)
                 .background(Circle().fill(.black.opacity(0.5)))
-                .padding(3)
+                .padding(DisplayScale.points(3))
         }
         .task(id: url.path) {
             thumbnail = await ThumbnailService.shared.smallThumbnail(for: url, mediaType: .image)

@@ -86,6 +86,18 @@ final class UIScaleManager: ObservableObject {
     }
 
     func touchTarget() -> CGFloat { DisplayScale.points(44) }
+
+    /// macOS control size for sliders, toggles, and pickers.
+    func controlSize() -> ControlSize {
+        switch preset {
+        case .compact, .standard: return .regular
+        case .comfortable, .large: return .large
+        }
+    }
+
+    func scaledFont(_ base: CGFloat, weight: Font.Weight = .regular) -> Font {
+        .system(size: DisplayScale.points(base), weight: weight)
+    }
 }
 
 extension Notification.Name {

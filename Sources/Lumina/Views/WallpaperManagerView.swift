@@ -123,7 +123,7 @@ struct WallpaperManagerView: View {
             HStack(spacing: DisplayScale.points(8)) {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: uiScale.iconSize(.card)))
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.secondary)
                 TextField("Search library…", text: $searchQuery)
                     .textFieldStyle(.plain)
                     .font(.system(size: DisplayScale.points(14)))
@@ -179,7 +179,7 @@ struct WallpaperManagerView: View {
             VStack(alignment: .leading, spacing: DisplayScale.points(12)) {
                 LuminaSectionHeader(
                     title: "Library",
-                    subtitle: "Tap a wallpaper to apply it to the selected display",
+                    subtitle: "Click a wallpaper to apply it to the selected display",
                     trailing: "\(filteredMedia.count)"
                 )
 
@@ -277,6 +277,9 @@ struct WallpaperManagerView: View {
                                 .foregroundStyle(.tertiary)
                             Text(monitorLabel(for: monitor))
                                 .font(.system(size: DisplayScale.points(15), weight: .bold))
+                            Text(monitor.resolution)
+                                .font(.system(size: DisplayScale.points(11)))
+                                .foregroundStyle(.secondary)
                         }
 
                         if let assignment = store.assignment(for: monitor.id),
@@ -303,11 +306,11 @@ struct WallpaperManagerView: View {
                 Button {
                     NotificationCenter.default.post(name: .togglePhysicalSetupWindow, object: nil)
                 } label: {
-                    Label("Switch Display", systemImage: "display.2")
+                    Label("Choose Display…", systemImage: "display.2")
                         .font(.system(size: DisplayScale.points(13), weight: .semibold))
                 }
                 .buttonStyle(.bordered)
-                .controlSize(.regular)
+                .controlSize(uiScale.controlSize())
             }
             .padding(.horizontal, LuminaLayout.contentPadding)
             .padding(.vertical, DisplayScale.points(14))
@@ -504,33 +507,41 @@ private struct AudioFooterBar: View {
 
                 // Progress — expands to fill available width
                 if audioManager.duration > 0 {
-                    HStack(spacing: 8) {
+                    HStack(spacing: DisplayScale.points(8)) {
                         Text(formatAudioTime(audioManager.currentTime))
-                            .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-                            .frame(width: 38, alignment: .trailing)
-                        Slider(
+                            .font(uiScale.scaledFont(11).monospacedDigit())
+                            .foregroundStyle(.secondary)
+                            .frame(width: DisplayScale.points(38), alignment: .trailing)
+                        LuminaSlider(
                             value: Binding(
                                 get: { audioManager.currentTime },
                                 set: { audioManager.seekToTime($0) }
                             ),
-                            in: 0...max(audioManager.duration, 1)
+                            range: 0...max(audioManager.duration, 1),
+                            compact: true
                         )
                         .help("Seek")
                         Text(formatAudioTime(audioManager.duration))
-                            .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-                            .frame(width: 38, alignment: .leading)
+                            .font(uiScale.scaledFont(11).monospacedDigit())
+                            .foregroundStyle(.secondary)
+                            .frame(width: DisplayScale.points(38), alignment: .leading)
                     }
                     .frame(maxWidth: .infinity)
                 } else {
-                    Spacer(minLength: 12)
+                    Spacer(minLength: DisplayScale.points(12))
                 }
 
                 // Volume
-                HStack(spacing: 8) {
+                HStack(spacing: DisplayScale.points(8)) {
                     Image(systemName: audioManager.volume < 0.01 ? "speaker.slash.fill" : "speaker.wave.2.fill")
-                        .font(.system(size: 13)).foregroundStyle(.secondary)
-                        .frame(width: 18, alignment: .leading)
-                    Slider(value: Binding(get: { audioManager.volume }, set: { audioManager.setVolume($0) }), in: 0...1)
+                        .font(.system(size: uiScale.iconSize(.card)))
+                        .foregroundStyle(.secondary)
+                        .frame(width: DisplayScale.points(18), alignment: .leading)
+                    LuminaSlider(
+                        value: Binding(get: { audioManager.volume }, set: { audioManager.setVolume($0) }),
+                        range: 0...1,
+                        compact: true
+                    )
                         .frame(width: 84).help("Ambient audio volume")
                 }
 
@@ -613,11 +624,11 @@ private struct AudioFooterBar: View {
         VStack(spacing: 0) {
             HStack {
                 Text("Queue")
-                    .font(.caption.weight(.semibold))
+                    .font(uiScale.scaledFont(12, weight: .semibold))
                     .foregroundStyle(.secondary)
                 Spacer()
                 Button("Clear All") { audioManager.clearLibrary() }
-                    .font(.caption2)
+                    .font(uiScale.scaledFont(11))
                     .buttonStyle(.plain)
                     .foregroundStyle(.secondary)
                     .disabled(audioManager.library.isEmpty)
@@ -632,18 +643,18 @@ private struct AudioFooterBar: View {
                         // Now-playing indicator
                         if isActive {
                             Image(systemName: audioManager.isPlaying ? "speaker.wave.2.fill" : "pause.fill")
-                                .font(.system(size: 10))
+                                .font(.system(size: DisplayScale.points(11)))
                                 .foregroundStyle(themeManager.current.color)
-                                .frame(width: 14)
+                                .frame(width: DisplayScale.points(16))
                         } else {
                             Text("\(idx + 1)")
-                                .font(.caption2.monospacedDigit())
-                                .foregroundStyle(.tertiary)
-                                .frame(width: 14)
+                                .font(uiScale.scaledFont(11).monospacedDigit())
+                                .foregroundStyle(.secondary)
+                                .frame(width: DisplayScale.points(16))
                         }
 
                         Text(track.name)
-                            .font(.caption)
+                            .font(uiScale.scaledFont(13, weight: .medium))
                             .lineLimit(1)
                             .truncationMode(.middle)
                             .foregroundStyle(isActive ? themeManager.current.color : .primary)
@@ -651,20 +662,22 @@ private struct AudioFooterBar: View {
                         Spacer()
 
                         Text(formatQueueDuration(track))
-                            .font(.caption2.monospacedDigit())
-                            .foregroundStyle(.tertiary)
+                            .font(uiScale.scaledFont(11).monospacedDigit())
+                            .foregroundStyle(.secondary)
 
                         Button {
                             audioManager.removeFromLibrary(track: track)
                         } label: {
                             Image(systemName: "xmark.circle.fill")
-                                .font(.system(size: 12))
-                                .foregroundStyle(.tertiary)
+                                .font(.system(size: DisplayScale.points(14)))
+                                .foregroundStyle(.secondary)
+                                .frame(width: uiScale.touchTarget() * 0.7, height: uiScale.touchTarget() * 0.7)
+                                .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel("Remove \(track.name) from queue")
                     }
-                    .padding(.vertical, 2)
+                    .padding(.vertical, DisplayScale.points(2))
                     .listRowBackground(
                         isActive ? themeManager.current.color.opacity(0.08) : Color.clear
                     )
@@ -677,7 +690,7 @@ private struct AudioFooterBar: View {
                 .onMove { audioManager.moveTrack(from: $0, to: $1) }
             }
             .listStyle(.plain)
-            .frame(height: min(CGFloat(audioManager.library.count) * 30 + 8, 130))
+            .frame(height: min(CGFloat(audioManager.library.count) * DisplayScale.points(34) + 8, DisplayScale.points(150)))
         }
         .background(Color.luminaBase)
     }
@@ -735,6 +748,8 @@ struct WallpaperGridItem: View {
                                 Image(systemName: "checkmark.circle.fill")
                                     .font(.system(size: uiScale.iconSize(.transport)))
                                     .foregroundStyle(.white)
+                                    .frame(width: uiScale.touchTarget(), height: uiScale.touchTarget())
+                                    .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
                             .help("Set as Wallpaper")
@@ -744,6 +759,8 @@ struct WallpaperGridItem: View {
                                 Image(systemName: isFavorite ? "star.fill" : "star")
                                     .font(.system(size: uiScale.iconSize(.filter)))
                                     .foregroundStyle(isFavorite ? Color.yellow : .white)
+                                    .frame(width: uiScale.touchTarget(), height: uiScale.touchTarget())
+                                    .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
                             .help(isFavorite ? "Remove from Favorites" : "Add to Favorites")
@@ -760,7 +777,7 @@ struct WallpaperGridItem: View {
                     .frame(width: thumbW, height: thumbH)
                     .overlay(alignment: .topTrailing) {
                         Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 15))
+                            .font(.system(size: DisplayScale.points(15)))
                             .foregroundStyle(Color.accentColor)
                             .background(Circle().fill(Color.black).padding(2))
                             .padding(5)
@@ -774,7 +791,7 @@ struct WallpaperGridItem: View {
             // Favorite star (always visible if favorited and not hovered)
             if isFavorite && !isHovered {
                 Image(systemName: "star.fill")
-                    .font(.system(size: 11))
+                    .font(.system(size: DisplayScale.points(12)))
                     .foregroundStyle(Color.yellow)
                     .padding(5)
                     .frame(width: thumbW, height: thumbH, alignment: .topTrailing)
@@ -788,15 +805,15 @@ struct WallpaperGridItem: View {
         .accessibilityAddTraits(.isButton)
         .overlay(alignment: .bottom) {
             Text(recent.displayName)
-                .font(.caption2)
+                .font(uiScale.scaledFont(12, weight: .medium))
                 .lineLimit(1)
                 .truncationMode(.middle)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 3)
+                .padding(.horizontal, DisplayScale.points(6))
+                .padding(.vertical, DisplayScale.points(3))
                 .frame(width: thumbW, alignment: .leading)
-                .offset(y: 18)
+                .offset(y: DisplayScale.points(20))
         }
-        .padding(.bottom, 18)
+        .padding(.bottom, DisplayScale.points(20))
         .contextMenu {
             Button { onApply() } label: {
                 Label("Set as Wallpaper", systemImage: "photo.on.rectangle")
@@ -829,10 +846,13 @@ struct WallpaperGridItem: View {
                 } else if isLoading {
                     ProgressView().scaleEffect(0.6)
                 } else {
-                    VStack(spacing: 4) {
+                    VStack(spacing: DisplayScale.points(4)) {
                         Image(systemName: recent.mediaType == .video ? "video.slash" : "photo")
-                            .font(.title3).foregroundStyle(.secondary)
-                        Text("No preview").font(.caption2).foregroundStyle(.tertiary)
+                            .font(.system(size: uiScale.iconSize(.card)))
+                            .foregroundStyle(.secondary)
+                        Text("No preview")
+                            .font(uiScale.scaledFont(11))
+                            .foregroundStyle(.secondary)
                     }
                 }
             }
@@ -848,10 +868,10 @@ struct WallpaperGridItem: View {
             }
         }()
         Image(systemName: icon)
-            .font(.system(size: 9, weight: .bold))
+            .font(.system(size: DisplayScale.points(10), weight: .bold))
             .foregroundStyle(.white)
-            .padding(4)
-            .background(color.opacity(0.8), in: RoundedRectangle(cornerRadius: 4))
+            .padding(DisplayScale.points(5))
+            .background(color.opacity(0.8), in: RoundedRectangle(cornerRadius: DisplayScale.points(4)))
     }
 
     private func loadThumbnail() async {

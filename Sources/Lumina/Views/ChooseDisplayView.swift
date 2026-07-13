@@ -8,28 +8,26 @@ struct ChooseDisplayView: View {
     var onRemoveWallpaper: (String) -> Void
     var onDone: () -> Void
 
+    @StateObject private var uiScale = UIScaleManager.shared
+    @StateObject private var theme = ThemeManager.shared
+
     var body: some View {
         VStack(spacing: 0) {
-            // Header
-            VStack(spacing: 5) {
+            VStack(spacing: DisplayScale.points(6)) {
                 Text("Choose Display")
-                    .font(.title2.bold())
-                Text("Select a display below to configure its wallpaper and settings.")
-                    .font(.caption)
+                    .font(uiScale.scaledFont(18, weight: .bold))
+                Text("Select a display to configure its wallpaper and settings.")
+                    .font(uiScale.scaledFont(12))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
             }
-            .padding(.top, 20)
-            .padding(.horizontal, 24)
+            .padding(.top, DisplayScale.points(20))
+            .padding(.horizontal, DisplayScale.points(24))
 
-            Divider()
-                .padding(.top, 16)
+            LuminaDivider()
+                .padding(.top, DisplayScale.points(16))
 
-            // Monitor cards
-            // isSelected is derived from store.selectedMonitorID (@Published) so that
-            // changes trigger a re-render even when the backing @Binding is a plain
-            // stored property on an NSWindowController (which has no SwiftUI reactivity).
-            HStack(alignment: .top, spacing: 16) {
+            HStack(alignment: .top, spacing: DisplayScale.points(16)) {
                 ForEach(store.monitors) { monitor in
                     let index = (store.monitors.firstIndex(where: { $0.id == monitor.id }) ?? 0) + 1
                     let isSelected = store.selectedMonitorID == monitor.id
@@ -42,31 +40,29 @@ struct ChooseDisplayView: View {
                     )
                     .onTapGesture {
                         withAnimation(.easeInOut(duration: 0.15)) {
-                            selectedMonitorID = monitor.id        // keep external binding in sync
-                            store.selectedMonitorID = monitor.id  // reactive source of truth
+                            selectedMonitorID = monitor.id
+                            store.selectedMonitorID = monitor.id
                         }
                     }
                 }
             }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 20)
+            .padding(.horizontal, DisplayScale.points(24))
+            .padding(.vertical, DisplayScale.points(20))
 
-            Divider()
+            LuminaDivider()
 
-            // Footer
             HStack {
-                // Status
                 Group {
                     if let selectedID = store.selectedMonitorID,
                        let monitor = store.monitors.first(where: { $0.id == selectedID }) {
                         let index = (store.monitors.firstIndex(where: { $0.id == selectedID }) ?? 0) + 1
                         Label("S\(index) — \(monitor.name)", systemImage: "display")
-                            .font(.caption)
+                            .font(uiScale.scaledFont(12))
                             .foregroundStyle(.secondary)
                     } else {
                         Text("Click a display above to select it")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
+                            .font(uiScale.scaledFont(12))
+                            .foregroundStyle(.secondary)
                     }
                 }
 
@@ -76,14 +72,15 @@ struct ChooseDisplayView: View {
                     onDone()
                 }
                 .buttonStyle(.borderedProminent)
-                .controlSize(.regular)
+                .controlSize(uiScale.controlSize())
                 .keyboardShortcut(.defaultAction)
             }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 14)
+            .padding(.horizontal, DisplayScale.points(24))
+            .padding(.vertical, DisplayScale.points(14))
         }
         .scaledMinFrame(width: 580, height: 320)
-        .background(Color(NSColor.windowBackgroundColor))
+        .background(Color.luminaBase)
+        .tint(theme.current.color)
     }
 }
 
@@ -93,60 +90,56 @@ private struct MonitorDisplayCard: View {
     let assignment: MonitorAssignment?
     let isSelected: Bool
 
+    @StateObject private var uiScale = UIScaleManager.shared
+
     var body: some View {
-        VStack(spacing: 8) {
-            // Thumbnail with bounding box overlay
+        VStack(spacing: DisplayScale.points(8)) {
             ZStack(alignment: .bottomLeading) {
                 thumbnailContent
-                    .frame(height: 160)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .frame(height: DisplayScale.points(160))
+                    .clipShape(RoundedRectangle(cornerRadius: DisplayScale.points(8)))
 
-                // Monitor label badge (bottom-left)
                 Text("S\(index)")
-                    .font(.caption.bold())
+                    .font(uiScale.scaledFont(11, weight: .bold))
                     .foregroundStyle(.white)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
+                    .padding(.horizontal, DisplayScale.points(7))
+                    .padding(.vertical, DisplayScale.points(3))
                     .background(Color.black.opacity(0.65), in: RoundedRectangle(cornerRadius: 4))
-                    .padding(8)
+                    .padding(DisplayScale.points(8))
             }
-            // Selection bounding box
             .overlay(
-                RoundedRectangle(cornerRadius: 8)
+                RoundedRectangle(cornerRadius: DisplayScale.points(8))
                     .strokeBorder(
-                        isSelected ? Color.yellow : Color(NSColor.separatorColor),
+                        isSelected ? Color.yellow : Color.luminaBorder,
                         lineWidth: isSelected ? 3 : 1
                     )
             )
-            // Glow when selected
             .shadow(
                 color: isSelected ? Color.yellow.opacity(0.55) : .clear,
                 radius: isSelected ? 10 : 0
             )
-            // Small checkmark badge in top-right corner
             .overlay(alignment: .topTrailing) {
                 if isSelected {
                     Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 18, weight: .semibold))
+                        .font(.system(size: DisplayScale.points(18), weight: .semibold))
                         .foregroundStyle(Color.yellow)
                         .background(Color.black.opacity(0.7), in: Circle())
-                        .padding(8)
+                        .padding(DisplayScale.points(8))
                         .transition(.scale.combined(with: .opacity))
                 }
             }
 
-            // Resolution + name
             VStack(spacing: 2) {
                 Text(monitor.resolution)
-                    .font(.caption2)
+                    .font(uiScale.scaledFont(11))
                     .foregroundStyle(.secondary)
                 Text(monitor.name)
-                    .font(.caption)
-                    .fontWeight(isSelected ? .semibold : .regular)
+                    .font(uiScale.scaledFont(12, weight: isSelected ? .semibold : .regular))
                     .foregroundStyle(isSelected ? .primary : .secondary)
                     .lineLimit(1)
             }
         }
+        .frame(maxWidth: .infinity)
         .contentShape(Rectangle())
     }
 
@@ -157,19 +150,19 @@ private struct MonitorDisplayCard: View {
                 assignment: assignment,
                 liveCropRect: nil,
                 liveScaling: nil,
-                targetAspect: monitor.aspectRatio   // ultrawide/portrait displays previewed correctly
+                targetAspect: monitor.aspectRatio
             )
         } else {
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color(NSColor.controlBackgroundColor))
+            RoundedRectangle(cornerRadius: DisplayScale.points(8))
+                .fill(Color.luminaCard)
                 .overlay(
-                    VStack(spacing: 6) {
+                    VStack(spacing: DisplayScale.points(6)) {
                         Image(systemName: "photo")
-                            .font(.title2)
-                            .foregroundStyle(.tertiary)
+                            .font(.system(size: DisplayScale.points(22)))
+                            .foregroundStyle(.secondary)
                         Text("No wallpaper")
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
+                            .font(uiScale.scaledFont(11))
+                            .foregroundStyle(.secondary)
                     }
                 )
         }

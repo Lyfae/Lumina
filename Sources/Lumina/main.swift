@@ -741,7 +741,7 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         )
 
-        let size = DisplayScale.nsSize(width: 520, height: 560)
+        let size = DisplayScale.nsSize(width: 520, height: 640)
         let window = NSWindow(
             contentRect: NSRect(origin: .zero, size: size),
             styleMask: [.titled, .closable],

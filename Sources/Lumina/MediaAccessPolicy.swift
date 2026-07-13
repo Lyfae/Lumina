@@ -1,69 +1,211 @@
 import AppKit
 import Foundation
+import SwiftUI
 import UniformTypeIdentifiers
 
-/// Controls which folders Lumina may use for wallpaper media.
-/// Default: Pictures (Photos) and Movies only. Documents & Downloads are opt-in via Settings.
+// MARK: - Locations
+
+/// Standard macOS user folders Lumina may read wallpaper media from.
+enum MediaAccessLocation: String, CaseIterable, Identifiable, Codable, Hashable {
+    case pictures
+    case movies
+    case documents
+    case downloads
+    case desktop
+    case music
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .pictures: return "Pictures"
+        case .movies: return "Movies"
+        case .documents: return "Documents"
+        case .downloads: return "Downloads"
+        case .desktop: return "Desktop"
+        case .music: return "Music"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .pictures: return "Photos and still wallpapers"
+        case .movies: return "Video wallpapers and screen recordings"
+        case .documents: return "Files you keep in Documents"
+        case .downloads: return "Browser and app downloads"
+        case .desktop: return "Files saved on your Desktop"
+        case .music: return "Audio files (ambient music in Studio)"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .pictures: return "photo.on.rectangle"
+        case .movies: return "film"
+        case .documents: return "doc.text"
+        case .downloads: return "arrow.down.circle"
+        case .desktop: return "desktopcomputer"
+        case .music: return "music.note"
+        }
+    }
+
+    /// Recommended on first launch — keeps the default experience focused on media libraries.
+    var isOnByDefault: Bool {
+        switch self {
+        case .pictures, .movies: return true
+        default: return false
+        }
+    }
+
+    var searchPathDirectory: FileManager.SearchPathDirectory? {
+        // Kept for documentation / future sandbox entitlements mapping.
+        switch self {
+        case .pictures: return .picturesDirectory
+        case .movies: return .moviesDirectory
+        case .documents: return .documentDirectory
+        case .downloads: return .downloadsDirectory
+        case .desktop: return .desktopDirectory
+        case .music: return .musicDirectory
+        }
+    }
+
+    func resolvedRootURL() -> URL? {
+        // Prefer home-relative paths for TCC-protected folders. Calling
+        // `FileManager.urls(for: .documentDirectory / .desktopDirectory / …)`
+        // can itself trigger macOS "Allow access to Documents?" prompts — even
+        // when we only need the path for a preference checklist.
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let folderName: String
+        switch self {
+        case .pictures: folderName = "Pictures"
+        case .movies: folderName = "Movies"
+        case .documents: folderName = "Documents"
+        case .downloads: folderName = "Downloads"
+        case .desktop: folderName = "Desktop"
+        case .music: folderName = "Music"
+        }
+        return home
+            .appendingPathComponent(folderName, isDirectory: true)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+    }
+}
+
+// MARK: - User preferences
+
 @MainActor
 final class MediaAccessSettings: ObservableObject {
     static let shared = MediaAccessSettings()
 
-    private let key = "Lumina.AllowDocumentsAndDownloads"
+    private static let locationsKey = "Lumina.EnabledMediaLocations"
+    private static let configuredKey = "Lumina.HasConfiguredMediaAccess"
+    private static let legacyDocumentsKey = "Lumina.AllowDocumentsAndDownloads"
 
-    @Published var allowDocumentsAndDownloads: Bool {
-        didSet { UserDefaults.standard.set(allowDocumentsAndDownloads, forKey: key) }
+    @Published private(set) var enabledLocations: Set<MediaAccessLocation> = []
+
+    var hasConfiguredPrivacy: Bool {
+        UserDefaults.standard.bool(forKey: Self.configuredKey)
     }
 
     private init() {
-        allowDocumentsAndDownloads = UserDefaults.standard.bool(forKey: key)
+        enabledLocations = Self.loadLocations()
+    }
+
+    func isEnabled(_ location: MediaAccessLocation) -> Bool {
+        enabledLocations.contains(location)
+    }
+
+    func setEnabled(_ location: MediaAccessLocation, _ enabled: Bool) {
+        // Preference only — never open a folder-access panel here. macOS TCC / sandbox
+        // grants happen when the user picks a file via NSOpenPanel.
+        var next = enabledLocations
+        if enabled {
+            next.insert(location)
+        } else {
+            next.remove(location)
+            FileAccess.removeFolderGrant(for: location)
+        }
+        apply(next, markConfigured: true)
+    }
+
+    func binding(for location: MediaAccessLocation) -> Binding<Bool> {
+        Binding(
+            get: { self.isEnabled(location) },
+            set: { newValue in
+                if newValue != self.isEnabled(location) {
+                    self.setEnabled(location, newValue)
+                }
+            }
+        )
+    }
+
+    /// Applies the onboarding / settings checklist in one shot.
+    func applySelection(_ locations: Set<MediaAccessLocation>) {
+        for location in MediaAccessLocation.allCases where !locations.contains(location) {
+            FileAccess.removeFolderGrant(for: location)
+        }
+        apply(locations, markConfigured: true)
+    }
+
+    func resetToDefaults() {
+        applySelection(Set(MediaAccessLocation.allCases.filter(\.isOnByDefault)))
+    }
+
+    private func apply(_ locations: Set<MediaAccessLocation>, markConfigured: Bool) {
+        enabledLocations = locations
+        let raw = locations.map(\.rawValue)
+        UserDefaults.standard.set(raw, forKey: Self.locationsKey)
+        if markConfigured {
+            UserDefaults.standard.set(true, forKey: Self.configuredKey)
+        }
+        objectWillChange.send()
+    }
+
+    private static func loadLocations() -> Set<MediaAccessLocation> {
+        if let saved = UserDefaults.standard.stringArray(forKey: Self.locationsKey) {
+            let parsed = Set(saved.compactMap(MediaAccessLocation.init(rawValue:)))
+            if !parsed.isEmpty { return parsed }
+        }
+
+        // Migrate the old single toggle.
+        if UserDefaults.standard.bool(forKey: Self.legacyDocumentsKey) {
+            return [.pictures, .movies, .documents, .downloads]
+        }
+
+        return Set(MediaAccessLocation.allCases.filter(\.isOnByDefault))
     }
 }
 
+// MARK: - Policy
+
 @MainActor
 enum MediaAccessPolicy {
-    // MARK: - Allowed locations
-
-    static var photosAndVideoRoots: [URL] {
-        let fm = FileManager.default
-        var roots: [URL] = []
-        for directory in [FileManager.SearchPathDirectory.picturesDirectory,
-                          .moviesDirectory] {
-            if let url = fm.urls(for: directory, in: .userDomainMask).first {
-                roots.append(url.standardizedFileURL)
-            }
-        }
-        return roots
-    }
-
-    static var optionalDocumentRoots: [URL] {
-        guard MediaAccessSettings.shared.allowDocumentsAndDownloads else { return [] }
-        let fm = FileManager.default
-        var roots: [URL] = []
-        for directory in [FileManager.SearchPathDirectory.downloadsDirectory,
-                          .documentDirectory] {
-            if let url = fm.urls(for: directory, in: .userDomainMask).first {
-                roots.append(url.standardizedFileURL)
-            }
-        }
-        return roots
+    static var enabledLocations: Set<MediaAccessLocation> {
+        MediaAccessSettings.shared.enabledLocations
     }
 
     static var allowedRoots: [URL] {
-        photosAndVideoRoots + optionalDocumentRoots
+        enabledLocations.compactMap { $0.resolvedRootURL() }
     }
 
     static func isURLAllowed(_ url: URL) -> Bool {
         if isAppManagedURL(url) { return true }
-        let path = url.standardizedFileURL.path
+        guard !allowedRoots.isEmpty else { return false }
+
+        let path = normalizedPath(url)
         return allowedRoots.contains { root in
-            let rootPath = root.path
+            let rootPath = normalizedPath(root)
             return path == rootPath || path.hasPrefix(rootPath + "/")
         }
     }
 
+    private static func normalizedPath(_ url: URL) -> String {
+        url.standardizedFileURL.resolvingSymlinksInPath().path
+    }
+
     /// Lumina-generated files (compressed cache, etc.) — not subject to folder policy.
     static func isAppManagedURL(_ url: URL) -> Bool {
-        let path = url.standardizedFileURL.path
+        let path = normalizedPath(url)
         guard let support = FileManager.default.urls(
             for: .applicationSupportDirectory, in: .userDomainMask
         ).first else { return false }
@@ -74,17 +216,26 @@ enum MediaAccessPolicy {
     // MARK: - Open panel
 
     static func defaultPickerDirectory() -> URL? {
-        FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask).first
+        if let pictures = MediaAccessLocation.pictures.resolvedRootURL(),
+           enabledLocations.contains(.pictures) {
+            return pictures
+        }
+        return allowedRoots.first
     }
 
     static func restrictionHint() -> String {
-        if MediaAccessSettings.shared.allowDocumentsAndDownloads {
-            return "You can choose files from Pictures, Movies, Documents, or Downloads."
+        let names = enabledLocations.sorted { $0.label < $1.label }.map(\.label)
+        guard !names.isEmpty else {
+            return "Choose at least one folder in Settings → Privacy before picking wallpapers."
         }
-        return "Lumina can access Pictures and Movies only. Enable Documents & Downloads in Settings → Privacy if you need other folders."
+        if names.count == 1 {
+            return "You can choose files from your \(names[0]) folder."
+        }
+        let joined = names.dropLast().joined(separator: ", ")
+        return "You can choose files from \(joined), or \(names.last!)."
     }
 
-    /// Presents a wallpaper/media open panel scoped to the user's privacy preference.
+    /// Presents a wallpaper/media open panel; access is enforced when files are accepted.
     @discardableResult
     static func runWallpaperPicker(
         title: String,
@@ -120,6 +271,7 @@ enum MediaAccessPolicy {
             showAccessDeniedAlert(for: url)
             return false
         }
+        // Per-file grant from the open panel — enough for playback + bookmarks.
         _ = FileAccess.registerUserSelectedFile(url)
         return true
     }
@@ -127,24 +279,20 @@ enum MediaAccessPolicy {
     // MARK: - Alerts
 
     private static func showAccessDeniedAlert(for url: URL) {
+        let folder = url.deletingLastPathComponent().lastPathComponent
+        let file = url.lastPathComponent
+        let allowedList = enabledLocations.sorted { $0.label < $1.label }.map(\.label).joined(separator: ", ")
+
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = "Folder Not Allowed"
-        if MediaAccessSettings.shared.allowDocumentsAndDownloads {
-            alert.informativeText = """
-            Lumina couldn't use “\(url.lastPathComponent)” from this location.
+        alert.informativeText = """
+        “\(folder)/\(file)” is outside the folders you allowed Lumina to use.
 
-            Choose a file inside Pictures, Movies, Documents, or Downloads.
-            """
-        } else {
-            alert.informativeText = """
-            Lumina can only use wallpapers from your Pictures or Movies folders.
+        Currently allowed: \(allowedList.isEmpty ? "none" : allowedList).
 
-            “\(url.deletingLastPathComponent().lastPathComponent)/\(url.lastPathComponent)” is outside those locations.
-
-            Open Settings → Privacy and enable “Allow Documents & Downloads” to pick files from other folders.
-            """
-        }
+        Open Settings → Privacy to add more locations, or move the file into an allowed folder.
+        """
         alert.addButton(withTitle: "OK")
         alert.runModal()
     }

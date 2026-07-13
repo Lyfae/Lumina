@@ -66,6 +66,9 @@ struct MonitorDetailPanel: View {
     @State private var audioVolume: Double = 0.0
     @State private var loopMode: MonitorAssignment.LoopMode = .loop
 
+    @StateObject private var uiScale = UIScaleManager.shared
+    @StateObject private var themeManager = ThemeManager.shared
+
     // MARK: - Computed
 
     private var assignment: MonitorAssignment? {
@@ -281,23 +284,24 @@ struct MonitorDetailPanel: View {
 
     private var headerSection: some View {
         HStack {
-            VStack(alignment: .leading) {
+            VStack(alignment: .leading, spacing: DisplayScale.points(2)) {
                 Text(monitor.name)
-                    .font(.title2)
-                    .fontWeight(.semibold)
+                    .font(uiScale.scaledFont(18, weight: .semibold))
                 Text(monitor.resolution)
-                    .font(.subheadline)
+                    .font(uiScale.scaledFont(12))
                     .foregroundStyle(.secondary)
             }
             Spacer()
             Button(action: onClose) {
                 Image(systemName: "xmark.circle.fill")
-                    .font(.title2)
+                    .font(.system(size: DisplayScale.points(20)))
             }
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
+            .frame(width: uiScale.touchTarget(), height: uiScale.touchTarget())
+            .contentShape(Rectangle())
         }
-        .padding(20)
+        .padding(DisplayScale.points(20))
     }
 
     // MARK: - Live Preview
@@ -374,7 +378,7 @@ struct MonitorDetailPanel: View {
                     HStack(spacing: 6) {
                         Image(systemName: "photo.on.rectangle.angled")
                         Text("Slideshow active on desktop — \(a.slideshowItems.count) images cycling")
-                            .font(.caption2.weight(.medium))
+                            .font(uiScale.scaledFont(11, weight: .medium))
                     }
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 12)
@@ -386,9 +390,11 @@ struct MonitorDetailPanel: View {
                         .fill(Color.black.opacity(0.7))
                         .frame(maxWidth: .infinity)
                         .frame(height: previewHeight)
-                    VStack(spacing: 8) {
-                        Image(systemName: "display").font(.system(size: 36))
-                        Text("No wallpaper assigned").font(.callout)
+                    VStack(spacing: DisplayScale.points(8)) {
+                        Image(systemName: "display")
+                            .font(.system(size: DisplayScale.points(36)))
+                        Text("No wallpaper assigned")
+                            .font(uiScale.scaledFont(13))
                     }
                     .foregroundStyle(.white.opacity(0.6))
                 }
@@ -450,10 +456,10 @@ struct MonitorDetailPanel: View {
             }
         } label: {
             Label("Crop", systemImage: "crop")
-                .font(.system(size: 12, weight: .semibold))
+                .font(.system(size: DisplayScale.points(12), weight: .semibold))
                 .foregroundStyle(.white)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
+                .padding(.horizontal, DisplayScale.points(10))
+                .padding(.vertical, DisplayScale.points(6))
                 .background(Color.black.opacity(0.6), in: Capsule())
                 .overlay(Capsule().strokeBorder(Color.white.opacity(0.35), lineWidth: 0.5))
                 .shadow(color: .black.opacity(0.35), radius: 2, y: 1)
@@ -472,39 +478,33 @@ struct MonitorDetailPanel: View {
                     Label("Done", systemImage: "checkmark.circle.fill")
                 }
                 .buttonStyle(.borderedProminent)
-                .controlSize(.small)
+                .controlSize(uiScale.controlSize())
 
                 Button("Reset") { resetCropToDefault() }
                     .buttonStyle(.bordered)
-                    .controlSize(.small)
+                    .controlSize(uiScale.controlSize())
                     .help("Center the crop and restore default zoom")
 
                 Spacer()
 
                 Text("Drag inside · pull corners")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                    .font(uiScale.scaledFont(11))
+                    .foregroundStyle(.secondary)
             }
 
             VStack(alignment: .leading, spacing: 5) {
-                HStack {
-                    Label("Zoom", systemImage: "plus.magnifyingglass")
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Text(cropZoomScale >= 0.98 ? "Fit" : String(format: "%.0f%%", cropZoomScale * 100))
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.tertiary)
-                }
+                LuminaSliderLabel(
+                    title: "Zoom",
+                    value: cropZoomScale >= 0.98 ? "Fit" : String(format: "%.0f%%", cropZoomScale * 100)
+                )
 
-                Slider(
+                LuminaSlider(
                     value: Binding(
                         get: { cropZoomScale },
                         set: { setCropZoomScale($0) }
                     ),
-                    in: 0.15...1.0
+                    range: 0.15...1.0
                 )
-                .controlSize(.small)
             }
             .help("Zoom in or out — the crop stays locked to your monitor's shape")
 
@@ -533,22 +533,21 @@ struct MonitorDetailPanel: View {
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
                     Label("Pick a frame", systemImage: "film")
-                        .font(.caption.weight(.semibold))
+                        .font(uiScale.scaledFont(12, weight: .semibold))
                         .foregroundStyle(.secondary)
                     Spacer()
                     if videoDuration > 0 {
                         Text("\(formattedVideoTime(videoPreviewTime * videoDuration)) / \(formattedVideoTime(videoDuration))")
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(.tertiary)
+                            .font(uiScale.scaledFont(12).monospacedDigit())
+                            .foregroundStyle(.secondary)
                     }
                 }
 
-                Slider(value: $videoPreviewTime, in: 0...1)
-                    .controlSize(.small)
+                LuminaSlider(value: $videoPreviewTime, range: 0...1)
 
-                Text("The preview above updates as you scrub — nothing changes on your desktop until you choose an option below.")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                    Text("The preview above updates as you scrub — nothing changes on your desktop until you choose an option below.")
+                        .font(uiScale.scaledFont(11))
+                        .foregroundStyle(.secondary)
             }
 
             HStack(spacing: 8) {
@@ -565,7 +564,7 @@ struct MonitorDetailPanel: View {
                         .buttonStyle(.bordered)
                     }
                 }
-                .controlSize(.small)
+                .controlSize(uiScale.controlSize())
                 .help("Freeze this exact frame on your desktop — no video playback")
 
                 Group {
@@ -581,7 +580,7 @@ struct MonitorDetailPanel: View {
                         .buttonStyle(.bordered)
                     }
                 }
-                .controlSize(.small)
+                .controlSize(uiScale.controlSize())
                 .help("Play the video from this frame with your crop applied")
             }
 
@@ -619,28 +618,29 @@ struct MonitorDetailPanel: View {
     // primary persistence / power-user toggles.
 
     private var keepOnStartupControl: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: DisplayScale.points(8)) {
             Toggle(isOn: $keepOnStartup) {
-                HStack(spacing: 8) {
+                HStack(spacing: DisplayScale.points(8)) {
                     Image(systemName: keepOnStartup ? "pin.fill" : "pin")
-                        .font(.system(size: 15, weight: .semibold))
+                        .font(.system(size: DisplayScale.points(15), weight: .semibold))
                         .foregroundStyle(keepOnStartup ? Color.yellow : .secondary)
-                        .frame(width: 18)
+                        .frame(width: DisplayScale.points(18))
 
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Keep this wallpaper on startup")
-                            .font(.subheadline.weight(.semibold))
+                            .font(uiScale.scaledFont(13, weight: .semibold))
 
                         Text(keepOnStartup
                              ? "This display will automatically restore when Lumina launches."
                              : "Wallpaper will be black on next launch unless you enable this.")
-                            .font(.caption)
+                            .font(uiScale.scaledFont(11))
                             .foregroundStyle(.secondary)
                             .lineLimit(2)
                     }
                 }
             }
             .toggleStyle(.switch)
+            .controlSize(uiScale.controlSize())
             .onChange(of: keepOnStartup) { _, newValue in
                 store.setKeepOnStartup(for: monitor, enabled: newValue)
                 if !newValue {
@@ -651,16 +651,21 @@ struct MonitorDetailPanel: View {
             if keepOnStartup {
                 HStack(spacing: 6) {
                     Image(systemName: "checkmark.seal.fill")
-                        .font(.caption2)
+                        .font(uiScale.scaledFont(11))
                         .foregroundStyle(.yellow)
                     Text("Pinned for this display")
-                        .font(.caption2.weight(.medium))
+                        .font(uiScale.scaledFont(11, weight: .medium))
                         .foregroundStyle(.yellow)
                 }
-                .padding(.leading, 26)
+                .padding(.leading, DisplayScale.points(26))
             }
+
+            Text("Pin saves immediately. Crop, effects, and playback below need Apply.")
+                .font(uiScale.scaledFont(11))
+                .foregroundStyle(.secondary)
+                .padding(.leading, DisplayScale.points(26))
         }
-        .padding(12)
+        .padding(DisplayScale.points(12))
         .background(
             RoundedRectangle(cornerRadius: 10)
                 .fill(Color.luminaCard)
@@ -677,20 +682,14 @@ struct MonitorDetailPanel: View {
         VStack(alignment: .leading, spacing: 12) {
             // Playback Speed
             VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text("Playback Speed").font(.subheadline).foregroundStyle(.secondary)
-                    Spacer()
-                    Text(String(format: "%.2fx", playbackSpeed))
-                        .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-                }
-                Slider(value: $playbackSpeed, in: 0.25...4.0, step: 0.25)
-                    .controlSize(.large)
+                LuminaSliderLabel(title: "Playback Speed", value: String(format: "%.2fx", playbackSpeed))
+                LuminaSlider(value: $playbackSpeed, range: 0.25...4.0, step: 0.25)
             }
 
             // Loop Mode (video only — GIFs and stills use their own playback path)
             if assignment?.mediaType == .video {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Loop Mode").font(.subheadline).foregroundStyle(.secondary)
+                    Text("Loop Mode").font(uiScale.scaledFont(13)).foregroundStyle(.secondary)
                     Picker("Loop Mode", selection: $loopMode) {
                         ForEach(MonitorAssignment.LoopMode.allCases, id: \.self) { mode in
                             Text(mode.label).tag(mode)
@@ -698,8 +697,9 @@ struct MonitorDetailPanel: View {
                         }
                     }
                     .pickerStyle(.segmented)
+                    .controlSize(uiScale.controlSize())
                     Text(loopMode.modeDescription)
-                        .font(.caption2).foregroundStyle(.tertiary)
+                        .font(uiScale.scaledFont(11)).foregroundStyle(.secondary)
                         .animation(.easeInOut(duration: 0.15), value: loopMode)
                 }
             }
@@ -708,16 +708,17 @@ struct MonitorDetailPanel: View {
             if assignment?.mediaType == .video {
                 Toggle("Fade at loop point", isOn: $loopFadeEnabled)
                     .toggleStyle(.switch)
-                    .font(.subheadline)
+                    .font(uiScale.scaledFont(13))
+                    .controlSize(uiScale.controlSize())
                     .disabled(loopMode != .loop)
                     .help(loopMode == .loop
                           ? "Smoothly fade out and back in each time the video loops"
                           : "Only available when Loop Mode is set to Loop")
 
                 if loopMode != .loop {
-                    Text("Set Loop Mode to **Loop** to use crossfade at the loop point.")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
+                    (Text("Set Loop Mode to ") + Text("Loop").fontWeight(.semibold) + Text(" to use crossfade at the loop point."))
+                        .font(uiScale.scaledFont(11))
+                        .foregroundStyle(.secondary)
                 }
 
                 if loopFadeEnabled && loopMode == .loop {
@@ -729,26 +730,19 @@ struct MonitorDetailPanel: View {
                         } ?? false) {
                             LuminaHintBubble(
                                 icon: "arrow.up.circle",
-                                message: "Tap **Apply to Wallpaper** below to enable the fade on your desktop.",
+                                message: "Click Apply to Wallpaper below to enable the fade on your desktop.",
                                 style: .tip
                             )
                         }
 
                         VStack(alignment: .leading, spacing: 4) {
-                            HStack {
-                                Text("Fade Duration")
-                                    .font(.subheadline).foregroundStyle(.secondary)
-                                Spacer()
-                                Text("\(Int(loopFadeDuration * 1000))ms")
-                                    .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-                            }
-                            // 0–5000ms in 50ms steps (100 increments)
-                            Slider(value: $loopFadeDuration, in: 0.1...5.0, step: 0.05)
+                            LuminaSliderLabel(title: "Fade Duration", value: "\(Int(loopFadeDuration * 1000))ms")
+                            LuminaSlider(value: $loopFadeDuration, range: 0.1...5.0, step: 0.05)
                         }
                         .help("Total crossfade duration at each loop point (100ms–5000ms)")
 
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("Easing").font(.subheadline).foregroundStyle(.secondary)
+                            LuminaSliderLabel(title: "Easing")
                             Picker("Easing", selection: $loopFadeEasing) {
                                 ForEach(MonitorAssignment.FadeEasing.allCases, id: \.self) { e in
                                     Text(e.label).tag(e)
@@ -760,7 +754,7 @@ struct MonitorDetailPanel: View {
 
                         Button("Preview fade") { previewFadeInPreview() }
                             .buttonStyle(.bordered)
-                            .controlSize(.small)
+                            .controlSize(uiScale.controlSize())
                             .help("Simulate this fade in the preview above")
                     }
                 }
@@ -768,16 +762,15 @@ struct MonitorDetailPanel: View {
 
             // Volume
             VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text("Volume").font(.subheadline).foregroundStyle(.secondary)
-                    Spacer()
-                    Text(audioVolume < 0.01 ? "Muted" : String(format: "%.0f%%", audioVolume * 100))
-                        .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-                }
+                LuminaSliderLabel(
+                    title: "Volume",
+                    value: audioVolume < 0.01 ? "Muted" : String(format: "%.0f%%", audioVolume * 100)
+                )
                 HStack {
                     Image(systemName: audioVolume < 0.01 ? "speaker.slash.fill" : "speaker.wave.2.fill")
-                        .foregroundStyle(.secondary).font(.caption)
-                    Slider(value: $audioVolume, in: 0...1)
+                        .foregroundStyle(.secondary)
+                        .font(uiScale.scaledFont(12))
+                    LuminaSlider(value: $audioVolume, range: 0...1)
                 }
             }
         }
@@ -789,7 +782,7 @@ struct MonitorDetailPanel: View {
         VStack(alignment: .leading, spacing: 12) {
             // Scaling Mode
             VStack(alignment: .leading, spacing: 6) {
-                Text("Scaling Mode").font(.subheadline).foregroundStyle(.secondary)
+                Text("Scaling Mode").font(uiScale.scaledFont(13)).foregroundStyle(.secondary)
                 Picker("Scaling", selection: $selectedScaling) {
                     Text("Fit").tag(VideoScaling.fit)
                         .help("Letterbox: shows full video with black bars on sides/top")
@@ -799,8 +792,9 @@ struct MonitorDetailPanel: View {
                         .help("Stretch: video fills screen, may appear distorted")
                 }
                 .pickerStyle(.segmented)
+                .controlSize(uiScale.controlSize())
                 Text(scalingDescription)
-                    .font(.caption2).foregroundStyle(.tertiary)
+                    .font(uiScale.scaledFont(11)).foregroundStyle(.secondary)
                     .animation(.easeInOut(duration: 0.15), value: selectedScaling)
             }
 
@@ -808,10 +802,10 @@ struct MonitorDetailPanel: View {
             if assignment != nil, !cropEditMode {
                 HStack(spacing: 6) {
                     Image(systemName: "crop")
-                        .font(.caption)
+                        .font(uiScale.scaledFont(11))
                         .foregroundStyle(.secondary)
-                    Text("Tap **Crop** on the preview above to position and zoom.")
-                        .font(.caption)
+                    (Text("Click ") + Text("Crop").fontWeight(.semibold) + Text(" on the preview above to position and zoom."))
+                        .font(uiScale.scaledFont(12))
                         .foregroundStyle(.secondary)
                 }
             }
@@ -821,80 +815,54 @@ struct MonitorDetailPanel: View {
     // MARK: - Visual Effects Section Content
 
     private var visualEffectsContent: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Brightness
+        VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text("Brightness").font(.subheadline).foregroundStyle(.secondary)
-                    Spacer()
-                    Text(String(format: "%+.2f", brightness))
-                        .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-                }
-                Slider(value: $brightness, in: -0.5...0.5, step: 0.05)
-                    .controlSize(.large)
+                LuminaSliderLabel(title: "Brightness", value: String(format: "%+.2f", brightness))
+                LuminaSlider(value: $brightness, range: -0.5...0.5, step: 0.05)
             }
 
-            // Opacity
             VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text("Opacity").font(.subheadline).foregroundStyle(.secondary)
-                    Spacer()
-                    Text(String(format: "%.0f%%", opacity * 100))
-                        .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-                }
-                Slider(value: $opacity, in: 0...1)
-                    .controlSize(.large)
+                LuminaSliderLabel(title: "Opacity", value: String(format: "%.0f%%", opacity * 100))
+                LuminaSlider(value: $opacity, range: 0...1)
             }
 
-            // Saturation
             VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text("Saturation").font(.subheadline).foregroundStyle(.secondary)
-                    Spacer()
-                    Text(String(format: "%.1f", saturation))
-                        .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-                }
-                Slider(value: $saturation, in: 0...2)
-                    .controlSize(.large)
+                LuminaSliderLabel(title: "Saturation", value: String(format: "%.1f", saturation))
+                LuminaSlider(value: $saturation, range: 0...2)
             }
 
-            // Hue Rotation
             VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text("Hue").font(.subheadline).foregroundStyle(.secondary)
-                    Spacer()
-                    Text(String(format: "%.0f°", hue))
-                        .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-                }
-                Slider(value: $hue, in: -180...180)
-                    .controlSize(.large)
+                LuminaSliderLabel(title: "Hue", value: String(format: "%.0f°", hue))
+                LuminaSlider(value: $hue, range: -180...180)
             }
 
             // Grayscale
             Toggle("Grayscale", isOn: $grayscale)
                 .toggleStyle(.switch)
+                .controlSize(uiScale.controlSize())
+                .font(uiScale.scaledFont(13))
         }
     }
 
     // MARK: - Slideshow Section Content
 
     private var slideshowContent: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: DisplayScale.points(10)) {
             if slideshowItems.isEmpty {
                 Text("Create a still-image slideshow for this display. Build a queue of images, set the timing, then play — images are also saved to your Library to reuse.")
-                    .font(.caption)
+                    .font(uiScale.scaledFont(12))
                     .foregroundStyle(.secondary)
             } else {
                 HStack(spacing: 8) {
                     Image(systemName: "photo.stack.fill")
                         .foregroundStyle(.secondary)
                     Text("^[\(slideshowItems.count) image](inflect: true) • every \(Int(slideshowInterval))s • \(slideshowTransition.rawValue.capitalized)\(slideshowKenBurnsEnabled ? " • Ken Burns" : "")")
-                        .font(.caption.weight(.medium))
+                        .font(uiScale.scaledFont(12, weight: .medium))
                         .foregroundStyle(.secondary)
                 }
                 Text("This display is in slideshow mode (no video loaded). Per-monitor crop and color effects don't apply while a slideshow runs.")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                    .font(uiScale.scaledFont(11))
+                    .foregroundStyle(.secondary)
             }
 
             HStack(spacing: 8) {
@@ -905,7 +873,7 @@ struct MonitorDetailPanel: View {
                           systemImage: "slider.horizontal.below.rectangle")
                 }
                 .buttonStyle(.borderedProminent)
-                .controlSize(.small)
+                .controlSize(uiScale.controlSize())
 
                 if !slideshowItems.isEmpty {
                     Button("Clear") {
@@ -913,7 +881,7 @@ struct MonitorDetailPanel: View {
                         store.setSlideshowItems(for: monitor, items: [])
                     }
                     .buttonStyle(.bordered)
-                    .controlSize(.small)
+                    .controlSize(uiScale.controlSize())
                 }
             }
         }
@@ -938,7 +906,7 @@ struct MonitorDetailPanel: View {
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
             .disabled(!hasUnappliedChanges || assignment == nil)
-            .help("Push the previewed settings to the live desktop wallpaper")
+            .help(applyButtonHelp)
 
             HStack(spacing: 10) {
                 if monitor.assignedVideoName != nil {
@@ -946,7 +914,7 @@ struct MonitorDetailPanel: View {
                         store.clearAssignment(for: monitor)
                     }
                     .buttonStyle(.bordered)
-                    .controlSize(.small)
+                    .controlSize(uiScale.controlSize())
                 }
 
                 Spacer()
@@ -955,16 +923,27 @@ struct MonitorDetailPanel: View {
                     resetToDefaults()
                 }
                 .buttonStyle(.bordered)
-                .controlSize(.small)
+                .controlSize(uiScale.controlSize())
                 .help("Reset the staged display settings to their defaults (preview only — Apply to commit)")
 
                 if showHeader {
                     Button("Done") { onClose() }
                         .buttonStyle(.bordered)
-                        .controlSize(.small)
+                        .controlSize(uiScale.controlSize())
                 }
             }
         }
+    }
+
+    /// Help text for the Apply button — explains why it may be disabled.
+    private var applyButtonHelp: String {
+        if assignment == nil {
+            return "Pick a wallpaper from the library first"
+        }
+        if !hasUnappliedChanges {
+            return "Preview already matches the live desktop"
+        }
+        return "Push the previewed settings to the live desktop wallpaper"
     }
 
     /// Simulates the loop crossfade in the live preview panel so the user can
@@ -1089,7 +1068,9 @@ struct MonitorDetailPanel: View {
 
             // Preset picker
             VStack(alignment: .leading, spacing: 6) {
-                Text("Target Quality").font(.subheadline).foregroundStyle(.secondary)
+                Text("Target Quality")
+                    .font(uiScale.scaledFont(13))
+                    .foregroundStyle(.secondary)
 
                 Picker("", selection: $selectedPreset) {
                     ForEach(VideoCompressor.QualityPreset.allCases) { preset in
@@ -1097,15 +1078,18 @@ struct MonitorDetailPanel: View {
                     }
                 }
                 .pickerStyle(.segmented)
+                .controlSize(uiScale.controlSize())
 
                 // Dynamic description + size estimate
                 VStack(alignment: .leading, spacing: 2) {
                     Text(selectedPreset.shortDescription)
-                        .font(.caption2).foregroundStyle(.tertiary)
+                        .font(uiScale.scaledFont(11))
+                        .foregroundStyle(.secondary)
                     if videoInfo.fileSizeBytes > 0 {
                         let est = Int64(Double(videoInfo.fileSizeBytes) * selectedPreset.estimatedSizeRatio)
                         Text("Estimated output: ~\(ByteCountFormatter.string(fromByteCount: est, countStyle: .file))")
-                            .font(.caption2).foregroundStyle(.tertiary)
+                            .font(uiScale.scaledFont(11))
+                            .foregroundStyle(.secondary)
                     }
                 }
                 .animation(.easeInOut(duration: 0.15), value: selectedPreset)
@@ -1116,14 +1100,16 @@ struct MonitorDetailPanel: View {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack {
                         Text(compressor.statusMessage)
-                            .font(.caption).foregroundStyle(.secondary)
+                            .font(uiScale.scaledFont(12))
+                            .foregroundStyle(.secondary)
                         Spacer()
                         Text(String(format: "%.0f%%", compressor.progress * 100))
-                            .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                            .font(uiScale.scaledFont(12).monospacedDigit())
+                            .foregroundStyle(.secondary)
                     }
                     ProgressView(value: compressor.progress)
                     Button("Cancel") { compressor.cancel() }
-                        .buttonStyle(.bordered).controlSize(.small)
+                        .buttonStyle(.bordered).controlSize(uiScale.controlSize())
                         .foregroundStyle(.red)
                 }
             } else {
@@ -1134,7 +1120,7 @@ struct MonitorDetailPanel: View {
                         Label("Compress Video", systemImage: "arrow.down.circle.fill")
                     }
                     .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
+                    .controlSize(uiScale.controlSize())
                     .help("Re-encode this video at the selected quality to reduce GPU load and file size")
 
                     if let lastURL = compressor.lastCompressedURL {
@@ -1142,7 +1128,7 @@ struct MonitorDetailPanel: View {
                             pendingCompressedURL = lastURL
                             showUseCompressedAlert = true
                         }
-                        .buttonStyle(.bordered).controlSize(.small)
+                        .buttonStyle(.bordered).controlSize(uiScale.controlSize())
                         .help("Switch this monitor to use the already-compressed version")
                     }
                 }
@@ -1190,10 +1176,15 @@ struct MonitorDetailPanel: View {
 
     @ViewBuilder private func infoChip(icon: String, label: String) -> some View {
         HStack(spacing: 4) {
-            Image(systemName: icon).font(.system(size: 10)).foregroundStyle(.secondary)
-            Text(label).font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
+            Image(systemName: icon)
+                .font(.system(size: DisplayScale.points(10)))
+                .foregroundStyle(.secondary)
+            Text(label)
+                .font(uiScale.scaledFont(11).monospacedDigit())
+                .foregroundStyle(.secondary)
         }
-        .padding(.horizontal, 8).padding(.vertical, 4)
+        .padding(.horizontal, DisplayScale.points(8))
+        .padding(.vertical, DisplayScale.points(4))
         .background(Color.luminaCard.opacity(0.8), in: RoundedRectangle(cornerRadius: 6))
         .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color(NSColor.separatorColor).opacity(0.5), lineWidth: 0.5))
     }
@@ -1216,30 +1207,29 @@ private struct SettingsGroup<Content: View>: View {
 
     @ViewBuilder let content: () -> Content
 
+    @StateObject private var uiScale = UIScaleManager.shared
+    @StateObject private var theme = ThemeManager.shared
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Consistent header treatment across all groups (strong visual rhythm)
             HStack(spacing: DisplayScale.points(10)) {
                 Image(systemName: icon)
-                    .font(.system(size: UIScaleManager.shared.iconSize(.card), weight: .semibold))
-                    .foregroundStyle(ThemeManager.shared.current.color)
+                    .font(.system(size: uiScale.iconSize(.card), weight: .semibold))
+                    .foregroundStyle(theme.current.color)
                     .frame(width: DisplayScale.points(24), alignment: .center)
                 Text(title)
-                    .font(.system(size: DisplayScale.points(14), weight: .semibold))
+                    .font(uiScale.scaledFont(14, weight: .semibold))
                     .foregroundStyle(.primary)
             }
-            .padding(.horizontal, 14)
-            .padding(.top, 11)
-            .padding(.bottom, 6)
+            .padding(.horizontal, DisplayScale.points(14))
+            .padding(.top, DisplayScale.points(11))
+            .padding(.bottom, DisplayScale.points(6))
 
-            // Content area. Each card hugs its own content height (no forced minHeight),
-            // so short cards like Slideshow don't leave dead space at the
-            // bottom. Width is still full-bleed so all cards align to one edge-to-edge column.
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: DisplayScale.points(10)) {
                 content()
             }
-            .padding(.horizontal, 14)
-            .padding(.bottom, 13)
+            .padding(.horizontal, DisplayScale.points(14))
+            .padding(.bottom, DisplayScale.points(13))
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .background(Color.luminaCard, in: RoundedRectangle(cornerRadius: 10))
