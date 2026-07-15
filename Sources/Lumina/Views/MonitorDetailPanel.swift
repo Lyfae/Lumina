@@ -2,8 +2,8 @@ import SwiftUI
 import AppKit
 import AVFoundation
 
-/// Side panel that appears when a user selects a monitor in the layout.
-/// Contains live preview + all per-monitor settings, organized into collapsible sections.
+/// Side panel for the selected monitor: full-height live preview by default, with a
+/// Wallpaper Engine–style Config column that slides in for Pin / Display / Effects / etc.
 struct MonitorDetailPanel: View {
     let monitor: MonitorInfo
     @ObservedObject var store: WallpaperManagerStore
@@ -11,21 +11,17 @@ struct MonitorDetailPanel: View {
     var onClose: () -> Void = {}
     var showHeader: Bool = true
 
-    // Preview resize state
-    @State private var previewHeight: CGFloat = 0
-    /// Height snapshot taken when the resize drag begins — DragGesture.translation is the
-    /// cumulative offset from the gesture start, so it must be applied to a fixed baseline.
-    @State private var previewHeightAtDragStart: CGFloat?
-    @State private var resizeCursorPushed = false
-    @State private var previewOpacity: Double = 1.0
-
     // When true, the live preview becomes an interactive crop editor (drag to move,
     // corners to resize) — no separate crop preview needed.
     @State private var cropEditMode: Bool = false
     @State private var previewSourceAspect: CGFloat = 16.0 / 9.0
+    @State private var previewOpacity: Double = 1.0
 
     // Presents the dedicated slideshow queue/configuration sheet.
     @State private var showSlideshowConfig: Bool = false
+
+    /// Wallpaper Engine–style inspector: closed by default so the preview owns the body.
+    @State private var showSettingsColumn: Bool = false
 
     // Local state for settings (synced with store)
     @State private var selectedScaling: VideoScaling = .fill
@@ -89,18 +85,6 @@ struct MonitorDetailPanel: View {
         return monitor.aspectRatio / previewSourceAspect
     }
 
-    /// 1.0 = largest crop that fits; lower values = more zoomed in.
-    private var cropZoomScale: CGFloat {
-        CropRectangle.cropScale(from: localCropRect, normalizedAspect: normalizedCropAspect)
-    }
-
-    private func setCropZoomScale(_ scale: CGFloat) {
-        localCropRect = CropRectangle.centeredCrop(
-            normalizedAspect: normalizedCropAspect,
-            scale: scale
-        )
-    }
-
     private func resetCropToDefault() {
         localCropRect = CropRectangle.centeredCrop(
             normalizedAspect: normalizedCropAspect,
@@ -147,58 +131,29 @@ struct MonitorDetailPanel: View {
                 LuminaDivider()
             }
 
-            // PINNED: the live preview stays frozen at the top while the settings scroll,
-            // so you can watch your changes (WYSIWYG) before committing them with Apply.
-            livePreviewSection
+            HStack(spacing: 0) {
+                previewColumn
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            LuminaDivider()
+                if showSettingsColumn {
+                    Rectangle()
+                        .fill(Color.luminaBorder)
+                        .frame(width: 1)
 
-            // SCROLLABLE settings.
-            ScrollView {
-                VStack(spacing: 16) {
-                    // Prominent "Keep on startup" control.
-                    keepOnStartupControl
-
-                    // Core visual controls first (most frequently adjusted)
-                    SettingsGroup(icon: "display", title: "Display") {
-                        displayContent
-                    }
-
-                    SettingsGroup(icon: "wand.and.stars", title: "Visual Effects") {
-                        visualEffectsContent
-                    }
-
-                    // Playback behavior (only relevant for video/animated)
-                    if assignment?.mediaType == .video || assignment?.mediaType == .animatedImage {
-                        SettingsGroup(icon: "play.fill", title: "Playback & Looping") {
-                            playbackContent
-                        }
-                    }
-
-                    // Performance tools (video only)
-                    if assignment?.mediaType == .video, let _ = assignment?.filePath {
-                        SettingsGroup(icon: "speedometer", title: "Performance") {
-                            performanceContent
-                        }
-                    }
-
-                    // Slideshow — powerful but secondary
-                    SettingsGroup(icon: "photo.on.rectangle.angled", title: "Slideshow") {
-                        slideshowContent
-                    }
+                    settingsColumn
+                        .frame(width: DisplayScale.points(340))
+                        .transition(.move(edge: .trailing).combined(with: .opacity))
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 12)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             LuminaDivider()
 
-            // PINNED: bottom action bar with the prominent "Apply to Wallpaper" commit.
             actionButtons
-                .padding(16)
+                .padding(.horizontal, DisplayScale.points(12))
+                .padding(.vertical, DisplayScale.points(10))
         }
         .onAppear {
-            if previewHeight < 1 { previewHeight = DisplayScale.points(220) }
             loadCurrentValues()
         }
         .onChange(of: monitor.id) { _, _ in loadCurrentValues() }
@@ -224,6 +179,13 @@ struct MonitorDetailPanel: View {
                 userInfo: ["visible": visible]
             )
         }
+        .onChange(of: showSettingsColumn) { _, visible in
+            NotificationCenter.default.post(
+                name: .configColumnVisibilityChanged,
+                object: nil,
+                userInfo: ["visible": visible]
+            )
+        }
         .onDisappear {
             // If the panel goes away while crop mode is open, tell the window controller to
             // shrink back — otherwise the grown window frame sticks around.
@@ -234,7 +196,74 @@ struct MonitorDetailPanel: View {
                     userInfo: ["visible": false]
                 )
             }
+            if showSettingsColumn {
+                NotificationCenter.default.post(
+                    name: .configColumnVisibilityChanged,
+                    object: nil,
+                    userInfo: ["visible": false]
+                )
+            }
         }
+    }
+
+    // MARK: - Preview column (majority of the body)
+
+    private var previewColumn: some View {
+        VStack(spacing: 0) {
+            livePreviewSection
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            if let a = previewAssignment, cropEditMode {
+                LuminaDivider()
+                cropEditorToolbar(assignment: a)
+            } else if let a = previewAssignment, !a.slideshowItems.isEmpty {
+                HStack(spacing: 6) {
+                    Image(systemName: "photo.on.rectangle.angled")
+                    Text("Slideshow active on desktop — \(a.slideshowItems.count) images cycling")
+                        .font(uiScale.scaledFont(11, weight: .medium))
+                }
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, DisplayScale.points(10))
+                .padding(.vertical, DisplayScale.points(8))
+            }
+        }
+        .padding(.horizontal, DisplayScale.points(8))
+        .padding(.bottom, DisplayScale.points(6))
+    }
+
+    private var settingsColumn: some View {
+        ScrollView {
+            VStack(spacing: DisplayScale.points(10)) {
+                keepOnStartupControl
+
+                SettingsGroup(icon: "display", title: "Display") {
+                    displayContent
+                }
+
+                SettingsGroup(icon: "wand.and.stars", title: "Visual Effects") {
+                    visualEffectsContent
+                }
+
+                if assignment?.mediaType == .video || assignment?.mediaType == .animatedImage {
+                    SettingsGroup(icon: "play.fill", title: "Playback & Looping") {
+                        playbackContent
+                    }
+                }
+
+                if assignment?.mediaType == .video, let _ = assignment?.filePath {
+                    SettingsGroup(icon: "speedometer", title: "Performance") {
+                        performanceContent
+                    }
+                }
+
+                SettingsGroup(icon: "photo.on.rectangle.angled", title: "Slideshow") {
+                    slideshowContent
+                }
+            }
+            .padding(.horizontal, DisplayScale.points(8))
+            .padding(.vertical, DisplayScale.points(8))
+        }
+        .background(Color.luminaBase.opacity(0.55))
     }
 
     /// True when the staged (preview) settings differ from what's currently applied to the
@@ -318,130 +347,85 @@ struct MonitorDetailPanel: View {
     }
 
     private var livePreviewSection: some View {
-        VStack(spacing: 0) {
+        Group {
             if let a = previewAssignment {
-                ZStack(alignment: .topTrailing) {
-                    Group {
-                        if cropEditMode {
-                            // Crop editing happens directly on the preview: the editor shows the
-                            // full (uncropped) media as its background with draggable handles.
-                            CropRectangle(
-                                cropRect: $localCropRect,
-                                onChange: { newRect in
-                                    // Staged only — committed to the desktop on Apply.
-                                    localCropRect = newRect
-                                },
-                                assignment: a,
-                                previewTime: a.mediaType == .video ? videoPreviewTime : nil,
-                                targetAspect: monitor.aspectRatio,
-                                sourceAspect: previewSourceAspect,
-                                brightness: brightness,
-                                previewOpacity: opacity,
-                                saturation: saturation,
-                                hueDegrees: hue,
-                                grayscale: grayscale
-                            )
-                        } else {
-                            WallpaperPreview(
-                                assignment: a,
-                                liveCropRect: localCropRect,
-                                liveScaling: selectedScaling,
-                                targetAspect: monitor.aspectRatio,
-                                isLivePlayback: true,
-                                previewTime: nil,
-                                brightness: brightness,
-                                previewOpacity: opacity,
-                                saturation: saturation,
-                                hueDegrees: hue,
-                                grayscale: grayscale
-                            )
+                GeometryReader { geo in
+                    let aspect = max(
+                        cropEditMode ? previewSourceAspect : monitor.aspectRatio,
+                        0.01
+                    )
+                    let maxW = max(geo.size.width, 1)
+                    let maxH = max(geo.size.height, 1)
+                    let fittedWidth = min(maxW, maxH * aspect)
+                    let fittedHeight = fittedWidth / aspect
+
+                    ZStack(alignment: .topTrailing) {
+                        Group {
+                            if cropEditMode {
+                                // Crop editing happens directly on the preview: the editor shows the
+                                // full (uncropped) media as its background with draggable handles.
+                                CropRectangle(
+                                    cropRect: $localCropRect,
+                                    onChange: { newRect in
+                                        // Staged only — committed to the desktop on Apply.
+                                        localCropRect = newRect
+                                    },
+                                    assignment: a,
+                                    previewTime: a.mediaType == .video ? videoPreviewTime : nil,
+                                    targetAspect: monitor.aspectRatio,
+                                    sourceAspect: previewSourceAspect,
+                                    brightness: brightness,
+                                    previewOpacity: opacity,
+                                    saturation: saturation,
+                                    hueDegrees: hue,
+                                    grayscale: grayscale
+                                )
+                            } else {
+                                WallpaperPreview(
+                                    assignment: a,
+                                    liveCropRect: localCropRect,
+                                    liveScaling: selectedScaling,
+                                    targetAspect: monitor.aspectRatio,
+                                    isLivePlayback: true,
+                                    previewTime: nil,
+                                    ignoreAspectRatio: true,
+                                    brightness: brightness,
+                                    previewOpacity: opacity,
+                                    saturation: saturation,
+                                    hueDegrees: hue,
+                                    grayscale: grayscale
+                                )
+                            }
                         }
-                    }
-                    .frame(maxWidth: .infinity)
-                    .frame(height: previewHeight)
-                    .cornerRadius(10)
-                    .opacity(previewOpacity)
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .opacity(previewOpacity)
 
-                    cropToggleButton
-                        .padding(10)
-                        .opacity(cropEditMode ? 0 : 1)
-                        .allowsHitTesting(!cropEditMode)
-                }
-                .padding(.horizontal, 12)
-                .padding(.top, 12)
-
-                if cropEditMode {
-                    cropEditorToolbar(assignment: a)
-                } else if !a.slideshowItems.isEmpty {
-                    // Visual hint that the desktop is running a slideshow even though
-                    // the inline preview only shows single-media at the moment.
-                    HStack(spacing: 6) {
-                        Image(systemName: "photo.on.rectangle.angled")
-                        Text("Slideshow active on desktop — \(a.slideshowItems.count) images cycling")
-                            .font(uiScale.scaledFont(11, weight: .medium))
+                        cropToggleButton
+                            .padding(10)
+                            .opacity(cropEditMode ? 0 : 1)
+                            .allowsHitTesting(!cropEditMode)
                     }
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 4)
+                    .frame(width: fittedWidth, height: fittedHeight)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
                 }
+                .padding(DisplayScale.points(8))
             } else {
                 ZStack {
                     RoundedRectangle(cornerRadius: 10)
                         .fill(Color.black.opacity(0.7))
-                        .frame(maxWidth: .infinity)
-                        .frame(height: previewHeight)
                     VStack(spacing: DisplayScale.points(8)) {
                         Image(systemName: "display")
                             .font(.system(size: DisplayScale.points(36)))
                         Text("No wallpaper assigned")
                             .font(uiScale.scaledFont(13))
+                        Text("Pick one from the library.")
+                            .font(uiScale.scaledFont(11))
+                            .foregroundStyle(.white.opacity(0.45))
                     }
                     .foregroundStyle(.white.opacity(0.6))
                 }
-                .padding(.horizontal, 12)
-                .padding(.top, 12)
+                .padding(DisplayScale.points(8))
             }
-
-            // Drag resize handle
-            HStack {
-                Spacer()
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(Color.secondary.opacity(0.35))
-                    .frame(width: 32, height: 4)
-                Spacer()
-            }
-            .frame(height: 18)
-            .contentShape(Rectangle())
-            .onHover { hovering in
-                if hovering {
-                    if !resizeCursorPushed {
-                        NSCursor.resizeUpDown.push()
-                        resizeCursorPushed = true
-                    }
-                } else if resizeCursorPushed {
-                    NSCursor.pop()
-                    resizeCursorPushed = false
-                }
-            }
-            .onDisappear {
-                // Balance the cursor stack if the view goes away while hovered —
-                // otherwise the resize cursor sticks app-wide.
-                if resizeCursorPushed {
-                    NSCursor.pop()
-                    resizeCursorPushed = false
-                }
-            }
-            .gesture(
-                DragGesture(minimumDistance: 1)
-                    .onChanged { drag in
-                        let base = previewHeightAtDragStart ?? previewHeight
-                        previewHeightAtDragStart = base
-                        previewHeight = max(DisplayScale.points(140), min(DisplayScale.points(500), base + drag.translation.height))
-                    }
-                    .onEnded { _ in
-                        previewHeightAtDragStart = nil
-                    }
-            )
         }
     }
 
@@ -470,55 +454,47 @@ struct MonitorDetailPanel: View {
 
     @ViewBuilder
     private func cropEditorToolbar(assignment a: MonitorAssignment) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: DisplayScale.points(12)) {
+            HStack(spacing: DisplayScale.points(10)) {
                 Button {
                     withAnimation(.easeInOut(duration: 0.15)) { cropEditMode = false }
                 } label: {
                     Label("Done", systemImage: "checkmark.circle.fill")
+                        .font(uiScale.scaledFont(13, weight: .semibold))
+                        .padding(.horizontal, DisplayScale.points(14))
+                        .padding(.vertical, DisplayScale.points(8))
                 }
                 .buttonStyle(.borderedProminent)
-                .controlSize(uiScale.controlSize())
+                .controlSize(.large)
 
-                Button("Reset") { resetCropToDefault() }
-                    .buttonStyle(.bordered)
-                    .controlSize(uiScale.controlSize())
-                    .help("Center the crop and restore default zoom")
+                Button { resetCropToDefault() } label: {
+                    Text("Reset")
+                        .font(uiScale.scaledFont(13, weight: .semibold))
+                        .padding(.horizontal, DisplayScale.points(14))
+                        .padding(.vertical, DisplayScale.points(8))
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+                .help("Center the crop frame on the media")
 
-                Spacer()
+                Spacer(minLength: DisplayScale.points(8))
 
                 Text("Drag inside · pull corners")
                     .font(uiScale.scaledFont(11))
                     .foregroundStyle(.secondary)
             }
 
-            VStack(alignment: .leading, spacing: 5) {
-                LuminaSliderLabel(
-                    title: "Zoom",
-                    value: cropZoomScale >= 0.98 ? "Fit" : String(format: "%.0f%%", cropZoomScale * 100)
-                )
-
-                LuminaSlider(
-                    value: Binding(
-                        get: { cropZoomScale },
-                        set: { setCropZoomScale($0) }
-                    ),
-                    range: 0.15...1.0
-                )
-            }
-            .help("Zoom in or out — the crop stays locked to your monitor's shape")
-
             if a.mediaType == .video {
                 cropVideoFrameControls(assignment: a)
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.bottom, 8)
+        .padding(.horizontal, DisplayScale.points(8))
+        .padding(.bottom, DisplayScale.points(6))
     }
 
     @ViewBuilder
     private func cropVideoFrameControls(assignment a: MonitorAssignment) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: DisplayScale.points(8)) {
             LuminaDivider()
 
             if showVideoFrameGuide {
@@ -530,12 +506,12 @@ struct MonitorDetailPanel: View {
                 )
             }
 
-            VStack(alignment: .leading, spacing: 6) {
-                HStack {
+            VStack(alignment: .leading, spacing: DisplayScale.points(8)) {
+                HStack(alignment: .firstTextBaseline, spacing: DisplayScale.points(8)) {
                     Label("Pick a frame", systemImage: "film")
                         .font(uiScale.scaledFont(12, weight: .semibold))
                         .foregroundStyle(.secondary)
-                    Spacer()
+                    Spacer(minLength: 0)
                     if videoDuration > 0 {
                         Text("\(formattedVideoTime(videoPreviewTime * videoDuration)) / \(formattedVideoTime(videoDuration))")
                             .font(uiScale.scaledFont(12).monospacedDigit())
@@ -544,44 +520,41 @@ struct MonitorDetailPanel: View {
                 }
 
                 LuminaSlider(value: $videoPreviewTime, range: 0...1)
+                    .help("Scrub to preview a frame — nothing changes on your desktop until you choose an option below")
 
-                    Text("The preview above updates as you scrub — nothing changes on your desktop until you choose an option below.")
-                        .font(uiScale.scaledFont(11))
-                        .foregroundStyle(.secondary)
-            }
-
-            HStack(spacing: 8) {
-                Group {
-                    if committedUseStaticFrame {
-                        Button { commitVideoFrame(useStatic: true) } label: {
-                            Label("Use as still", systemImage: "photo.fill")
+                HStack(spacing: DisplayScale.points(8)) {
+                    Group {
+                        if committedUseStaticFrame {
+                            Button { commitVideoFrame(useStatic: true) } label: {
+                                Label("Use as still", systemImage: "photo.fill")
+                            }
+                            .buttonStyle(.borderedProminent)
+                        } else {
+                            Button { commitVideoFrame(useStatic: true) } label: {
+                                Label("Use as still", systemImage: "photo.fill")
+                            }
+                            .buttonStyle(.bordered)
                         }
-                        .buttonStyle(.borderedProminent)
-                    } else {
-                        Button { commitVideoFrame(useStatic: true) } label: {
-                            Label("Use as still", systemImage: "photo.fill")
-                        }
-                        .buttonStyle(.bordered)
                     }
-                }
-                .controlSize(uiScale.controlSize())
-                .help("Freeze this exact frame on your desktop — no video playback")
+                    .controlSize(uiScale.controlSize())
+                    .help("Freeze this exact frame on your desktop — no video playback")
 
-                Group {
-                    if !committedUseStaticFrame, a.videoFrameTime != nil {
-                        Button { commitVideoFrame(useStatic: false) } label: {
-                            Label("Start video here", systemImage: "play.rectangle.fill")
+                    Group {
+                        if !committedUseStaticFrame, a.videoFrameTime != nil {
+                            Button { commitVideoFrame(useStatic: false) } label: {
+                                Label("Start video here", systemImage: "play.rectangle.fill")
+                            }
+                            .buttonStyle(.borderedProminent)
+                        } else {
+                            Button { commitVideoFrame(useStatic: false) } label: {
+                                Label("Start video here", systemImage: "play.rectangle.fill")
+                            }
+                            .buttonStyle(.bordered)
                         }
-                        .buttonStyle(.borderedProminent)
-                    } else {
-                        Button { commitVideoFrame(useStatic: false) } label: {
-                            Label("Start video here", systemImage: "play.rectangle.fill")
-                        }
-                        .buttonStyle(.bordered)
                     }
+                    .controlSize(uiScale.controlSize())
+                    .help("Play the video from this frame with your crop applied")
                 }
-                .controlSize(uiScale.controlSize())
-                .help("Play the video from this frame with your crop applied")
             }
 
             if let feedback = frameActionFeedback {
@@ -618,54 +591,39 @@ struct MonitorDetailPanel: View {
     // primary persistence / power-user toggles.
 
     private var keepOnStartupControl: some View {
-        VStack(alignment: .leading, spacing: DisplayScale.points(8)) {
-            Toggle(isOn: $keepOnStartup) {
-                HStack(spacing: DisplayScale.points(8)) {
-                    Image(systemName: keepOnStartup ? "pin.fill" : "pin")
-                        .font(.system(size: DisplayScale.points(15), weight: .semibold))
-                        .foregroundStyle(keepOnStartup ? Color.yellow : .secondary)
-                        .frame(width: DisplayScale.points(18))
+        Toggle(isOn: $keepOnStartup) {
+            HStack(alignment: .center, spacing: DisplayScale.points(8)) {
+                Image(systemName: keepOnStartup ? "pin.fill" : "pin")
+                    .font(.system(size: uiScale.iconSize(.card), weight: .semibold))
+                    .foregroundStyle(keepOnStartup ? Color.yellow : .secondary)
+                    .frame(width: DisplayScale.points(20), alignment: .center)
 
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Keep this wallpaper on startup")
-                            .font(uiScale.scaledFont(13, weight: .semibold))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Keep on startup")
+                        .font(uiScale.scaledFont(13, weight: .semibold))
 
-                        Text(keepOnStartup
-                             ? "This display will automatically restore when Lumina launches."
-                             : "Wallpaper will be black on next launch unless you enable this.")
-                            .font(uiScale.scaledFont(11))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(2)
-                    }
-                }
-            }
-            .toggleStyle(.switch)
-            .controlSize(uiScale.controlSize())
-            .onChange(of: keepOnStartup) { _, newValue in
-                store.setKeepOnStartup(for: monitor, enabled: newValue)
-                if !newValue {
-                    store.appDelegate?.clearRenderer(for: monitor.id)
-                }
-            }
-
-            if keepOnStartup {
-                HStack(spacing: 6) {
-                    Image(systemName: "checkmark.seal.fill")
+                    Text(keepOnStartup
+                         ? "Restores on launch · saves immediately"
+                         : "Off = black desktop next launch")
                         .font(uiScale.scaledFont(11))
-                        .foregroundStyle(.yellow)
-                    Text("Pinned for this display")
-                        .font(uiScale.scaledFont(11, weight: .medium))
-                        .foregroundStyle(.yellow)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                .padding(.leading, DisplayScale.points(26))
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-
-            Text("Pin saves immediately. Crop, effects, and playback below need Apply.")
-                .font(uiScale.scaledFont(11))
-                .foregroundStyle(.secondary)
-                .padding(.leading, DisplayScale.points(26))
         }
-        .padding(DisplayScale.points(12))
+        .toggleStyle(.switch)
+        .controlSize(uiScale.controlSize())
+        .onChange(of: keepOnStartup) { _, newValue in
+            store.setKeepOnStartup(for: monitor, enabled: newValue)
+            if !newValue {
+                store.appDelegate?.clearRenderer(for: monitor.id)
+            }
+        }
+        .padding(.horizontal, DisplayScale.points(10))
+        .padding(.vertical, DisplayScale.points(8))
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 10)
                 .fill(Color.luminaCard)
@@ -674,6 +632,7 @@ struct MonitorDetailPanel: View {
                         .strokeBorder(keepOnStartup ? Color.yellow.opacity(0.5) : Color.luminaBorder, lineWidth: 1)
                 )
         )
+        .help("Pin saves immediately. Crop, effects, and playback need Apply.")
     }
 
     // MARK: - Playback Section Content
@@ -716,7 +675,7 @@ struct MonitorDetailPanel: View {
                           : "Only available when Loop Mode is set to Loop")
 
                 if loopMode != .loop {
-                    (Text("Set Loop Mode to ") + Text("Loop").fontWeight(.semibold) + Text(" to use crossfade at the loop point."))
+                    Text("Set Loop Mode to Loop to use crossfade.")
                         .font(uiScale.scaledFont(11))
                         .foregroundStyle(.secondary)
                 }
@@ -730,7 +689,7 @@ struct MonitorDetailPanel: View {
                         } ?? false) {
                             LuminaHintBubble(
                                 icon: "arrow.up.circle",
-                                message: "Click Apply to Wallpaper below to enable the fade on your desktop.",
+                                message: "Apply to Wallpaper to enable the fade on your desktop.",
                                 style: .tip
                             )
                         }
@@ -800,14 +759,9 @@ struct MonitorDetailPanel: View {
 
             // Crop is edited on the live preview — use the Crop pill on the preview image.
             if assignment != nil, !cropEditMode {
-                HStack(spacing: 6) {
-                    Image(systemName: "crop")
-                        .font(uiScale.scaledFont(11))
-                        .foregroundStyle(.secondary)
-                    (Text("Click ") + Text("Crop").fontWeight(.semibold) + Text(" on the preview above to position and zoom."))
-                        .font(uiScale.scaledFont(12))
-                        .foregroundStyle(.secondary)
-                }
+                Text("Use Crop on the preview to position the frame.")
+                    .font(uiScale.scaledFont(11))
+                    .foregroundStyle(.secondary)
             }
         }
     }
@@ -815,7 +769,7 @@ struct MonitorDetailPanel: View {
     // MARK: - Visual Effects Section Content
 
     private var visualEffectsContent: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: DisplayScale.points(10)) {
             VStack(alignment: .leading, spacing: 4) {
                 LuminaSliderLabel(title: "Brightness", value: String(format: "%+.2f", brightness))
                 LuminaSlider(value: $brightness, range: -0.5...0.5, step: 0.05)
@@ -847,21 +801,14 @@ struct MonitorDetailPanel: View {
     // MARK: - Slideshow Section Content
 
     private var slideshowContent: some View {
-        VStack(alignment: .leading, spacing: DisplayScale.points(10)) {
+        VStack(alignment: .leading, spacing: DisplayScale.points(8)) {
             if slideshowItems.isEmpty {
-                Text("Create a still-image slideshow for this display. Build a queue of images, set the timing, then play — images are also saved to your Library to reuse.")
+                Text("Build an image queue for this display.")
                     .font(uiScale.scaledFont(12))
                     .foregroundStyle(.secondary)
             } else {
-                HStack(spacing: 8) {
-                    Image(systemName: "photo.stack.fill")
-                        .foregroundStyle(.secondary)
-                    Text("^[\(slideshowItems.count) image](inflect: true) • every \(Int(slideshowInterval))s • \(slideshowTransition.rawValue.capitalized)\(slideshowKenBurnsEnabled ? " • Ken Burns" : "")")
-                        .font(uiScale.scaledFont(12, weight: .medium))
-                        .foregroundStyle(.secondary)
-                }
-                Text("This display is in slideshow mode (no video loaded). Per-monitor crop and color effects don't apply while a slideshow runs.")
-                    .font(uiScale.scaledFont(11))
+                Text("^[\(slideshowItems.count) image](inflect: true) · \(Int(slideshowInterval))s · \(slideshowTransition.rawValue.capitalized)\(slideshowKenBurnsEnabled ? " · Ken Burns" : "")")
+                    .font(uiScale.scaledFont(12, weight: .medium))
                     .foregroundStyle(.secondary)
             }
 
@@ -869,7 +816,7 @@ struct MonitorDetailPanel: View {
                 Button {
                     showSlideshowConfig = true
                 } label: {
-                    Label(slideshowItems.isEmpty ? "Create Slideshow…" : "Configure Slideshow…",
+                    Label(slideshowItems.isEmpty ? "Create Slideshow…" : "Configure…",
                           systemImage: "slider.horizontal.below.rectangle")
                 }
                 .buttonStyle(.borderedProminent)
@@ -894,19 +841,38 @@ struct MonitorDetailPanel: View {
             // Prominent commit: pushes the staged (previewed) settings to the live desktop.
             // Media is assigned by clicking an item in the Library on the left — there's no
             // separate "Choose Media" here (it duplicated the library flow).
-            Button {
-                applyToWallpaper()
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "checkmark.circle.fill")
-                    Text(hasUnappliedChanges ? "Apply to Wallpaper" : "Applied — Up to Date")
+            HStack(spacing: DisplayScale.points(10)) {
+                Button {
+                    applyToWallpaper()
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "checkmark.circle.fill")
+                        Text(hasUnappliedChanges ? "Apply to Wallpaper" : "Applied — Up to Date")
+                    }
+                    .frame(maxWidth: .infinity)
                 }
-                .frame(maxWidth: .infinity)
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .disabled(!hasUnappliedChanges || assignment == nil)
+                .help(applyButtonHelp)
+
+                Button {
+                    withAnimation(.easeInOut(duration: 0.22)) {
+                        showSettingsColumn.toggle()
+                    }
+                } label: {
+                    Label("Config", systemImage: showSettingsColumn ? "sidebar.trailing" : "slider.horizontal.3")
+                        .font(uiScale.scaledFont(13, weight: .semibold))
+                        .padding(.horizontal, DisplayScale.points(10))
+                        .padding(.vertical, DisplayScale.points(4))
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+                .foregroundStyle(showSettingsColumn ? themeManager.current.color : .primary)
+                .help(showSettingsColumn ? "Hide wallpaper settings" : "Show wallpaper settings")
+                .accessibilityLabel(showSettingsColumn ? "Hide Config" : "Show Config")
+                .accessibilityAddTraits(showSettingsColumn ? .isSelected : [])
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .disabled(!hasUnappliedChanges || assignment == nil)
-            .help(applyButtonHelp)
 
             HStack(spacing: 10) {
                 if monitor.assignedVideoName != nil {
@@ -1212,24 +1178,24 @@ private struct SettingsGroup<Content: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: DisplayScale.points(10)) {
+            HStack(spacing: DisplayScale.points(8)) {
                 Image(systemName: icon)
                     .font(.system(size: uiScale.iconSize(.card), weight: .semibold))
                     .foregroundStyle(theme.current.color)
-                    .frame(width: DisplayScale.points(24), alignment: .center)
+                    .frame(width: DisplayScale.points(20), alignment: .center)
                 Text(title)
-                    .font(uiScale.scaledFont(14, weight: .semibold))
+                    .font(uiScale.scaledFont(13, weight: .semibold))
                     .foregroundStyle(.primary)
             }
-            .padding(.horizontal, DisplayScale.points(14))
-            .padding(.top, DisplayScale.points(11))
-            .padding(.bottom, DisplayScale.points(6))
+            .padding(.horizontal, DisplayScale.points(10))
+            .padding(.top, DisplayScale.points(8))
+            .padding(.bottom, DisplayScale.points(4))
 
-            VStack(alignment: .leading, spacing: DisplayScale.points(10)) {
+            VStack(alignment: .leading, spacing: DisplayScale.points(8)) {
                 content()
             }
-            .padding(.horizontal, DisplayScale.points(14))
-            .padding(.bottom, DisplayScale.points(13))
+            .padding(.horizontal, DisplayScale.points(10))
+            .padding(.bottom, DisplayScale.points(10))
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .background(Color.luminaCard, in: RoundedRectangle(cornerRadius: 10))

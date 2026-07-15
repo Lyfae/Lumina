@@ -86,7 +86,7 @@ struct WallpaperManagerView: View {
         // Adaptive: the view fills whatever size the user resizes the window to. We only set a
         // floor so the two-column layout never collapses (mirrors the window's contentMinSize).
         coreContent
-            .scaledMinFrame(width: 1000, height: 740)
+            .scaledMinFrame(width: 1080, height: 740)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Color.luminaBase)
             .tint(themeManager.current.color)

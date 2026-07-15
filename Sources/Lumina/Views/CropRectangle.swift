@@ -182,12 +182,6 @@ struct CropRectangle: View {
         )
     }
 
-    static func cropScale(from rect: CGRect, normalizedAspect: CGFloat) -> CGFloat {
-        let maxW = maxCropWidth(normalizedAspect: normalizedAspect)
-        guard maxW > 0 else { return 1 }
-        return min(max(rect.width / maxW, 0.15), 1.0)
-    }
-
     static func resolveSourceAspect(for assignment: MonitorAssignment?) async -> CGFloat? {
         guard let assignment else { return nil }
         let url: URL? = assignment.resolvedURL()

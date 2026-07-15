@@ -43,32 +43,32 @@ struct SplashScreenView: View {
         ZStack {
             background
 
-            VStack(spacing: 18) {
+            VStack(spacing: 14) {
                 CursiveLSView(
-                    lineWidth: DisplayScale.points(3.4),
+                    lineWidth: DisplayScale.points(3.0),
                     color: .white,
                     animate: !reduceMotion,
                     animationDuration: 2.2,
                     gradientColors: inkGradient,
-                    glowRadius: DisplayScale.points(7),
+                    glowRadius: DisplayScale.points(6),
                     onDrawingComplete: { revealWordmarkAndScheduleDismiss() }
                 )
-                .padding(.top, DisplayScale.points(10))
+                .padding(.top, DisplayScale.points(6))
 
                 Text("Lumina Studio")
-                    .font(.system(size: DisplayScale.points(24), weight: .semibold, design: .serif))
+                    .font(.system(size: DisplayScale.points(20), weight: .semibold, design: .serif))
                     .foregroundStyle(.white)
-                    .tracking(0.6)
+                    .tracking(0.5)
                     .opacity(wordmarkVisible ? 1 : 0)
                     .offset(y: wordmarkVisible ? 0 : 8)
             }
-            .padding(.horizontal, DisplayScale.points(44))
-            .padding(.vertical, DisplayScale.points(38))
+            .padding(.horizontal, DisplayScale.points(32))
+            .padding(.vertical, DisplayScale.points(28))
         }
-        .scaledFrame(width: 440, height: 320)
-        .clipShape(RoundedRectangle(cornerRadius: DisplayScale.points(22), style: .continuous))
+        .scaledFrame(width: 360, height: 260)
+        .clipShape(RoundedRectangle(cornerRadius: DisplayScale.points(18), style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: DisplayScale.points(22), style: .continuous)
+            RoundedRectangle(cornerRadius: DisplayScale.points(18), style: .continuous)
                 .strokeBorder(
                     LinearGradient(
                         colors: [.white.opacity(0.22), .white.opacity(0.05)],
@@ -79,7 +79,7 @@ struct SplashScreenView: View {
         )
         .scaleEffect(cardScale)
         .opacity(cardOpacity)
-        .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .onTapGesture { dismiss() }
         .onAppear { enter() }
     }
@@ -97,19 +97,17 @@ struct SplashScreenView: View {
                 startPoint: .top, endPoint: .bottom
             )
 
-            // Aurora glows — two large soft orbs that drift very slowly. Radial gradients
-            // instead of .blur: identical look, cheaper, and they render correctly in every
-            // compositing path (layer-filter blurs can drop out in offscreen rendering).
-            auroraOrb(Color(red: 0.25, green: 0.45, blue: 0.95), opacity: 0.38, diameter: 460)
-                .offset(x: auroraPhase ? -120 : -70, y: auroraPhase ? -90 : -130)
+            // Aurora glows — soft orbs sized for the compact card.
+            auroraOrb(Color(red: 0.25, green: 0.45, blue: 0.95), opacity: 0.38, diameter: 300)
+                .offset(x: auroraPhase ? -90 : -50, y: auroraPhase ? -70 : -100)
 
-            auroraOrb(Color(red: 0.55, green: 0.30, blue: 0.85), opacity: 0.34, diameter: 420)
-                .offset(x: auroraPhase ? 140 : 90, y: auroraPhase ? 110 : 150)
+            auroraOrb(Color(red: 0.55, green: 0.30, blue: 0.85), opacity: 0.34, diameter: 280)
+                .offset(x: auroraPhase ? 100 : 70, y: auroraPhase ? 80 : 110)
 
             // Fine vignette to focus the monogram.
             RadialGradient(
                 colors: [.clear, .black.opacity(0.45)],
-                center: .center, startRadius: 90, endRadius: 320
+                center: .center, startRadius: 60, endRadius: 220
             )
         }
     }

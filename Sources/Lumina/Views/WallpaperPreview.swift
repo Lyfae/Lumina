@@ -38,6 +38,7 @@ struct WallpaperPreview: View {
     @State private var isLoading = false
     @State private var player: AVPlayer? = nil
     @State private var playerLooper: AVPlayerLooper? = nil
+    @State private var scrubDurationSeconds: Double = 0
 
     private var effectiveCrop: CGRect {
         liveCropRect ?? assignment?.cropRect ?? CGRect(x: 0, y: 0, width: 1, height: 1)
@@ -45,6 +46,11 @@ struct WallpaperPreview: View {
 
     private var effectiveScaling: VideoScaling {
         liveScaling ?? assignment?.scaling ?? .fill
+    }
+
+    /// Crop / Pick-a-frame mode: show a paused player and seek as the scrubber moves.
+    private var isFrameScrubMode: Bool {
+        !isLivePlayback && previewTime != nil && assignment?.mediaType == .video
     }
 
     var body: some View {
@@ -65,6 +71,8 @@ struct WallpaperPreview: View {
                         // path so the preview shows the picture, never a stale video frame.
                         if isLivePlayback && assign.mediaType == .video {
                             liveVideoView(assignment: assign, size: geometry.size)
+                        } else if isFrameScrubMode {
+                            scrubVideoView(assignment: assign, size: geometry.size)
                         } else if let thumb = thumbnail {
                             thumbnailView(thumb, assignment: assign, size: geometry.size)
                         } else if isLoading {
@@ -101,8 +109,9 @@ struct WallpaperPreview: View {
         .aspectRatioIfNeeded(targetAspect: targetAspect, ignore: ignoreAspectRatio)
         .onAppear {
             setupLivePlaybackIfNeeded()
-            // The live AVPlayer covers video previews — decoding a parallel thumbnail
-            // would just double the I/O and memory for nothing.
+            setupScrubPlayerIfNeeded()
+            // Live looping AVPlayer covers video previews — skip a parallel thumbnail.
+            // Scrub mode still loads one as a placeholder until the first seek paints a frame.
             if !(isLivePlayback && assignment?.mediaType == .video) {
                 loadThumbnailIfNeeded()
             }
@@ -113,15 +122,20 @@ struct WallpaperPreview: View {
         .onChange(of: assignment?.filePath) { _, _ in
             cleanupPlayer()
             thumbnail = nil
+            scrubDurationSeconds = 0
             setupLivePlaybackIfNeeded()
+            setupScrubPlayerIfNeeded()
             loadThumbnailIfNeeded()
         }
-        .onChange(of: previewTime) { _, _ in
-            // Scrubber moved — regenerate the frame thumbnail at the new time.
+        .onChange(of: previewTime) { _, newValue in
             guard !(isLivePlayback && assignment?.mediaType == .video) else { return }
-            thumbnail = nil
-            isLoading = false
-            loadThumbnailIfNeeded(force: true)
+            if isFrameScrubMode {
+                setupScrubPlayerIfNeeded()
+                seekScrubPlayer(to: newValue)
+            } else {
+                // Keep the previous frame visible while the next thumbnail loads.
+                loadThumbnailIfNeeded(force: true)
+            }
         }
     }
 
@@ -188,6 +202,46 @@ struct WallpaperPreview: View {
         } else {
             Color.black.opacity(0.7)
                 .overlay(ProgressView().tint(.white))
+        }
+    }
+
+    /// Paused player that seeks with the frame scrubber — keeps the last frame visible
+    /// while the next seek lands (no black flash).
+    @ViewBuilder
+    private func scrubVideoView(assignment: MonitorAssignment, size: CGSize) -> some View {
+        ZStack {
+            // Fallback under the player so seeks never flash an empty black frame.
+            if let thumb = thumbnail {
+                Image(nsImage: thumb)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: size.width, height: size.height)
+            }
+
+            if let player {
+                PlayerLayerView(player: player, videoGravity: gravityForScaling(effectiveScaling))
+                    .frame(width: size.width, height: size.height)
+                    .clipped()
+            } else if thumbnail == nil {
+                ProgressView()
+                    .tint(.white)
+            }
+        }
+        .overlay(cropOverlay(size: size))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(alignment: .bottomTrailing) {
+            HStack(spacing: DisplayScale.points(4)) {
+                Image(systemName: "film")
+                    .font(.system(size: DisplayScale.points(10), weight: .semibold))
+                Text(assignment.displayName)
+                    .font(.system(size: DisplayScale.points(11), weight: .medium))
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, DisplayScale.points(8))
+            .padding(.vertical, DisplayScale.points(4))
+            .background(.ultraThinMaterial, in: Capsule())
+            .padding(6)
+            .foregroundStyle(.white)
         }
     }
 
@@ -294,6 +348,43 @@ struct WallpaperPreview: View {
         self.playerLooper = looper
     }
 
+    /// Paused AVPlayer for crop-mode frame scrubbing. Seeking is far more responsive than
+    /// regenerating an AVAssetImageGenerator thumbnail on every slider tick.
+    private func setupScrubPlayerIfNeeded() {
+        guard isFrameScrubMode, player == nil else { return }
+        guard let assign = assignment else { return }
+        guard let url = assign.resolvedURL() ?? (assign.filePath.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) }) else {
+            return
+        }
+
+        let item = AVPlayerItem(url: url)
+        let scrubPlayer = AVPlayer(playerItem: item)
+        scrubPlayer.isMuted = true
+        scrubPlayer.pause()
+
+        self.player = scrubPlayer
+        self.playerLooper = nil
+
+        Task {
+            let duration = (try? await item.asset.load(.duration))?.seconds ?? 0
+            await MainActor.run {
+                guard self.player === scrubPlayer else { return }
+                self.scrubDurationSeconds = max(0, duration)
+                self.seekScrubPlayer(to: self.previewTime)
+            }
+        }
+    }
+
+    private func seekScrubPlayer(to normalized: Double?) {
+        guard let player, let normalized, scrubDurationSeconds > 0.05 else { return }
+        let clamped = max(0.0, min(1.0, normalized))
+        let seconds = scrubDurationSeconds * clamped
+        let time = CMTime(seconds: seconds, preferredTimescale: 600)
+        // Slight tolerance keeps scrubbing fluid; still close enough for frame picking.
+        let tolerance = CMTime(seconds: 0.04, preferredTimescale: 600)
+        player.seek(to: time, toleranceBefore: tolerance, toleranceAfter: tolerance)
+    }
+
     /// Match the desktop renderer's scaling in the live preview (was hardcoded to letterbox).
     private func gravityForScaling(_ scaling: VideoScaling) -> AVLayerVideoGravity {
         switch scaling {
@@ -308,6 +399,7 @@ struct WallpaperPreview: View {
         player?.pause()
         player = nil
         playerLooper = nil
+        scrubDurationSeconds = 0
     }
 
     private func loadThumbnailIfNeeded(force: Bool = false) {

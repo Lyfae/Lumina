@@ -16,6 +16,10 @@ final class WallpaperManagerWindowController: NSWindowController {
     /// Window frame snapshot taken when crop mode opens — restored on close even if growth was clamped.
     private var preCropWindowFrame: NSRect?
 
+    /// Width snapshot taken when the Config column opens — restored on close without touching height.
+    private var preConfigWindowWidth: CGFloat?
+    private var preConfigWindowOriginX: CGFloat?
+
     // Shared selection between windows. Plain stored property — @State is only valid inside
     // SwiftUI Views; on an NSWindowController it silently does nothing reactive.
     private var selectedMonitorID: String? = nil
@@ -63,6 +67,14 @@ final class WallpaperManagerWindowController: NSWindowController {
             self,
             selector: #selector(handleCropEditorVisibilityChanged),
             name: .cropEditorVisibilityChanged,
+            object: nil
+        )
+
+        // Listen for Config column — grow width so the preview keeps its size
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleConfigColumnVisibilityChanged),
+            name: .configColumnVisibilityChanged,
             object: nil
         )
         
@@ -194,8 +206,51 @@ final class WallpaperManagerWindowController: NSWindowController {
                 window.setFrame(newFrame, display: true, animate: true)
             }
         } else if let saved = preCropWindowFrame {
-            window.setFrame(saved, display: true, animate: true)
+            // Restore height only — Config may have widened the window independently.
+            var frame = window.frame
+            let top = frame.maxY
+            frame.size.height = saved.height
+            frame.origin.y = top - saved.height
+            window.setFrame(frame, display: true, animate: true)
             preCropWindowFrame = nil
+        }
+    }
+
+    @objc private func handleConfigColumnVisibilityChanged(_ notification: Notification) {
+        guard let isVisible = notification.userInfo?["visible"] as? Bool,
+              let window = self.window else { return }
+
+        let growth = DisplayScale.points(340)
+
+        if isVisible {
+            if preConfigWindowWidth == nil {
+                preConfigWindowWidth = window.frame.width
+                preConfigWindowOriginX = window.frame.origin.x
+            }
+
+            let screen = (window.screen ?? NSScreen.main)?.visibleFrame
+                ?? NSRect(x: 0, y: 0, width: 1400, height: 900)
+            var frame = window.frame
+            let targetWidth = min(frame.width + growth, screen.width * 0.95)
+            let delta = targetWidth - frame.width
+            guard delta > 1 else { return }
+
+            frame.size.width = targetWidth
+            // Prefer growing to the right so the preview stays put; clamp if needed.
+            if frame.maxX > screen.maxX {
+                frame.origin.x = max(screen.minX, screen.maxX - frame.width)
+            }
+            window.setFrame(frame, display: true, animate: true)
+        } else if let savedWidth = preConfigWindowWidth {
+            var frame = window.frame
+            frame.size.width = savedWidth
+            if let savedX = preConfigWindowOriginX {
+                frame.origin.x = savedX
+            }
+            // Keep current height (crop may have changed it).
+            window.setFrame(frame, display: true, animate: true)
+            preConfigWindowWidth = nil
+            preConfigWindowOriginX = nil
         }
     }
 }
@@ -207,4 +262,7 @@ extension Notification.Name {
     /// Posted by MonitorDetailPanel when the user toggles the crop editor.
     /// Used by the window controller to automatically grow the window if needed.
     static let cropEditorVisibilityChanged = Notification.Name("Lumina.CropEditorVisibilityChanged")
+
+    /// Posted when the Config settings column opens/closes — window grows wider so preview size stays.
+    static let configColumnVisibilityChanged = Notification.Name("Lumina.ConfigColumnVisibilityChanged")
 }
