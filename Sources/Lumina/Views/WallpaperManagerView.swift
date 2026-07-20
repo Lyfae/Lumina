@@ -136,6 +136,7 @@ struct WallpaperManagerView: View {
                     .strokeBorder(Color.luminaBorder, lineWidth: 1)
             )
             .frame(minWidth: DisplayScale.points(180), maxWidth: DisplayScale.points(280))
+            .layoutPriority(-1)
 
             LuminaToolbarButton(
                 title: "Sync",
@@ -482,7 +483,7 @@ private struct AudioFooterBar: View {
 
                     Button { audioManager.toggle() } label: {
                         Image(systemName: audioManager.isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                            .font(.system(size: DisplayScale.points(36)))
+                            .font(.system(size: DisplayScale.points(28)))
                             .foregroundStyle(audioManager.trackURL != nil ? themeManager.current.color : .secondary)
                     }
                     .buttonStyle(.plain)
@@ -569,13 +570,13 @@ private struct AudioFooterBar: View {
                 }
             }
             .padding(.horizontal, LuminaLayout.contentPadding)
-            .padding(.vertical, DisplayScale.points(14))
+            .padding(.vertical, DisplayScale.points(10))
         }
     }
 
     /// Small rounded album-art tile used in the now-playing bar.
     private var nowPlayingArtwork: some View {
-        let side = DisplayScale.points(50)
+        let side = DisplayScale.points(40)
         return RoundedRectangle(cornerRadius: DisplayScale.points(10), style: .continuous)
             .fill(
                 LinearGradient(

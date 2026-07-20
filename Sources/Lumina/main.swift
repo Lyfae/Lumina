@@ -84,7 +84,13 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         // Release splash: borderless floating card with the animated cursive LS monogram.
         // Non-activating (never steals focus), click-to-dismiss, auto-dismisses in ~4s.
-        SplashWindowController.present()
+        // First launch: after splash (loading beat), open Studio so new users land in the app.
+        let shouldAutoOpenStudio = !UserDefaults.standard.bool(forKey: "Lumina.HasAutoOpenedStudio")
+        SplashWindowController.present { [weak self] in
+            guard shouldAutoOpenStudio else { return }
+            UserDefaults.standard.set(true, forKey: "Lumina.HasAutoOpenedStudio")
+            self?.openWallpaperManager()
+        }
 
         setupStatusItem()
         NotificationCenter.default.addObserver(
@@ -118,11 +124,11 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         wsnc.addObserver(self, selector: #selector(activeContextChanged),
             name: NSWorkspace.activeSpaceDidChangeNotification, object: nil)
 
-        LuminaLog.app.info("Lumina started (menu-bar only). Use the menu bar icon → Wallpaper Manager (⌘M)")
+        LuminaLog.app.info("Lumina started (menu-bar accessory). First launch opens Studio after splash; later launches stay menu-bar until ⌘M.")
 
-        // Onboarding is shown once when the user first opens Lumina Studio (not at launch —
-        // avoids stacking a broken/extra window right after the splash).
-        
+        // Onboarding is shown once when Lumina Studio opens (including the first-launch
+        // auto-open after splash — never stacked under the splash itself).
+
         // Optional update check on launch (Settings → General).
         if UserDefaults.standard.object(forKey: "Lumina.AutoCheckUpdates") == nil {
             UserDefaults.standard.set(true, forKey: "Lumina.AutoCheckUpdates")
@@ -134,8 +140,11 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         // New-version changelog: open About & Status once per version.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
-            self.checkForNewVersionAndShowChangelogIfNeeded()
+        // Skip on the very first launch — Studio + onboarding already own that moment.
+        if !shouldAutoOpenStudio {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                self.checkForNewVersionAndShowChangelogIfNeeded()
+            }
         }
     }
 

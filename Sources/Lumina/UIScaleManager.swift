@@ -28,7 +28,7 @@ final class UIScaleManager: ObservableObject {
             switch self {
             case .compact: return "Smaller icons and tighter spacing"
             case .standard: return "Balanced default layout"
-            case .comfortable: return "Larger icons — easier to scan"
+            case .comfortable: return "Slightly larger type and controls"
             case .large: return "Maximum size for accessibility"
             }
         }
@@ -37,17 +37,17 @@ final class UIScaleManager: ObservableObject {
             switch self {
             case .compact: return 0.92
             case .standard: return 1.0
-            case .comfortable: return 1.14
-            case .large: return 1.28
+            case .comfortable: return 1.06
+            case .large: return 1.22
             }
         }
 
         var sampleIconSize: CGFloat {
             switch self {
-            case .compact: return 16
-            case .standard: return 18
-            case .comfortable: return 22
-            case .large: return 26
+            case .compact: return 15
+            case .standard: return 17
+            case .comfortable: return 18
+            case .large: return 22
             }
         }
     }
@@ -76,22 +76,22 @@ final class UIScaleManager: ObservableObject {
     func iconSize(_ role: IconRole) -> CGFloat {
         let base: CGFloat
         switch role {
-        case .toolbar: base = 20
-        case .filter: base = 22
-        case .transport: base = 24
-        case .card: base = 18
-        case .hero: base = 52
+        case .toolbar: base = 18
+        case .filter: base = 18
+        case .transport: base = 18
+        case .card: base = 16
+        case .hero: base = 44
         }
         return DisplayScale.points(base)
     }
 
-    func touchTarget() -> CGFloat { DisplayScale.points(44) }
+    func touchTarget() -> CGFloat { DisplayScale.points(preset == .large ? 44 : 36) }
 
     /// macOS control size for sliders, toggles, and pickers.
     func controlSize() -> ControlSize {
         switch preset {
-        case .compact, .standard: return .regular
-        case .comfortable, .large: return .large
+        case .compact, .standard, .comfortable: return .regular
+        case .large: return .large
         }
     }
 

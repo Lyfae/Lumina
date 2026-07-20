@@ -172,20 +172,22 @@ struct WallpaperPreview: View {
             .clipShape(RoundedRectangle(cornerRadius: 8))
         }
         .overlay(alignment: .bottomTrailing) {
-            HStack(spacing: DisplayScale.points(4)) {
-                let icon = mediaType == .video ? "play.rectangle.fill" :
-                           mediaType == .animatedImage ? "photo.stack.fill" : "photo.fill"
-                Image(systemName: icon)
-                    .font(.system(size: DisplayScale.points(10), weight: .semibold))
-                Text(assignment.displayName)
-                    .font(.system(size: DisplayScale.points(11), weight: .medium))
-                    .lineLimit(1)
+            if showsChrome {
+                HStack(spacing: DisplayScale.points(4)) {
+                    let icon = mediaType == .video ? "play.rectangle.fill" :
+                               mediaType == .animatedImage ? "photo.stack.fill" : "photo.fill"
+                    Image(systemName: icon)
+                        .font(.system(size: DisplayScale.points(10), weight: .semibold))
+                    Text(assignment.displayName)
+                        .font(.system(size: DisplayScale.points(11), weight: .medium))
+                        .lineLimit(1)
+                }
+                .padding(.horizontal, DisplayScale.points(8))
+                .padding(.vertical, DisplayScale.points(4))
+                .background(.ultraThinMaterial, in: Capsule())
+                .padding(6)
+                .foregroundStyle(.white)
             }
-            .padding(.horizontal, DisplayScale.points(8))
-            .padding(.vertical, DisplayScale.points(4))
-            .background(.ultraThinMaterial, in: Capsule())
-            .padding(6)
-            .foregroundStyle(.white)
         }
     }
 
@@ -230,18 +232,20 @@ struct WallpaperPreview: View {
         .overlay(cropOverlay(size: size))
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay(alignment: .bottomTrailing) {
-            HStack(spacing: DisplayScale.points(4)) {
-                Image(systemName: "film")
-                    .font(.system(size: DisplayScale.points(10), weight: .semibold))
-                Text(assignment.displayName)
-                    .font(.system(size: DisplayScale.points(11), weight: .medium))
-                    .lineLimit(1)
+            if showsChrome {
+                HStack(spacing: DisplayScale.points(4)) {
+                    Image(systemName: "film")
+                        .font(.system(size: DisplayScale.points(10), weight: .semibold))
+                    Text(assignment.displayName)
+                        .font(.system(size: DisplayScale.points(11), weight: .medium))
+                        .lineLimit(1)
+                }
+                .padding(.horizontal, DisplayScale.points(8))
+                .padding(.vertical, DisplayScale.points(4))
+                .background(.ultraThinMaterial, in: Capsule())
+                .padding(6)
+                .foregroundStyle(.white)
             }
-            .padding(.horizontal, DisplayScale.points(8))
-            .padding(.vertical, DisplayScale.points(4))
-            .background(.ultraThinMaterial, in: Capsule())
-            .padding(6)
-            .foregroundStyle(.white)
         }
     }
 

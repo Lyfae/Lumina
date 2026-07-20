@@ -86,12 +86,11 @@ struct LuminaSlider: View {
     @Binding var value: Double
     let range: ClosedRange<Double>
     var step: Double? = nil
-    /// Use in compact toolbars (e.g. audio footer) — tighter padding, still keeps light-mode contrast.
+    /// Use in compact toolbars (e.g. audio footer) — tighter padding.
     var compact: Bool = false
 
     @StateObject private var theme = ThemeManager.shared
     @StateObject private var uiScale = UIScaleManager.shared
-    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         Group {
@@ -103,22 +102,7 @@ struct LuminaSlider: View {
         }
         .controlSize(uiScale.controlSize())
         .tint(theme.current.color)
-        .frame(minHeight: DisplayScale.points(compact ? 22 : 32))
-        .padding(.vertical, compact ? DisplayScale.points(2) : DisplayScale.points(4))
-        .padding(.horizontal, colorScheme == .light ? DisplayScale.points(compact ? 4 : 6) : 0)
-        .background(lightModeTrackBackground)
-    }
-
-    @ViewBuilder
-    private var lightModeTrackBackground: some View {
-        if colorScheme == .light {
-            RoundedRectangle(cornerRadius: DisplayScale.points(compact ? 6 : 8), style: .continuous)
-                .fill(Color.primary.opacity(0.05))
-                .overlay(
-                    RoundedRectangle(cornerRadius: DisplayScale.points(compact ? 6 : 8), style: .continuous)
-                        .strokeBorder(Color.luminaBorder, lineWidth: 1)
-                )
-        }
+        .frame(minHeight: DisplayScale.points(compact ? 18 : 24))
     }
 }
 
@@ -161,12 +145,18 @@ struct LuminaToolbarButton: View {
                     .font(.system(size: uiScale.iconSize(.toolbar), weight: .semibold))
                 Text(title)
                     .font(.system(size: DisplayScale.points(10), weight: .medium))
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
             }
             .foregroundStyle(.primary)
-            .frame(width: uiScale.touchTarget(), height: uiScale.touchTarget())
+            // Hit area at least touchTarget, but never clip the title (e.g. "Settings").
+            .padding(.horizontal, DisplayScale.points(4))
+            .frame(minWidth: uiScale.touchTarget(), minHeight: uiScale.touchTarget())
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .fixedSize()
+        .layoutPriority(1)
         .help(help ?? title)
         .accessibilityLabel(title)
     }
@@ -306,6 +296,58 @@ struct LuminaHintBubble: View {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .strokeBorder(style.borderColor, lineWidth: 1)
         )
+    }
+}
+
+// MARK: - Secondary button (readable on light backgrounds — not washed-out green text)
+
+/// Matched chrome for secondary (and optional filled primary) actions so paired
+/// buttons like Done / Reset share the same height and padding.
+struct LuminaSecondaryButtonStyle: ButtonStyle {
+    @Environment(\.colorScheme) private var colorScheme
+    @StateObject private var theme = ThemeManager.shared
+
+    var destructive: Bool = false
+    /// Filled accent style — same metrics as secondary so pairs align.
+    var prominent: Bool = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: DisplayScale.points(13), weight: .semibold))
+            .padding(.horizontal, DisplayScale.points(14))
+            .padding(.vertical, DisplayScale.points(7))
+            .frame(minHeight: DisplayScale.points(28))
+            .foregroundStyle(foreground)
+            .background(
+                RoundedRectangle(cornerRadius: DisplayScale.points(8), style: .continuous)
+                    .fill(fill.opacity(configuration.isPressed ? 0.85 : 1))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: DisplayScale.points(8), style: .continuous)
+                    .strokeBorder(border, lineWidth: prominent ? 0 : 1)
+            )
+    }
+
+    private var foreground: Color {
+        if prominent { return .white }
+        if destructive { return .red }
+        return .primary
+    }
+
+    private var fill: Color {
+        if prominent { return theme.current.color }
+        if colorScheme == .light {
+            return Color.primary.opacity(0.06)
+        }
+        return Color.primary.opacity(0.12)
+    }
+
+    private var border: Color {
+        if prominent { return .clear }
+        if destructive {
+            return Color.red.opacity(colorScheme == .light ? 0.35 : 0.45)
+        }
+        return Color.primary.opacity(colorScheme == .light ? 0.16 : 0.22)
     }
 }
 

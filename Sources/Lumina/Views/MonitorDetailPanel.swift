@@ -20,8 +20,19 @@ struct MonitorDetailPanel: View {
     // Presents the dedicated slideshow queue/configuration sheet.
     @State private var showSlideshowConfig: Bool = false
 
-    /// Wallpaper Engine–style inspector: closed by default so the preview owns the body.
+    /// Wallpaper adjustments inspector: closed by default so the preview owns the body.
     @State private var showSettingsColumn: Bool = false
+    /// Measured preview width while flexible; locked during open/close so GeometryReader
+    /// (and the AVPlayer layer) don't reflow every animation frame.
+    @State private var measuredPreviewWidth: CGFloat = 0
+    @State private var lockedPreviewWidth: CGFloat? = nil
+    @State private var previewUnlockTask: Task<Void, Never>? = nil
+
+    /// Must match the window growth delta so the preview width stays stable while toggling.
+    private static var settingsInspectorWidth: CGFloat { DisplayScale.points(340) }
+    private static let settingsToggleDuration: TimeInterval = 0.42
+    /// Slightly longer, ease-out collapse so closing doesn't feel stepped.
+    private static let settingsCollapseDuration: TimeInterval = 0.55
 
     // Local state for settings (synced with store)
     @State private var selectedScaling: VideoScaling = .fill
@@ -133,19 +144,48 @@ struct MonitorDetailPanel: View {
 
             HStack(spacing: 0) {
                 previewColumn
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(
+                        GeometryReader { geo in
+                            Color.clear.preference(
+                                key: PreviewColumnWidthKey.self,
+                                value: geo.size.width
+                            )
+                        }
+                    )
+                    // Lock width while the adjustments column animates so the live preview
+                    // doesn't reflow (that was the open/close glitch).
+                    .frame(
+                        width: lockedPreviewWidth,
+                        alignment: .center
+                    )
+                    .frame(
+                        maxWidth: lockedPreviewWidth == nil ? .infinity : nil,
+                        maxHeight: .infinity
+                    )
+                    .layoutPriority(1)
+                    // Don't animate size changes on the preview itself.
+                    .transaction { $0.animation = nil }
 
-                if showSettingsColumn {
-                    Rectangle()
-                        .fill(Color.luminaBorder)
-                        .frame(width: 1)
-
-                    settingsColumn
-                        .frame(width: DisplayScale.points(340))
-                        .transition(.move(edge: .trailing).combined(with: .opacity))
-                }
+                settingsColumn
+                    .frame(
+                        width: showSettingsColumn ? Self.settingsInspectorWidth : 0,
+                        alignment: .topLeading
+                    )
+                    .clipped()
+                    .opacity(showSettingsColumn ? 1 : 0)
+                    .allowsHitTesting(showSettingsColumn)
+                    .overlay(alignment: .leading) {
+                        Rectangle()
+                            .fill(Color.luminaBorder)
+                            .frame(width: 1)
+                            .opacity(showSettingsColumn ? 1 : 0)
+                    }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .onPreferenceChange(PreviewColumnWidthKey.self) { width in
+                guard lockedPreviewWidth == nil, width > 1 else { return }
+                measuredPreviewWidth = width
+            }
 
             LuminaDivider()
 
@@ -179,14 +219,11 @@ struct MonitorDetailPanel: View {
                 userInfo: ["visible": visible]
             )
         }
-        .onChange(of: showSettingsColumn) { _, visible in
-            NotificationCenter.default.post(
-                name: .configColumnVisibilityChanged,
-                object: nil,
-                userInfo: ["visible": visible]
-            )
-        }
+        // Config column window resize is driven explicitly from `toggleConfigColumn`
+        // (instant grow on open; column out then soft window shrink on close).
         .onDisappear {
+            previewUnlockTask?.cancel()
+            lockedPreviewWidth = nil
             // If the panel goes away while crop mode is open, tell the window controller to
             // shrink back — otherwise the grown window frame sticks around.
             if cropEditMode {
@@ -200,7 +237,11 @@ struct MonitorDetailPanel: View {
                 NotificationCenter.default.post(
                     name: .configColumnVisibilityChanged,
                     object: nil,
-                    userInfo: ["visible": false]
+                    userInfo: [
+                        "visible": false,
+                        "animateWindow": false,
+                        "width": Self.settingsInspectorWidth
+                    ]
                 )
             }
         }
@@ -449,47 +490,38 @@ struct MonitorDetailPanel: View {
                 .shadow(color: .black.opacity(0.35), radius: 2, y: 1)
         }
         .buttonStyle(.plain)
-        .help("Crop and position the wallpaper on this display")
+        .help("Crop and position — drag inside to move, pull corners to resize")
     }
 
     @ViewBuilder
     private func cropEditorToolbar(assignment a: MonitorAssignment) -> some View {
-        VStack(alignment: .leading, spacing: DisplayScale.points(12)) {
-            HStack(spacing: DisplayScale.points(10)) {
+        VStack(alignment: .leading, spacing: DisplayScale.points(10)) {
+            HStack(alignment: .center, spacing: DisplayScale.points(8)) {
+                Spacer(minLength: 0)
+
                 Button {
                     withAnimation(.easeInOut(duration: 0.15)) { cropEditMode = false }
                 } label: {
-                    Label("Done", systemImage: "checkmark.circle.fill")
-                        .font(uiScale.scaledFont(13, weight: .semibold))
-                        .padding(.horizontal, DisplayScale.points(14))
-                        .padding(.vertical, DisplayScale.points(8))
+                    Label("Done", systemImage: "checkmark")
+                        .labelStyle(.titleAndIcon)
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
+                .buttonStyle(LuminaSecondaryButtonStyle(prominent: true))
 
                 Button { resetCropToDefault() } label: {
                     Text("Reset")
-                        .font(uiScale.scaledFont(13, weight: .semibold))
-                        .padding(.horizontal, DisplayScale.points(14))
-                        .padding(.vertical, DisplayScale.points(8))
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.large)
+                .buttonStyle(LuminaSecondaryButtonStyle())
                 .help("Center the crop frame on the media")
-
-                Spacer(minLength: DisplayScale.points(8))
-
-                Text("Drag inside · pull corners")
-                    .font(uiScale.scaledFont(11))
-                    .foregroundStyle(.secondary)
             }
+            .padding(.top, DisplayScale.points(12))
 
             if a.mediaType == .video {
                 cropVideoFrameControls(assignment: a)
             }
         }
-        .padding(.horizontal, DisplayScale.points(8))
-        .padding(.bottom, DisplayScale.points(6))
+        .padding(.horizontal, DisplayScale.points(12))
+        .padding(.bottom, DisplayScale.points(10))
+        .help("Drag inside the crop to move · pull corners to resize")
     }
 
     @ViewBuilder
@@ -527,13 +559,15 @@ struct MonitorDetailPanel: View {
                         if committedUseStaticFrame {
                             Button { commitVideoFrame(useStatic: true) } label: {
                                 Label("Use as still", systemImage: "photo.fill")
+                                    .font(uiScale.scaledFont(12, weight: .semibold))
                             }
                             .buttonStyle(.borderedProminent)
                         } else {
                             Button { commitVideoFrame(useStatic: true) } label: {
                                 Label("Use as still", systemImage: "photo.fill")
+                                    .font(uiScale.scaledFont(12, weight: .semibold))
                             }
-                            .buttonStyle(.bordered)
+                            .buttonStyle(LuminaSecondaryButtonStyle())
                         }
                     }
                     .controlSize(uiScale.controlSize())
@@ -543,13 +577,15 @@ struct MonitorDetailPanel: View {
                         if !committedUseStaticFrame, a.videoFrameTime != nil {
                             Button { commitVideoFrame(useStatic: false) } label: {
                                 Label("Start video here", systemImage: "play.rectangle.fill")
+                                    .font(uiScale.scaledFont(12, weight: .semibold))
                             }
                             .buttonStyle(.borderedProminent)
                         } else {
                             Button { commitVideoFrame(useStatic: false) } label: {
                                 Label("Start video here", systemImage: "play.rectangle.fill")
+                                    .font(uiScale.scaledFont(12, weight: .semibold))
                             }
-                            .buttonStyle(.bordered)
+                            .buttonStyle(LuminaSecondaryButtonStyle())
                         }
                     }
                     .controlSize(uiScale.controlSize())
@@ -836,51 +872,105 @@ struct MonitorDetailPanel: View {
 
     // MARK: - Action Buttons
 
+    private func postConfigColumnVisibility(
+        _ visible: Bool,
+        animateWindow: Bool,
+        duration: TimeInterval
+    ) {
+        NotificationCenter.default.post(
+            name: .configColumnVisibilityChanged,
+            object: nil,
+            userInfo: [
+                "visible": visible,
+                "animateWindow": animateWindow,
+                "duration": duration,
+                "width": Self.settingsInspectorWidth
+            ]
+        )
+    }
+
+    private func toggleConfigColumn() {
+        previewUnlockTask?.cancel()
+        let opening = !showSettingsColumn
+
+        if opening {
+            // Freeze preview, grow the window immediately so layout has room, then
+            // slide the Config column into the new space — avoids the header squeeze.
+            let width = measuredPreviewWidth > 1 ? measuredPreviewWidth : nil
+            lockedPreviewWidth = width
+            postConfigColumnVisibility(
+                true,
+                animateWindow: false,
+                duration: Self.settingsToggleDuration
+            )
+            withAnimation(
+                .timingCurve(0.25, 0.1, 0.25, 1.0, duration: Self.settingsToggleDuration)
+            ) {
+                showSettingsColumn = true
+            }
+        } else {
+            // Column out first while the window stays wide (mirrors expand). Shrinking
+            // both together desyncs AppKit/SwiftUI and glitches the preview/header.
+            let columnDuration = Self.settingsCollapseDuration
+            let windowDuration: TimeInterval = 0.40
+            withAnimation(.timingCurve(0.22, 1.0, 0.36, 1.0, duration: columnDuration)) {
+                showSettingsColumn = false
+            }
+            previewUnlockTask = Task { @MainActor in
+                let columnNs = UInt64(columnDuration * 1_000_000_000)
+                try? await Task.sleep(nanoseconds: columnNs)
+                guard !Task.isCancelled else { return }
+                postConfigColumnVisibility(false, animateWindow: true, duration: windowDuration)
+                let windowNs = UInt64(windowDuration * 1_000_000_000)
+                try? await Task.sleep(nanoseconds: windowNs)
+                guard !Task.isCancelled else { return }
+                lockedPreviewWidth = nil
+            }
+        }
+    }
+
     private var actionButtons: some View {
-        VStack(spacing: 10) {
-            // Prominent commit: pushes the staged (previewed) settings to the live desktop.
-            // Media is assigned by clicking an item in the Library on the left — there's no
-            // separate "Choose Media" here (it duplicated the library flow).
-            HStack(spacing: DisplayScale.points(10)) {
+        VStack(spacing: DisplayScale.points(8)) {
+            HStack(spacing: DisplayScale.points(8)) {
                 Button {
                     applyToWallpaper()
                 } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "checkmark.circle.fill")
-                        Text(hasUnappliedChanges ? "Apply to Wallpaper" : "Applied — Up to Date")
-                    }
+                    Label(
+                        hasUnappliedChanges ? "Apply to Wallpaper" : "Applied — Up to Date",
+                        systemImage: "checkmark.circle.fill"
+                    )
+                    .font(uiScale.scaledFont(13, weight: .semibold))
                     .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
-                .controlSize(.large)
+                .controlSize(uiScale.controlSize())
                 .disabled(!hasUnappliedChanges || assignment == nil)
                 .help(applyButtonHelp)
 
                 Button {
-                    withAnimation(.easeInOut(duration: 0.22)) {
-                        showSettingsColumn.toggle()
-                    }
+                    toggleConfigColumn()
                 } label: {
-                    Label("Config", systemImage: showSettingsColumn ? "sidebar.trailing" : "slider.horizontal.3")
-                        .font(uiScale.scaledFont(13, weight: .semibold))
-                        .padding(.horizontal, DisplayScale.points(10))
-                        .padding(.vertical, DisplayScale.points(4))
+                    Label(
+                        "Config",
+                        systemImage: "slider.horizontal.3"
+                    )
+                    .font(uiScale.scaledFont(13, weight: .semibold))
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.large)
-                .foregroundStyle(showSettingsColumn ? themeManager.current.color : .primary)
-                .help(showSettingsColumn ? "Hide wallpaper settings" : "Show wallpaper settings")
+                .buttonStyle(LuminaSecondaryButtonStyle())
+                .controlSize(uiScale.controlSize())
+                .help(showSettingsColumn ? "Hide wallpaper config" : "Show wallpaper config")
                 .accessibilityLabel(showSettingsColumn ? "Hide Config" : "Show Config")
                 .accessibilityAddTraits(showSettingsColumn ? .isSelected : [])
             }
 
-            HStack(spacing: 10) {
+            HStack(spacing: DisplayScale.points(8)) {
                 if monitor.assignedVideoName != nil {
                     Button("Clear Wallpaper", role: .destructive) {
                         store.clearAssignment(for: monitor)
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(LuminaSecondaryButtonStyle(destructive: true))
                     .controlSize(uiScale.controlSize())
+                    .font(uiScale.scaledFont(12, weight: .medium))
                 }
 
                 Spacer()
@@ -888,14 +978,16 @@ struct MonitorDetailPanel: View {
                 Button("Reset Adjustments") {
                     resetToDefaults()
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(LuminaSecondaryButtonStyle())
                 .controlSize(uiScale.controlSize())
+                .font(uiScale.scaledFont(12, weight: .medium))
                 .help("Reset the staged display settings to their defaults (preview only — Apply to commit)")
 
                 if showHeader {
                     Button("Done") { onClose() }
-                        .buttonStyle(.bordered)
+                        .buttonStyle(LuminaSecondaryButtonStyle())
                         .controlSize(uiScale.controlSize())
+                        .font(uiScale.scaledFont(12, weight: .medium))
                 }
             }
         }
@@ -1156,6 +1248,13 @@ struct MonitorDetailPanel: View {
     }
 
 } // end MonitorDetailPanel
+
+private enum PreviewColumnWidthKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
 
 // MARK: - Settings Group
 // A consistently styled visual container for a logical group of related controls.

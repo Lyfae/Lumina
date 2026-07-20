@@ -172,13 +172,16 @@ struct SplashScreenView: View {
 final class SplashWindowController {
 
     private var panel: NSPanel?
+    private var onFinished: (() -> Void)?
     /// Keeps the controller alive while the splash is on screen (released on finish).
     private static var active: SplashWindowController?
 
     /// Shows the splash once. Safe to call from applicationDidFinishLaunching.
-    static func present() {
+    /// - Parameter onFinished: Invoked after the splash tears down (auto or click-dismiss).
+    static func present(onFinished: (() -> Void)? = nil) {
         guard active == nil else { return }
         let controller = SplashWindowController()
+        controller.onFinished = onFinished
         active = controller
         controller.show()
     }
@@ -228,6 +231,9 @@ final class SplashWindowController {
         panel?.orderOut(nil)
         panel?.contentView = nil
         panel = nil
+        let callback = onFinished
+        onFinished = nil
         Self.active = nil
+        callback?()
     }
 }

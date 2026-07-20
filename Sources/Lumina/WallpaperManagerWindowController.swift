@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import QuartzCore
 
 /// Hosts the SwiftUI-based Wallpaper Manager view.
 /// Also manages the separate floating Physical Setup window.
@@ -220,7 +221,9 @@ final class WallpaperManagerWindowController: NSWindowController {
         guard let isVisible = notification.userInfo?["visible"] as? Bool,
               let window = self.window else { return }
 
-        let growth = DisplayScale.points(340)
+        let growth = (notification.userInfo?["width"] as? CGFloat) ?? DisplayScale.points(340)
+        let duration = (notification.userInfo?["duration"] as? TimeInterval) ?? 0.42
+        let animateWindow = (notification.userInfo?["animateWindow"] as? Bool) ?? true
 
         if isVisible {
             if preConfigWindowWidth == nil {
@@ -240,7 +243,19 @@ final class WallpaperManagerWindowController: NSWindowController {
             if frame.maxX > screen.maxX {
                 frame.origin.x = max(screen.minX, screen.maxX - frame.width)
             }
-            window.setFrame(frame, display: true, animate: true)
+
+            // Open path grows the window first (often instantly) so SwiftUI can slide
+            // Config into already-available space without squeezing the header.
+            if animateWindow {
+                NSAnimationContext.runAnimationGroup { ctx in
+                    ctx.duration = duration
+                    ctx.timingFunction = CAMediaTimingFunction(controlPoints: 0.25, 0.1, 0.25, 1.0)
+                    ctx.allowsImplicitAnimation = true
+                    window.animator().setFrame(frame, display: true)
+                }
+            } else {
+                window.setFrame(frame, display: true)
+            }
         } else if let savedWidth = preConfigWindowWidth {
             var frame = window.frame
             frame.size.width = savedWidth
@@ -248,7 +263,17 @@ final class WallpaperManagerWindowController: NSWindowController {
                 frame.origin.x = savedX
             }
             // Keep current height (crop may have changed it).
-            window.setFrame(frame, display: true, animate: true)
+            // Close path: called only after the Config column has fully collapsed.
+            if animateWindow {
+                NSAnimationContext.runAnimationGroup { ctx in
+                    ctx.duration = duration
+                    ctx.timingFunction = CAMediaTimingFunction(controlPoints: 0.22, 1.0, 0.36, 1.0)
+                    ctx.allowsImplicitAnimation = true
+                    window.animator().setFrame(frame, display: true)
+                }
+            } else {
+                window.setFrame(frame, display: true)
+            }
             preConfigWindowWidth = nil
             preConfigWindowOriginX = nil
         }
@@ -263,6 +288,6 @@ extension Notification.Name {
     /// Used by the window controller to automatically grow the window if needed.
     static let cropEditorVisibilityChanged = Notification.Name("Lumina.CropEditorVisibilityChanged")
 
-    /// Posted when the Config settings column opens/closes — window grows wider so preview size stays.
+    /// Posted when the wallpaper Config column opens/closes — window grows wider so preview size stays.
     static let configColumnVisibilityChanged = Notification.Name("Lumina.ConfigColumnVisibilityChanged")
 }
