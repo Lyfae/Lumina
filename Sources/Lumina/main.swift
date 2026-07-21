@@ -84,12 +84,14 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         // Release splash: borderless floating card with the animated cursive LS monogram.
         // Non-activating (never steals focus), click-to-dismiss, auto-dismisses in ~4s.
-        // First launch: after splash (loading beat), open Studio so new users land in the app.
-        let shouldAutoOpenStudio = !UserDefaults.standard.bool(forKey: "Lumina.HasAutoOpenedStudio")
+        // Splash is the loading beat — when it finishes, open Studio so launch always
+        // lands in the app. Closing/minimizing Studio still leaves Lumina in the menu bar.
         SplashWindowController.present { [weak self] in
-            guard shouldAutoOpenStudio else { return }
-            UserDefaults.standard.set(true, forKey: "Lumina.HasAutoOpenedStudio")
-            self?.openWallpaperManager()
+            DispatchQueue.main.async {
+                UserDefaults.standard.set(true, forKey: "Lumina.HasAutoOpenedStudio")
+                LuminaLog.app.info("Splash finished — opening Lumina Studio")
+                self?.openWallpaperManager()
+            }
         }
 
         setupStatusItem()
@@ -124,10 +126,10 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         wsnc.addObserver(self, selector: #selector(activeContextChanged),
             name: NSWorkspace.activeSpaceDidChangeNotification, object: nil)
 
-        LuminaLog.app.info("Lumina started (menu-bar accessory). First launch opens Studio after splash; later launches stay menu-bar until ⌘M.")
+        LuminaLog.app.info("Lumina started (menu-bar accessory). Studio opens after splash; close it anytime to stay in the menu bar.")
 
-        // Onboarding is shown once when Lumina Studio opens (including the first-launch
-        // auto-open after splash — never stacked under the splash itself).
+        // Onboarding is shown once when Lumina Studio opens (including after splash —
+        // never stacked under the splash itself).
 
         // Optional update check on launch (Settings → General).
         if UserDefaults.standard.object(forKey: "Lumina.AutoCheckUpdates") == nil {
@@ -139,13 +141,8 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         }
 
-        // New-version changelog: open About & Status once per version.
-        // Skip on the very first launch — Studio + onboarding already own that moment.
-        if !shouldAutoOpenStudio {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
-                self.checkForNewVersionAndShowChangelogIfNeeded()
-            }
-        }
+        // Changelog opens from Studio open path (openWallpaperManager) so it doesn't
+        // race the splash → Studio handoff.
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -713,18 +710,22 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if wallpaperManagerWindow == nil {
             wallpaperManagerWindow = WallpaperManagerWindowController(appDelegate: self)
         }
-        
-        wallpaperManagerWindow?.showWindow(nil)
+
+        guard let controller = wallpaperManagerWindow else { return }
+        controller.showWindow(nil)
+        // Accessory (LSUIElement) apps need an explicit key/orderFront + activate or the
+        // window can stay invisible after a non-activating splash tears down.
+        controller.window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
-        
+
         // Tie onboarding to the Wallpaper Manager experience (as requested)
         self.maybeShowOnboardingForManager()
-        
+
         // Also check for changelog / new version notes when the user opens the manager
         self.checkForNewVersionAndShowChangelogIfNeeded()
-        
+
         // Automatically open the Choose Display window so the user can pick a screen first
-        wallpaperManagerWindow?.openChooseDisplayWindowIfNeeded()
+        controller.openChooseDisplayWindowIfNeeded()
     }
 
     private var onboardingWindowController: NSWindowController?
