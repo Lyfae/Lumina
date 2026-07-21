@@ -224,11 +224,21 @@ struct SettingsView: View {
                 )
             )
 
+            Button {
+                store.restartDisplaysInSync()
+            } label: {
+                Label("Sync displays now", systemImage: "arrow.triangle.2.circlepath")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(LuminaSecondaryButtonStyle())
+            .help("Restart matching video/GIF wallpapers together so they play in sync")
+            .padding(.top, DisplayScale.points(4))
+
             LuminaDivider()
 
             toggleRow(
                 title: "Show music widget when minimized",
-                subtitle: "Pop a floating now-playing mini-player when you minimize the Studio window.",
+                subtitle: "Also available anytime from the Studio music footer (desktop widget).",
                 isOn: Binding(
                     get: { audioManager.showWidgetWhenMinimized },
                     set: { audioManager.showWidgetWhenMinimized = $0 }
