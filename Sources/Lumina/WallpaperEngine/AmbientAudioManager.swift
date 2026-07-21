@@ -9,6 +9,11 @@ final class AmbientAudioManager: NSObject, ObservableObject {
     @Published var volume: Double = 0.5
     @Published var trackURL: URL? = nil
     @Published var trackName: String = "No track selected"
+    /// ID3 / QuickTime title when available; falls back to the filename stem.
+    @Published var trackTitle: String = "No track selected"
+    @Published var trackArtist: String = ""
+    @Published var trackAlbum: String = ""
+    @Published var trackArtwork: NSImage? = nil
     @Published var loops: Bool = true
     @Published var currentTime: Double = 0
     @Published var duration: Double = 0
@@ -18,14 +23,45 @@ final class AmbientAudioManager: NSObject, ObservableObject {
     }
     /// Persistent library of audio tracks the user has added
     @Published private(set) var library: [AudioTrack] = []
+    /// Album art keyed by track id (path) — kept out of `AudioTrack` for Equatable simplicity.
+    @Published private(set) var artworkByID: [String: NSImage] = [:]
+    /// Starred tracks in the ambient music library.
+    @Published private(set) var favoriteIDs: Set<String> = []
 
     private var playbackTimer: Timer?
+    private var metadataTask: Task<Void, Never>?
+    private var libraryMetadataTask: Task<Void, Never>?
 
     struct AudioTrack: Identifiable, Equatable {
         let id: String   // path as stable identity
         let url: URL
-        let duration: TimeInterval   // cached at add time so the view doesn't need AVAudioPlayer
+        var duration: TimeInterval
+        var title: String
+        var artist: String
+        var album: String
+
         var name: String { url.lastPathComponent }
+
+        init(
+            id: String,
+            url: URL,
+            duration: TimeInterval,
+            title: String? = nil,
+            artist: String = "",
+            album: String = ""
+        ) {
+            self.id = id
+            self.url = url
+            self.duration = duration
+            self.title = title ?? Self.defaultTitle(for: url)
+            self.artist = artist
+            self.album = album
+        }
+
+        static func defaultTitle(for url: URL) -> String {
+            let stem = (url.lastPathComponent as NSString).deletingPathExtension
+            return stem.isEmpty ? url.lastPathComponent : stem
+        }
     }
 
     private var player: AVAudioPlayer?
@@ -35,6 +71,7 @@ final class AmbientAudioManager: NSObject, ObservableObject {
     private let libraryKey       = "Lumina.AmbientAudio.Library"
     private let durationCacheKey = "Lumina.AmbientAudio.Durations"
     private let widgetKey        = "Lumina.AmbientAudio.ShowWidgetWhenMinimized"
+    private let favoritesKey     = "Lumina.AmbientAudio.Favorites"
 
     private override init() {
         super.init()
@@ -42,6 +79,7 @@ final class AmbientAudioManager: NSObject, ObservableObject {
         volume = savedVolume == 0 ? 0.5 : savedVolume
         loops = UserDefaults.standard.object(forKey: loopsKey) as? Bool ?? true
         showWidgetWhenMinimized = UserDefaults.standard.object(forKey: widgetKey) as? Bool ?? true
+        favoriteIDs = Set(UserDefaults.standard.stringArray(forKey: favoritesKey) ?? [])
         loadLibrary()
         if let path = UserDefaults.standard.string(forKey: trackURLKey) {
             let url = URL(fileURLWithPath: path)
@@ -59,12 +97,33 @@ final class AmbientAudioManager: NSObject, ObservableObject {
         library.append(AudioTrack(id: url.path, url: url, duration: dur))
         saveLibrary()
         persistDurationCache()
+        scheduleLibraryMetadataLoad(for: url.path)
     }
 
     func removeFromLibrary(track: AudioTrack) {
         library.removeAll { $0.id == track.id }
+        artworkByID.removeValue(forKey: track.id)
+        favoriteIDs.remove(track.id)
+        persistFavorites()
         saveLibrary()
         if trackURL == track.url { clearTrack() }
+    }
+
+    func isFavorite(_ track: AudioTrack) -> Bool { favoriteIDs.contains(track.id) }
+
+    func toggleFavorite(_ track: AudioTrack) {
+        if favoriteIDs.contains(track.id) {
+            favoriteIDs.remove(track.id)
+        } else {
+            favoriteIDs.insert(track.id)
+        }
+        persistFavorites()
+    }
+
+    func artwork(for track: AudioTrack) -> NSImage? { artworkByID[track.id] }
+
+    private func persistFavorites() {
+        UserDefaults.standard.set(Array(favoriteIDs), forKey: favoritesKey)
     }
 
     private func loadLibrary() {
@@ -78,6 +137,7 @@ final class AmbientAudioManager: NSObject, ObservableObject {
         }
         // Fill in any durations we don't have cached, off the main thread.
         refreshMissingDurations()
+        refreshLibraryMetadata()
     }
 
     /// Computes durations for any tracks missing one, without blocking the main thread.
@@ -101,7 +161,7 @@ final class AmbientAudioManager: NSObject, ObservableObject {
         guard !durations.isEmpty else { return }
         for (i, track) in library.enumerated() where track.duration <= 0 {
             if let seconds = durations[track.id] {
-                library[i] = AudioTrack(id: track.id, url: track.url, duration: seconds)
+                library[i].duration = seconds
             }
         }
         persistDurationCache()
@@ -140,12 +200,17 @@ final class AmbientAudioManager: NSObject, ObservableObject {
 
     func seek(by seconds: Double) {
         guard let player else { return }
-        player.currentTime = max(0, min(player.duration, player.currentTime + seconds))
+        let t = max(0, min(player.duration, player.currentTime + seconds))
+        player.currentTime = t
+        currentTime = t
     }
 
     func seekToTime(_ time: Double) {
         guard let player else { return }
-        player.currentTime = max(0, min(player.duration, time))
+        let t = max(0, min(player.duration, time))
+        player.currentTime = t
+        // Publish immediately so the scrubber doesn't snap back to the last timer tick.
+        currentTime = t
     }
 
     func nextTrack() {
@@ -212,9 +277,15 @@ final class AmbientAudioManager: NSObject, ObservableObject {
             player = p
             trackURL = url
             trackName = url.lastPathComponent
+            let stem = (url.lastPathComponent as NSString).deletingPathExtension
+            trackTitle = stem.isEmpty ? url.lastPathComponent : stem
+            trackArtist = ""
+            trackAlbum = ""
+            trackArtwork = nil
             currentTime = 0
             duration = p.duration
             addToLibrary(url: url)
+            scheduleMetadataLoad(for: url)
             return true
         } catch {
             LuminaLog.audio.error("Failed to load: \(error)")
@@ -231,6 +302,7 @@ final class AmbientAudioManager: NSObject, ObservableObject {
     func clearLibrary() {
         clearTrack()
         library.removeAll()
+        artworkByID.removeAll()
         saveLibrary()
     }
 
@@ -269,12 +341,119 @@ final class AmbientAudioManager: NSObject, ObservableObject {
     func clearTrack() {
         pause()
         stopPlaybackTimer()
+        metadataTask?.cancel()
+        metadataTask = nil
         player = nil
         trackURL = nil
         trackName = "No track selected"
+        trackTitle = "No track selected"
+        trackArtist = ""
+        trackAlbum = ""
+        trackArtwork = nil
         currentTime = 0
         duration = 0
         UserDefaults.standard.removeObject(forKey: trackURLKey)
+    }
+
+    // MARK: - Metadata (artwork / artist / album)
+
+    private func scheduleMetadataLoad(for url: URL) {
+        metadataTask?.cancel()
+        metadataTask = Task { [weak self] in
+            let meta = await Self.loadTrackMetadata(from: url)
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                guard let self, self.trackURL == url else { return }
+                if let title = meta.title, !title.isEmpty { self.trackTitle = title }
+                self.trackArtist = meta.artist ?? ""
+                self.trackAlbum = meta.album ?? ""
+                self.trackArtwork = meta.artwork
+                self.applyMetadata(meta, toTrackID: url.path)
+            }
+        }
+    }
+
+    private func refreshLibraryMetadata() {
+        libraryMetadataTask?.cancel()
+        let ids = library.map(\.id)
+        libraryMetadataTask = Task { [weak self] in
+            for id in ids {
+                guard !Task.isCancelled else { return }
+                let url = URL(fileURLWithPath: id)
+                let meta = await Self.loadTrackMetadata(from: url)
+                guard !Task.isCancelled else { return }
+                await MainActor.run {
+                    self?.applyMetadata(meta, toTrackID: id)
+                }
+            }
+        }
+    }
+
+    private func scheduleLibraryMetadataLoad(for id: String) {
+        Task { [weak self] in
+            let meta = await Self.loadTrackMetadata(from: URL(fileURLWithPath: id))
+            await MainActor.run {
+                self?.applyMetadata(meta, toTrackID: id)
+            }
+        }
+    }
+
+    private func applyMetadata(_ meta: TrackMetadata, toTrackID id: String) {
+        guard let index = library.firstIndex(where: { $0.id == id }) else { return }
+        if let title = meta.title, !title.isEmpty {
+            library[index].title = title
+        }
+        if let artist = meta.artist {
+            library[index].artist = artist
+        }
+        if let album = meta.album {
+            library[index].album = album
+        }
+        if let artwork = meta.artwork {
+            artworkByID[id] = artwork
+        }
+    }
+
+    private struct TrackMetadata {
+        var title: String?
+        var artist: String?
+        var album: String?
+        var artwork: NSImage?
+    }
+
+    private static func loadTrackMetadata(from url: URL) async -> TrackMetadata {
+        var result = TrackMetadata()
+        let asset = AVURLAsset(url: url)
+        do {
+            let items = try await asset.load(.commonMetadata)
+            for item in items {
+                guard let key = item.commonKey else { continue }
+                switch key {
+                case .commonKeyTitle:
+                    if let value = try await item.load(.stringValue), !value.isEmpty {
+                        result.title = value
+                    }
+                case .commonKeyArtist:
+                    if let value = try await item.load(.stringValue), !value.isEmpty {
+                        result.artist = value
+                    }
+                case .commonKeyAlbumName:
+                    if let value = try await item.load(.stringValue), !value.isEmpty {
+                        result.album = value
+                    }
+                case .commonKeyArtwork:
+                    if let data = try await item.load(.dataValue),
+                       let image = NSImage(data: data) {
+                        result.artwork = image
+                    }
+                default:
+                    break
+                }
+            }
+        } catch {
+            LuminaLog.audio.debug("Metadata read failed for \(url.lastPathComponent): \(error.localizedDescription)")
+        }
+        return result
     }
 
     // MARK: - End-of-track handling
