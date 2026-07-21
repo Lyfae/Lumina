@@ -5,6 +5,8 @@ import SwiftUI
 @MainActor
 enum LuminaLayout {
     static var libraryColumnWidth: CGFloat { DisplayScale.points(440) }
+    /// Collapsed library rail — just wide enough for the expand control.
+    static var libraryRailWidth: CGFloat { DisplayScale.points(48) }
     static var thumbnailWidth: CGFloat { DisplayScale.points(180) }
     static var thumbnailHeight: CGFloat { DisplayScale.points(101) }
     static var contentPadding: CGFloat { DisplayScale.points(20) }
@@ -128,6 +130,24 @@ struct LuminaSliderLabel: View {
     }
 }
 
+// MARK: - Press feedback
+
+/// Shared press motion so custom buttons feel tactile (scale + brief dim).
+enum LuminaButtonPress {
+    static let scale: CGFloat = 0.96
+    static let animation = Animation.easeOut(duration: 0.1)
+}
+
+/// For buttons that already draw their own chrome (toolbar, chips, icon buttons).
+struct LuminaPressableButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? LuminaButtonPress.scale : 1)
+            .opacity(configuration.isPressed ? 0.7 : 1)
+            .animation(LuminaButtonPress.animation, value: configuration.isPressed)
+    }
+}
+
 // MARK: - Toolbar icon button (44pt min hit target)
 
 struct LuminaToolbarButton: View {
@@ -154,11 +174,28 @@ struct LuminaToolbarButton: View {
             .frame(minWidth: uiScale.touchTarget(), minHeight: uiScale.touchTarget())
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(LuminaToolbarButtonStyle())
         .fixedSize()
         .layoutPriority(1)
         .help(help ?? title)
         .accessibilityLabel(title)
+    }
+}
+
+/// Toolbar: pressed state gets a clear inset plate + scale so it reads as a real click.
+private struct LuminaToolbarButtonStyle: ButtonStyle {
+    @Environment(\.colorScheme) private var colorScheme
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background(
+                RoundedRectangle(cornerRadius: DisplayScale.points(8), style: .continuous)
+                    .fill(Color.primary.opacity(configuration.isPressed
+                                               ? (colorScheme == .light ? 0.12 : 0.18)
+                                               : 0))
+            )
+            .scaleEffect(configuration.isPressed ? LuminaButtonPress.scale : 1)
+            .animation(LuminaButtonPress.animation, value: configuration.isPressed)
     }
 }
 
@@ -195,7 +232,7 @@ struct LuminaFilterChip: View {
             )
             .contentShape(RoundedRectangle(cornerRadius: DisplayScale.points(10), style: .continuous))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(LuminaPressableButtonStyle())
         .help(help)
         .accessibilityLabel(label)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
@@ -312,20 +349,29 @@ struct LuminaSecondaryButtonStyle: ButtonStyle {
     var prominent: Bool = false
 
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
+        let pressed = configuration.isPressed
+        return configuration.label
             .font(.system(size: DisplayScale.points(13), weight: .semibold))
             .padding(.horizontal, DisplayScale.points(14))
             .padding(.vertical, DisplayScale.points(7))
             .frame(minHeight: DisplayScale.points(28))
-            .foregroundStyle(foreground)
+            .foregroundStyle(foreground.opacity(pressed && !prominent ? 0.85 : 1))
             .background(
                 RoundedRectangle(cornerRadius: DisplayScale.points(8), style: .continuous)
-                    .fill(fill.opacity(configuration.isPressed ? 0.85 : 1))
+                    .fill(fill(pressed: pressed))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: DisplayScale.points(8), style: .continuous)
-                    .strokeBorder(border, lineWidth: prominent ? 0 : 1)
+                    .strokeBorder(border(pressed: pressed), lineWidth: prominent ? 0 : 1)
             )
+            .overlay {
+                if pressed {
+                    RoundedRectangle(cornerRadius: DisplayScale.points(8), style: .continuous)
+                        .fill(Color.black.opacity(prominent ? 0.18 : (colorScheme == .light ? 0.06 : 0.12)))
+                }
+            }
+            .scaleEffect(pressed ? LuminaButtonPress.scale : 1)
+            .animation(LuminaButtonPress.animation, value: pressed)
     }
 
     private var foreground: Color {
@@ -334,20 +380,48 @@ struct LuminaSecondaryButtonStyle: ButtonStyle {
         return .primary
     }
 
-    private var fill: Color {
+    private func fill(pressed: Bool) -> Color {
         if prominent { return theme.current.color }
         if colorScheme == .light {
-            return Color.primary.opacity(0.06)
+            return Color.primary.opacity(pressed ? 0.14 : 0.06)
         }
-        return Color.primary.opacity(0.12)
+        return Color.primary.opacity(pressed ? 0.22 : 0.12)
     }
 
-    private var border: Color {
+    private func border(pressed: Bool) -> Color {
         if prominent { return .clear }
         if destructive {
-            return Color.red.opacity(colorScheme == .light ? 0.35 : 0.45)
+            return Color.red.opacity(colorScheme == .light ? (pressed ? 0.5 : 0.35) : (pressed ? 0.6 : 0.45))
         }
-        return Color.primary.opacity(colorScheme == .light ? 0.16 : 0.22)
+        return Color.primary.opacity(colorScheme == .light ? (pressed ? 0.28 : 0.16) : (pressed ? 0.34 : 0.22))
+    }
+}
+
+/// Primary filled action (Apply, etc.) with the same press language as secondary buttons.
+struct LuminaProminentButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+    @StateObject private var theme = ThemeManager.shared
+
+    func makeBody(configuration: Configuration) -> some View {
+        let pressed = configuration.isPressed
+        return configuration.label
+            .font(.system(size: DisplayScale.points(13), weight: .semibold))
+            .padding(.horizontal, DisplayScale.points(14))
+            .padding(.vertical, DisplayScale.points(7))
+            .frame(minHeight: DisplayScale.points(28))
+            .foregroundStyle(.white.opacity(isEnabled ? 1 : 0.7))
+            .background(
+                RoundedRectangle(cornerRadius: DisplayScale.points(8), style: .continuous)
+                    .fill(theme.current.color.opacity(isEnabled ? 1 : 0.45))
+            )
+            .overlay {
+                if pressed && isEnabled {
+                    RoundedRectangle(cornerRadius: DisplayScale.points(8), style: .continuous)
+                        .fill(Color.black.opacity(0.2))
+                }
+            }
+            .scaleEffect(pressed && isEnabled ? LuminaButtonPress.scale : 1)
+            .animation(LuminaButtonPress.animation, value: pressed)
     }
 }
 
