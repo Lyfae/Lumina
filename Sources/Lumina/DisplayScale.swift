@@ -39,7 +39,7 @@ enum DisplayScale {
     static var managerWindowMinSize: NSSize { nsSize(width: 1080, height: 740) }
     static var physicalSetupWindowSize: NSSize { nsSize(width: 620, height: 420) }
     static var splashWindowSize: NSSize { nsSize(width: 360, height: 260) }
-    static var musicWidgetSize: NSSize { nsSize(width: 440, height: 176) }
+    static var musicWidgetSize: NSSize { nsSize(width: 356, height: 164) }
 
     // MARK: - Icons
 

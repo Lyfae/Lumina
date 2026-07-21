@@ -10,9 +10,8 @@ final class WallpaperManagerWindowController: NSWindowController {
     private var physicalSetupWindow: PhysicalSetupWindowController?
     private weak var appDelegate: LuminaApp?
 
-    /// Floating now-playing mini-player shown while the Studio window is minimized
-    /// (when the user has enabled "Show music widget when minimized").
-    private var musicWidget: NowPlayingWidgetController?
+    /// Floating now-playing mini-player (also available from the Studio audio footer).
+    /// Owned by `NowPlayingWidgetController.shared` — no local instance needed.
 
     /// Window frame snapshot taken when crop mode opens — restored on close even if growth was clamped.
     private var preCropWindowFrame: NSRect?
@@ -113,12 +112,11 @@ final class WallpaperManagerWindowController: NSWindowController {
 
     @objc private func windowWillMiniaturize() {
         guard AmbientAudioManager.shared.showWidgetWhenMinimized else { return }
-        if musicWidget == nil { musicWidget = NowPlayingWidgetController() }
-        musicWidget?.show()
+        NowPlayingWidgetController.shared.show()
     }
 
     @objc private func windowDidDeminiaturize() {
-        musicWidget?.hide()
+        // Leave the widget up — it can hang on the desktop until the user dismisses it.
     }
 
     @objc private func windowDidBecomeKey() {
