@@ -366,7 +366,7 @@ struct MonitorDetailPanel: View {
                 Image(systemName: "xmark.circle.fill")
                     .font(.system(size: DisplayScale.points(20)))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(LuminaPressableButtonStyle())
             .foregroundStyle(.secondary)
             .frame(width: uiScale.touchTarget(), height: uiScale.touchTarget())
             .contentShape(Rectangle())
@@ -489,7 +489,7 @@ struct MonitorDetailPanel: View {
                 .overlay(Capsule().strokeBorder(Color.white.opacity(0.35), lineWidth: 0.5))
                 .shadow(color: .black.opacity(0.35), radius: 2, y: 1)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(LuminaPressableButtonStyle())
         .help("Crop and position — drag inside to move, pull corners to resize")
     }
 
@@ -561,7 +561,7 @@ struct MonitorDetailPanel: View {
                                 Label("Use as still", systemImage: "photo.fill")
                                     .font(uiScale.scaledFont(12, weight: .semibold))
                             }
-                            .buttonStyle(.borderedProminent)
+                            .buttonStyle(LuminaProminentButtonStyle())
                         } else {
                             Button { commitVideoFrame(useStatic: true) } label: {
                                 Label("Use as still", systemImage: "photo.fill")
@@ -579,7 +579,7 @@ struct MonitorDetailPanel: View {
                                 Label("Start video here", systemImage: "play.rectangle.fill")
                                     .font(uiScale.scaledFont(12, weight: .semibold))
                             }
-                            .buttonStyle(.borderedProminent)
+                            .buttonStyle(LuminaProminentButtonStyle())
                         } else {
                             Button { commitVideoFrame(useStatic: false) } label: {
                                 Label("Start video here", systemImage: "play.rectangle.fill")
@@ -748,7 +748,7 @@ struct MonitorDetailPanel: View {
                         .help("Controls how the opacity ramps in and out during the fade")
 
                         Button("Preview fade") { previewFadeInPreview() }
-                            .buttonStyle(.bordered)
+                            .buttonStyle(LuminaSecondaryButtonStyle())
                             .controlSize(uiScale.controlSize())
                             .help("Simulate this fade in the preview above")
                     }
@@ -855,7 +855,7 @@ struct MonitorDetailPanel: View {
                     Label(slideshowItems.isEmpty ? "Create Slideshow…" : "Configure…",
                           systemImage: "slider.horizontal.below.rectangle")
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(LuminaProminentButtonStyle())
                 .controlSize(uiScale.controlSize())
 
                 if !slideshowItems.isEmpty {
@@ -863,7 +863,7 @@ struct MonitorDetailPanel: View {
                         slideshowItems.removeAll()
                         store.setSlideshowItems(for: monitor, items: [])
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(LuminaSecondaryButtonStyle())
                     .controlSize(uiScale.controlSize())
                 }
             }
@@ -930,70 +930,62 @@ struct MonitorDetailPanel: View {
     }
 
     private var actionButtons: some View {
-        VStack(spacing: DisplayScale.points(8)) {
-            HStack(spacing: DisplayScale.points(8)) {
+        HStack(spacing: DisplayScale.points(8)) {
+            if hasUnappliedChanges, assignment != nil {
                 Button {
                     applyToWallpaper()
                 } label: {
-                    Label(
-                        hasUnappliedChanges ? "Apply to Wallpaper" : "Applied — Up to Date",
-                        systemImage: "checkmark.circle.fill"
-                    )
-                    .font(uiScale.scaledFont(13, weight: .semibold))
-                    .frame(maxWidth: .infinity)
+                    Label("Apply to Wallpaper", systemImage: "checkmark.circle.fill")
+                        .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(uiScale.controlSize())
-                .disabled(!hasUnappliedChanges || assignment == nil)
+                .buttonStyle(LuminaProminentButtonStyle())
                 .help(applyButtonHelp)
-
-                Button {
-                    toggleConfigColumn()
-                } label: {
-                    Label(
-                        "Config",
-                        systemImage: "slider.horizontal.3"
-                    )
-                    .font(uiScale.scaledFont(13, weight: .semibold))
-                }
-                .buttonStyle(LuminaSecondaryButtonStyle())
-                .controlSize(uiScale.controlSize())
-                .help(showSettingsColumn ? "Hide wallpaper config" : "Show wallpaper config")
-                .accessibilityLabel(showSettingsColumn ? "Hide Config" : "Show Config")
-                .accessibilityAddTraits(showSettingsColumn ? .isSelected : [])
+            } else {
+                Label(
+                    assignment == nil ? "No wallpaper" : "Up to date",
+                    systemImage: assignment == nil ? "photo" : "checkmark.circle.fill"
+                )
+                .font(uiScale.scaledFont(12, weight: .medium))
+                .foregroundStyle(.secondary)
+                .help(applyButtonHelp)
+                .accessibilityLabel(assignment == nil ? "No wallpaper assigned" : "Applied, up to date")
             }
 
-            HStack(spacing: DisplayScale.points(8)) {
-                if monitor.assignedVideoName != nil {
-                    Button("Clear Wallpaper", role: .destructive) {
-                        store.clearAssignment(for: monitor)
-                    }
-                    .buttonStyle(LuminaSecondaryButtonStyle(destructive: true))
-                    .controlSize(uiScale.controlSize())
-                    .font(uiScale.scaledFont(12, weight: .medium))
-                }
+            Button {
+                toggleConfigColumn()
+            } label: {
+                Label("Config", systemImage: "slider.horizontal.3")
+            }
+            .buttonStyle(LuminaSecondaryButtonStyle(prominent: showSettingsColumn))
+            .help(showSettingsColumn ? "Hide wallpaper config" : "Show wallpaper config")
+            .accessibilityLabel(showSettingsColumn ? "Hide Config" : "Show Config")
+            .accessibilityAddTraits(showSettingsColumn ? .isSelected : [])
 
-                Spacer()
+            Spacer(minLength: DisplayScale.points(4))
 
-                Button("Reset Adjustments") {
-                    resetToDefaults()
+            if monitor.assignedVideoName != nil {
+                Button("Clear", role: .destructive) {
+                    store.clearAssignment(for: monitor)
                 }
-                .buttonStyle(LuminaSecondaryButtonStyle())
-                .controlSize(uiScale.controlSize())
-                .font(uiScale.scaledFont(12, weight: .medium))
-                .help("Reset the staged display settings to their defaults (preview only — Apply to commit)")
+                .buttonStyle(LuminaSecondaryButtonStyle(destructive: true))
+                .help("Remove the wallpaper from this display")
+            }
 
-                if showHeader {
-                    Button("Done") { onClose() }
-                        .buttonStyle(LuminaSecondaryButtonStyle())
-                        .controlSize(uiScale.controlSize())
-                        .font(uiScale.scaledFont(12, weight: .medium))
-                }
+            Button("Reset") {
+                resetToDefaults()
+            }
+            .buttonStyle(LuminaSecondaryButtonStyle())
+            .help("Reset staged display settings to defaults (preview only — Apply to commit)")
+            .disabled(assignment == nil)
+
+            if showHeader {
+                Button("Done") { onClose() }
+                    .buttonStyle(LuminaSecondaryButtonStyle())
             }
         }
     }
 
-    /// Help text for the Apply button — explains why it may be disabled.
+    /// Help text for the Apply control.
     private var applyButtonHelp: String {
         if assignment == nil {
             return "Pick a wallpaper from the library first"
@@ -1167,7 +1159,7 @@ struct MonitorDetailPanel: View {
                     }
                     ProgressView(value: compressor.progress)
                     Button("Cancel") { compressor.cancel() }
-                        .buttonStyle(.bordered).controlSize(uiScale.controlSize())
+                        .buttonStyle(LuminaSecondaryButtonStyle()).controlSize(uiScale.controlSize())
                         .foregroundStyle(.red)
                 }
             } else {
@@ -1177,7 +1169,7 @@ struct MonitorDetailPanel: View {
                     } label: {
                         Label("Compress Video", systemImage: "arrow.down.circle.fill")
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(LuminaProminentButtonStyle())
                     .controlSize(uiScale.controlSize())
                     .help("Re-encode this video at the selected quality to reduce GPU load and file size")
 
@@ -1186,7 +1178,7 @@ struct MonitorDetailPanel: View {
                             pendingCompressedURL = lastURL
                             showUseCompressedAlert = true
                         }
-                        .buttonStyle(.bordered).controlSize(uiScale.controlSize())
+                        .buttonStyle(LuminaSecondaryButtonStyle()).controlSize(uiScale.controlSize())
                         .help("Switch this monitor to use the already-compressed version")
                     }
                 }
