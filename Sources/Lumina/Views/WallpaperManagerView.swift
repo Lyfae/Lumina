@@ -55,6 +55,10 @@ struct WallpaperManagerView: View {
     @State private var searchQuery: String = ""
     @State private var selectedFilter: LibraryFilter = .all
     @State private var showSettings: Bool = false
+    /// Library column is expanded by default; collapse to give the preview more room.
+    @State private var showLibraryColumn: Bool = true
+
+    private static let libraryToggleDuration: TimeInterval = 0.35
 
     // MARK: - Computed
 
@@ -120,32 +124,6 @@ struct WallpaperManagerView: View {
 
             Spacer(minLength: DisplayScale.points(12))
 
-            HStack(spacing: DisplayScale.points(8)) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: uiScale.iconSize(.card)))
-                    .foregroundStyle(.secondary)
-                TextField("Search library…", text: $searchQuery)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: DisplayScale.points(14)))
-            }
-            .padding(.horizontal, DisplayScale.points(12))
-            .padding(.vertical, DisplayScale.points(8))
-            .background(Color.luminaCard, in: RoundedRectangle(cornerRadius: DisplayScale.points(10), style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: DisplayScale.points(10), style: .continuous)
-                    .strokeBorder(Color.luminaBorder, lineWidth: 1)
-            )
-            .frame(minWidth: DisplayScale.points(180), maxWidth: DisplayScale.points(280))
-            .layoutPriority(-1)
-
-            LuminaToolbarButton(
-                title: "Sync",
-                icon: "arrow.triangle.2.circlepath",
-                help: "Restart matching video/GIF wallpapers in sync across displays"
-            ) {
-                store.restartDisplaysInSync()
-            }
-
             LuminaToolbarButton(title: "Settings", icon: "gearshape.fill") {
                 showSettings = true
             }
@@ -162,14 +140,77 @@ struct WallpaperManagerView: View {
 
     private var mainContent: some View {
         HStack(spacing: 0) {
-            libraryColumn
-            // Prominent seam between the library and configuration columns. The system
-            // Divider all but vanishes on the pure-black theme, so use a clear border line.
+            librarySidebar
+                .frame(width: showLibraryColumn
+                       ? LuminaLayout.libraryColumnWidth
+                       : LuminaLayout.libraryRailWidth)
+                .clipped()
+                .animation(
+                    .timingCurve(0.25, 0.1, 0.25, 1.0, duration: Self.libraryToggleDuration),
+                    value: showLibraryColumn
+                )
+
             Rectangle()
                 .fill(Color.luminaBorder)
                 .frame(width: 1)
+
             configurationColumn
         }
+        .frame(maxHeight: .infinity)
+    }
+
+    private var librarySidebar: some View {
+        ZStack(alignment: .topLeading) {
+            libraryColumn
+                .frame(width: LuminaLayout.libraryColumnWidth, alignment: .topLeading)
+                .opacity(showLibraryColumn ? 1 : 0)
+                .allowsHitTesting(showLibraryColumn)
+
+            if !showLibraryColumn {
+                libraryRail
+            }
+        }
+        .frame(maxHeight: .infinity)
+        .background(Color.luminaBase)
+    }
+
+    /// Slim strip shown while the library is collapsed — one click brings it back.
+    private var libraryRail: some View {
+        VStack(spacing: DisplayScale.points(10)) {
+            Button {
+                withAnimation(
+                    .timingCurve(0.25, 0.1, 0.25, 1.0, duration: Self.libraryToggleDuration)
+                ) {
+                    showLibraryColumn = true
+                }
+            } label: {
+                Image(systemName: "sidebar.left")
+                    .font(.system(size: uiScale.iconSize(.toolbar), weight: .semibold))
+                    .frame(width: uiScale.touchTarget(), height: uiScale.touchTarget())
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(LuminaPressableButtonStyle())
+            .help("Show library")
+            .accessibilityLabel("Show library")
+            .padding(.top, DisplayScale.points(10))
+
+            Text("Library")
+                .font(.system(size: DisplayScale.points(10), weight: .semibold))
+                .foregroundStyle(.secondary)
+                .rotationEffect(.degrees(-90))
+                .fixedSize()
+                .frame(width: LuminaLayout.libraryRailWidth)
+
+            Spacer(minLength: 0)
+
+            if !filteredMedia.isEmpty {
+                Text("\(filteredMedia.count)")
+                    .font(.system(size: DisplayScale.points(10), weight: .semibold))
+                    .foregroundStyle(.tertiary)
+                    .padding(.bottom, DisplayScale.points(12))
+            }
+        }
+        .frame(width: LuminaLayout.libraryRailWidth)
         .frame(maxHeight: .infinity)
     }
 
@@ -178,13 +219,51 @@ struct WallpaperManagerView: View {
     private var libraryColumn: some View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: DisplayScale.points(12)) {
-                LuminaSectionHeader(
-                    title: "Library",
-                    subtitle: "Click a wallpaper to apply it to the selected display",
-                    trailing: "\(filteredMedia.count)"
+                HStack(alignment: .center, spacing: DisplayScale.points(8)) {
+                    Button {
+                        withAnimation(
+                            .timingCurve(0.25, 0.1, 0.25, 1.0, duration: Self.libraryToggleDuration)
+                        ) {
+                            showLibraryColumn = false
+                        }
+                    } label: {
+                        Image(systemName: "sidebar.left")
+                            .font(.system(size: uiScale.iconSize(.card), weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .frame(
+                                width: uiScale.touchTarget() * 0.75,
+                                height: uiScale.touchTarget() * 0.75
+                            )
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(LuminaPressableButtonStyle())
+                    .help("Hide library")
+                    .accessibilityLabel("Hide library")
+
+                    LuminaSectionHeader(
+                        title: "Library",
+                        subtitle: "Click a wallpaper to apply it to the selected display",
+                        trailing: "\(filteredMedia.count)"
+                    )
+                }
+
+                HStack(spacing: DisplayScale.points(8)) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: uiScale.iconSize(.card)))
+                        .foregroundStyle(.secondary)
+                    TextField("Search library…", text: $searchQuery)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: DisplayScale.points(14)))
+                }
+                .padding(.horizontal, DisplayScale.points(12))
+                .padding(.vertical, DisplayScale.points(8))
+                .background(Color.luminaCard, in: RoundedRectangle(cornerRadius: DisplayScale.points(10), style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: DisplayScale.points(10), style: .continuous)
+                        .strokeBorder(Color.luminaBorder, lineWidth: 1)
                 )
 
-                ScrollView(.horizontal, showsIndicators: false) {
+                ScrollView(.horizontal, showsIndicators: true) {
                     HStack(spacing: DisplayScale.points(8)) {
                         ForEach(LibraryFilter.allCases) { filter in
                             LuminaFilterChip(
@@ -198,7 +277,9 @@ struct WallpaperManagerView: View {
                         }
                     }
                     .padding(.horizontal, 1)
+                    .padding(.bottom, DisplayScale.points(4))
                 }
+                .scrollIndicators(.visible, axes: .horizontal)
             }
             .padding(.horizontal, LuminaLayout.contentPadding)
             .padding(.top, DisplayScale.points(16))
@@ -248,7 +329,7 @@ struct WallpaperManagerView: View {
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, DisplayScale.points(10))
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(LuminaProminentButtonStyle())
                 .controlSize(.large)
             }
             .padding(.horizontal, LuminaLayout.contentPadding)
@@ -310,7 +391,7 @@ struct WallpaperManagerView: View {
                     Label("Choose Display…", systemImage: "display.2")
                         .font(.system(size: DisplayScale.points(13), weight: .semibold))
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(LuminaSecondaryButtonStyle())
                 .controlSize(uiScale.controlSize())
             }
             .padding(.horizontal, LuminaLayout.contentPadding)
@@ -340,7 +421,7 @@ struct WallpaperManagerView: View {
                     Button("Choose Display…") {
                         NotificationCenter.default.post(name: .togglePhysicalSetupWindow, object: nil)
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(LuminaProminentButtonStyle())
                     .controlSize(.large)
                 }
                 .padding(LuminaLayout.contentPadding)
@@ -419,7 +500,7 @@ struct WallpaperManagerView: View {
                 .frame(maxWidth: DisplayScale.points(260))
             if searchQuery.isEmpty && selectedFilter == .all {
                 Button("Add to Library") { addMediaToLibrary() }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(LuminaProminentButtonStyle())
                     .controlSize(.large)
             }
         }
@@ -437,7 +518,9 @@ private struct AudioFooterBar: View {
     @StateObject private var themeManager = ThemeManager.shared
     @StateObject private var audioManager = AmbientAudioManager.shared
     @StateObject private var uiScale = UIScaleManager.shared
+    @StateObject private var musicWidget = NowPlayingWidgetController.shared
     @State private var showQueue: Bool = false
+    @State private var queueFavoritesOnly: Bool = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -457,8 +540,9 @@ private struct AudioFooterBar: View {
                         .font(.system(size: DisplayScale.points(14), weight: .semibold))
                         .lineLimit(1).truncationMode(.tail)
                         .foregroundStyle(audioManager.trackURL != nil ? .primary : .secondary)
-                    Text("Ambient Audio")
+                    Text(nowPlayingSubtitle)
                         .font(.system(size: DisplayScale.points(11))).foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
                 .frame(minWidth: DisplayScale.points(120), idealWidth: DisplayScale.points(170), maxWidth: DisplayScale.points(220), alignment: .leading)
 
@@ -506,27 +590,15 @@ private struct AudioFooterBar: View {
                     .disabled(audioManager.trackURL == nil)
                 }
 
-                // Progress — expands to fill available width
+                // Progress — expands to fill available width. Local scrub preview so the
+                // thumb doesn't fight the 4 Hz timer (and seek only commits on release).
                 if audioManager.duration > 0 {
-                    HStack(spacing: DisplayScale.points(8)) {
-                        Text(formatAudioTime(audioManager.currentTime))
-                            .font(uiScale.scaledFont(11).monospacedDigit())
-                            .foregroundStyle(.secondary)
-                            .frame(width: DisplayScale.points(38), alignment: .trailing)
-                        LuminaSlider(
-                            value: Binding(
-                                get: { audioManager.currentTime },
-                                set: { audioManager.seekToTime($0) }
-                            ),
-                            range: 0...max(audioManager.duration, 1),
-                            compact: true
-                        )
-                        .help("Seek")
-                        Text(formatAudioTime(audioManager.duration))
-                            .font(uiScale.scaledFont(11).monospacedDigit())
-                            .foregroundStyle(.secondary)
-                            .frame(width: DisplayScale.points(38), alignment: .leading)
-                    }
+                    AudioProgressScrubber(
+                        currentTime: audioManager.currentTime,
+                        duration: audioManager.duration,
+                        accent: themeManager.current.color,
+                        onSeek: { audioManager.seekToTime($0) }
+                    )
                     .frame(maxWidth: .infinity)
                 } else {
                     Spacer(minLength: DisplayScale.points(12))
@@ -568,6 +640,16 @@ private struct AudioFooterBar: View {
                 ) {
                     withAnimation(.easeInOut(duration: 0.18)) { showQueue.toggle() }
                 }
+
+                transportIcon(
+                    "rectangle.on.rectangle",
+                    active: musicWidget.isVisible,
+                    help: musicWidget.isVisible
+                        ? "Hide floating music widget"
+                        : "Show floating music widget on the desktop"
+                ) {
+                    musicWidget.toggle()
+                }
             }
             .padding(.horizontal, LuminaLayout.contentPadding)
             .padding(.vertical, DisplayScale.points(10))
@@ -577,27 +659,42 @@ private struct AudioFooterBar: View {
     /// Small rounded album-art tile used in the now-playing bar.
     private var nowPlayingArtwork: some View {
         let side = DisplayScale.points(40)
-        return RoundedRectangle(cornerRadius: DisplayScale.points(10), style: .continuous)
-            .fill(
-                LinearGradient(
-                    colors: [themeManager.current.color.opacity(0.9),
-                             themeManager.current.color.opacity(0.5)],
-                    startPoint: .topLeading, endPoint: .bottomTrailing
-                )
-            )
-            .frame(width: side, height: side)
-            .overlay(
-                Image(systemName: audioManager.isPlaying ? "waveform" : "music.note")
-                    .font(.system(size: uiScale.iconSize(.filter), weight: .semibold))
-                    .foregroundStyle(.white)
-            )
-            .opacity(audioManager.trackURL != nil ? 1 : 0.5)
+        return Group {
+            if let art = audioManager.trackArtwork {
+                Image(nsImage: art)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: side, height: side)
+                    .clipShape(RoundedRectangle(cornerRadius: DisplayScale.points(10), style: .continuous))
+            } else {
+                RoundedRectangle(cornerRadius: DisplayScale.points(10), style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [themeManager.current.color.opacity(0.9),
+                                     themeManager.current.color.opacity(0.5)],
+                            startPoint: .topLeading, endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(width: side, height: side)
+                    .overlay(
+                        Image(systemName: audioManager.isPlaying ? "waveform" : "music.note")
+                            .font(.system(size: uiScale.iconSize(.filter), weight: .semibold))
+                            .foregroundStyle(.white)
+                    )
+            }
+        }
+        .opacity(audioManager.trackURL != nil ? 1 : 0.5)
     }
 
     private var nowPlayingTitle: String {
         guard audioManager.trackURL != nil else { return "No track selected" }
-        let stem = (audioManager.trackName as NSString).deletingPathExtension
-        return stem.isEmpty ? audioManager.trackName : stem
+        return audioManager.trackTitle
+    }
+
+    private var nowPlayingSubtitle: String {
+        if audioManager.trackURL == nil { return "Ambient Audio" }
+        if !audioManager.trackArtist.isEmpty { return audioManager.trackArtist }
+        return "Ambient Audio"
     }
 
     /// A flat icon button for the now-playing bar with a consistent hit target.
@@ -621,79 +718,169 @@ private struct AudioFooterBar: View {
 
     // MARK: - Music Queue Panel
 
+    private var queueTracks: [AmbientAudioManager.AudioTrack] {
+        if queueFavoritesOnly {
+            return audioManager.library.filter { audioManager.isFavorite($0) }
+        }
+        return audioManager.library
+    }
+
     @ViewBuilder private var queuePanel: some View {
         VStack(spacing: 0) {
-            HStack {
+            HStack(spacing: DisplayScale.points(10)) {
                 Text("Queue")
                     .font(uiScale.scaledFont(12, weight: .semibold))
                     .foregroundStyle(.secondary)
+
+                Text("\(queueTracks.count)")
+                    .font(uiScale.scaledFont(10, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+                    .padding(.horizontal, DisplayScale.points(6))
+                    .padding(.vertical, DisplayScale.points(2))
+                    .background(Color.primary.opacity(0.06), in: Capsule())
+
                 Spacer()
+
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        queueFavoritesOnly.toggle()
+                    }
+                } label: {
+                    Label(
+                        queueFavoritesOnly ? "Favorites" : "All",
+                        systemImage: queueFavoritesOnly ? "star.fill" : "star"
+                    )
+                    .font(uiScale.scaledFont(11, weight: .semibold))
+                    .foregroundStyle(queueFavoritesOnly ? themeManager.current.color : .secondary)
+                }
+                .buttonStyle(LuminaPressableButtonStyle())
+                .help(queueFavoritesOnly ? "Show all tracks" : "Show starred favorites only")
+
                 Button("Clear All") { audioManager.clearLibrary() }
                     .font(uiScale.scaledFont(11))
                     .buttonStyle(.plain)
                     .foregroundStyle(.secondary)
                     .disabled(audioManager.library.isEmpty)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 6)
+            .padding(.horizontal, DisplayScale.points(16))
+            .padding(.vertical, DisplayScale.points(8))
 
-            List {
-                ForEach(Array(audioManager.library.enumerated()), id: \.element.id) { idx, track in
-                    let isActive = audioManager.trackURL == track.url
-                    HStack(spacing: 8) {
-                        // Now-playing indicator
-                        if isActive {
-                            Image(systemName: audioManager.isPlaying ? "speaker.wave.2.fill" : "pause.fill")
-                                .font(.system(size: DisplayScale.points(11)))
-                                .foregroundStyle(themeManager.current.color)
-                                .frame(width: DisplayScale.points(16))
-                        } else {
-                            Text("\(idx + 1)")
-                                .font(uiScale.scaledFont(11).monospacedDigit())
-                                .foregroundStyle(.secondary)
-                                .frame(width: DisplayScale.points(16))
-                        }
-
-                        Text(track.name)
-                            .font(uiScale.scaledFont(13, weight: .medium))
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                            .foregroundStyle(isActive ? themeManager.current.color : .primary)
-
-                        Spacer()
-
-                        Text(formatQueueDuration(track))
-                            .font(uiScale.scaledFont(11).monospacedDigit())
-                            .foregroundStyle(.secondary)
-
-                        Button {
-                            audioManager.removeFromLibrary(track: track)
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .font(.system(size: DisplayScale.points(14)))
-                                .foregroundStyle(.secondary)
-                                .frame(width: uiScale.touchTarget() * 0.7, height: uiScale.touchTarget() * 0.7)
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Remove \(track.name) from queue")
+            if queueTracks.isEmpty {
+                Text(queueFavoritesOnly ? "No starred tracks yet — tap the star on a song." : "Queue is empty")
+                    .font(uiScale.scaledFont(12))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, DisplayScale.points(16))
+                    .padding(.bottom, DisplayScale.points(12))
+            } else {
+                List {
+                    ForEach(Array(queueTracks.enumerated()), id: \.element.id) { idx, track in
+                        queueRow(track: track, index: idx)
                     }
-                    .padding(.vertical, DisplayScale.points(2))
-                    .listRowBackground(
-                        isActive ? themeManager.current.color.opacity(0.08) : Color.clear
-                    )
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        audioManager.selectTrack(track)
-                        if !audioManager.isPlaying { audioManager.play() }
+                    .onMove { source, dest in
+                        guard !queueFavoritesOnly else { return }
+                        audioManager.moveTrack(from: source, to: dest)
                     }
                 }
-                .onMove { audioManager.moveTrack(from: $0, to: $1) }
+                .listStyle(.plain)
+                .frame(height: min(
+                    CGFloat(queueTracks.count) * DisplayScale.points(56) + 8,
+                    DisplayScale.points(220)
+                ))
             }
-            .listStyle(.plain)
-            .frame(height: min(CGFloat(audioManager.library.count) * DisplayScale.points(34) + 8, DisplayScale.points(150)))
         }
         .background(Color.luminaBase)
+    }
+
+    private func queueRow(track: AmbientAudioManager.AudioTrack, index: Int) -> some View {
+        let isActive = audioManager.trackURL == track.url
+        let starred = audioManager.isFavorite(track)
+        let art = audioManager.artwork(for: track)
+        let artSide = DisplayScale.points(40)
+
+        return HStack(spacing: DisplayScale.points(10)) {
+            ZStack {
+                RoundedRectangle(cornerRadius: DisplayScale.points(8), style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                themeManager.current.color.opacity(0.85),
+                                themeManager.current.color.opacity(0.45)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                if let art {
+                    Image(nsImage: art)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                } else if isActive {
+                    Image(systemName: audioManager.isPlaying ? "waveform" : "music.note")
+                        .font(.system(size: DisplayScale.points(14), weight: .semibold))
+                        .foregroundStyle(.white)
+                } else {
+                    Text("\(index + 1)")
+                        .font(uiScale.scaledFont(12, weight: .semibold).monospacedDigit())
+                        .foregroundStyle(.white.opacity(0.9))
+                }
+            }
+            .frame(width: artSide, height: artSide)
+            .clipShape(RoundedRectangle(cornerRadius: DisplayScale.points(8), style: .continuous))
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(track.title)
+                    .font(uiScale.scaledFont(13, weight: .semibold))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .foregroundStyle(isActive ? themeManager.current.color : .primary)
+
+                Text(track.artist.isEmpty ? "Unknown Artist" : track.artist)
+                    .font(uiScale.scaledFont(11, weight: .medium))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text(formatQueueDuration(track))
+                .font(uiScale.scaledFont(11).monospacedDigit())
+                .foregroundStyle(.secondary)
+
+            Button {
+                audioManager.toggleFavorite(track)
+            } label: {
+                Image(systemName: starred ? "star.fill" : "star")
+                    .font(.system(size: DisplayScale.points(13), weight: .semibold))
+                    .foregroundStyle(starred ? themeManager.current.color : .secondary)
+                    .frame(width: uiScale.touchTarget() * 0.7, height: uiScale.touchTarget() * 0.7)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(LuminaPressableButtonStyle())
+            .help(starred ? "Remove from favorites" : "Add to favorites")
+            .accessibilityLabel(starred ? "Unstar \(track.title)" : "Star \(track.title)")
+
+            Button {
+                audioManager.removeFromLibrary(track: track)
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: DisplayScale.points(14)))
+                    .foregroundStyle(.secondary)
+                    .frame(width: uiScale.touchTarget() * 0.7, height: uiScale.touchTarget() * 0.7)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(LuminaPressableButtonStyle())
+            .accessibilityLabel("Remove \(track.title) from queue")
+        }
+        .padding(.vertical, DisplayScale.points(4))
+        .listRowBackground(
+            isActive ? themeManager.current.color.opacity(0.08) : Color.clear
+        )
+        .contentShape(Rectangle())
+        .onTapGesture {
+            audioManager.selectTrack(track)
+            if !audioManager.isPlaying { audioManager.play() }
+        }
     }
 
     private func formatQueueDuration(_ track: AmbientAudioManager.AudioTrack) -> String {
@@ -704,6 +891,112 @@ private struct AudioFooterBar: View {
 
     private func formatAudioTime(_ seconds: Double) -> String {
         let s = Int(max(0, seconds))
+        return String(format: "%d:%02d", s / 60, s % 60)
+    }
+}
+
+// MARK: - Audio progress scrubber
+
+/// Studio footer scrubber: previews the target time while dragging, commits seek on release.
+/// Avoids binding a live Slider to `currentTime` (that fought the playback timer and snapped back).
+private struct AudioProgressScrubber: View {
+    let currentTime: Double
+    let duration: Double
+    let accent: Color
+    var onSeek: (Double) -> Void
+
+    @State private var scrubTime: Double? = nil
+    @StateObject private var uiScale = UIScaleManager.shared
+
+    private var displayTime: Double { scrubTime ?? currentTime }
+
+    private var fraction: CGFloat {
+        guard duration > 0 else { return 0 }
+        return CGFloat(min(1, max(0, displayTime / duration)))
+    }
+
+    var body: some View {
+        HStack(spacing: DisplayScale.points(8)) {
+            Text(formatTime(displayTime))
+                .font(uiScale.scaledFont(11).monospacedDigit())
+                .foregroundStyle(scrubTime == nil ? .secondary : accent)
+                .frame(width: DisplayScale.points(38), alignment: .trailing)
+                .accessibilityHidden(true)
+
+            GeometryReader { geo in
+                let trackH = DisplayScale.points(6)
+                let thumb = DisplayScale.points(14)
+                let x = max(0, min(geo.size.width, geo.size.width * fraction))
+
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(Color.primary.opacity(0.12))
+                        .frame(height: trackH)
+
+                    Capsule()
+                        .fill(accent)
+                        .frame(width: max(trackH, x), height: trackH)
+
+                    Circle()
+                        .fill(Color.luminaCard)
+                        .overlay(
+                            Circle().strokeBorder(accent.opacity(0.9), lineWidth: 1.5)
+                        )
+                        .shadow(color: .black.opacity(0.16), radius: 1.5, y: 0.5)
+                        .frame(width: thumb, height: thumb)
+                        .scaleEffect(scrubTime == nil ? 1 : 1.12)
+                        .offset(x: max(0, x - thumb / 2))
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { value in
+                            guard duration > 0 else { return }
+                            scrubTime = time(at: value.location.x, width: geo.size.width)
+                        }
+                        .onEnded { value in
+                            guard duration > 0 else {
+                                scrubTime = nil
+                                return
+                            }
+                            let t = time(at: value.location.x, width: geo.size.width)
+                            onSeek(t)
+                            scrubTime = nil
+                        }
+                )
+                .help(scrubTime.map { "Release to seek to \(formatTime($0))" }
+                      ?? "Click or drag to scrub — time previews as you move")
+            }
+            .frame(height: DisplayScale.points(28))
+
+            Text(formatTime(duration))
+                .font(uiScale.scaledFont(11).monospacedDigit())
+                .foregroundStyle(.secondary)
+                .frame(width: DisplayScale.points(38), alignment: .leading)
+                .accessibilityHidden(true)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Track position")
+        .accessibilityValue(formatTime(displayTime))
+        .accessibilityAdjustableAction { direction in
+            guard duration > 0 else { return }
+            let step = max(1, duration * 0.05)
+            switch direction {
+            case .increment: onSeek(min(duration, currentTime + step))
+            case .decrement: onSeek(max(0, currentTime - step))
+            @unknown default: break
+            }
+        }
+    }
+
+    private func time(at x: CGFloat, width: CGFloat) -> Double {
+        let f = Double(min(1, max(0, x / max(width, 1))))
+        return f * duration
+    }
+
+    private func formatTime(_ seconds: Double) -> String {
+        let s = Int(max(0, seconds).rounded())
         return String(format: "%d:%02d", s / 60, s % 60)
     }
 }
