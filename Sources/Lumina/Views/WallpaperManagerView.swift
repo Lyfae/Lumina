@@ -116,7 +116,7 @@ struct WallpaperManagerView: View {
                 VStack(alignment: .leading, spacing: 1) {
                     Text("Lumina Studio")
                         .font(.system(size: DisplayScale.points(17), weight: .bold))
-                    Text("Wallpaper Manager")
+                    Text("Live wallpapers")
                         .font(.system(size: DisplayScale.points(11)))
                         .foregroundStyle(.secondary)
                 }
@@ -230,10 +230,7 @@ struct WallpaperManagerView: View {
                         Image(systemName: "sidebar.left")
                             .font(.system(size: uiScale.iconSize(.card), weight: .semibold))
                             .foregroundStyle(.secondary)
-                            .frame(
-                                width: uiScale.touchTarget() * 0.75,
-                                height: uiScale.touchTarget() * 0.75
-                            )
+                            .frame(width: uiScale.touchTarget(), height: uiScale.touchTarget())
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(LuminaPressableButtonStyle())
@@ -263,23 +260,20 @@ struct WallpaperManagerView: View {
                         .strokeBorder(Color.luminaBorder, lineWidth: 1)
                 )
 
-                ScrollView(.horizontal, showsIndicators: true) {
-                    HStack(spacing: DisplayScale.points(8)) {
-                        ForEach(LibraryFilter.allCases) { filter in
-                            LuminaFilterChip(
-                                label: filter.label,
-                                icon: filter.icon,
-                                isSelected: selectedFilter == filter,
-                                help: filter.helpText
-                            ) {
-                                withAnimation(.easeInOut(duration: 0.15)) { selectedFilter = filter }
-                            }
+                // Wrap chips — never horizontal-scroll. AppKit overlay scrollers were
+                // flashing as a stray nub under the row on first layout.
+                LuminaWrappingHStack(spacing: DisplayScale.points(8)) {
+                    ForEach(LibraryFilter.allCases) { filter in
+                        LuminaFilterChip(
+                            label: filter.label,
+                            icon: filter.icon,
+                            isSelected: selectedFilter == filter,
+                            help: filter.helpText
+                        ) {
+                            withAnimation(.easeInOut(duration: 0.15)) { selectedFilter = filter }
                         }
                     }
-                    .padding(.horizontal, 1)
-                    .padding(.bottom, DisplayScale.points(4))
                 }
-                .scrollIndicators(.visible, axes: .horizontal)
             }
             .padding(.horizontal, LuminaLayout.contentPadding)
             .padding(.top, DisplayScale.points(16))
@@ -491,21 +485,43 @@ struct WallpaperManagerView: View {
             Text(selectedFilter == .favorites ? "No favorites yet" :
                  searchQuery.isEmpty ? "Your library is empty" : "No results for \"\(searchQuery)\"")
                 .font(.system(size: DisplayScale.points(15), weight: .semibold))
-            Text(selectedFilter == .favorites
-                 ? "Star wallpapers in the grid to find them quickly here."
-                 : "Add videos, GIFs, or images — then tap one to set it on the selected display.")
+            Text(emptyLibrarySubtitle)
                 .font(.system(size: DisplayScale.points(12)))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: DisplayScale.points(260))
-            if searchQuery.isEmpty && selectedFilter == .all {
-                Button("Add to Library") { addMediaToLibrary() }
-                    .buttonStyle(LuminaProminentButtonStyle())
-                    .controlSize(.large)
+
+            HStack(spacing: DisplayScale.points(10)) {
+                if !searchQuery.isEmpty {
+                    Button("Clear Search") { searchQuery = "" }
+                        .buttonStyle(LuminaSecondaryButtonStyle())
+                }
+                if selectedFilter != .all {
+                    Button("Show All") { selectedFilter = .all }
+                        .buttonStyle(LuminaSecondaryButtonStyle())
+                }
+                if searchQuery.isEmpty && selectedFilter == .all {
+                    Button("Add to Library") { addMediaToLibrary() }
+                        .buttonStyle(LuminaProminentButtonStyle())
+                        .controlSize(.large)
+                }
             }
         }
         .frame(maxWidth: .infinity, minHeight: DisplayScale.points(240))
         .padding(LuminaLayout.contentPadding)
+    }
+
+    private var emptyLibrarySubtitle: String {
+        if selectedFilter == .favorites {
+            return "Star wallpapers in the grid to find them quickly here."
+        }
+        if !searchQuery.isEmpty {
+            return "Try a different search, or clear it to see everything."
+        }
+        if selectedFilter != .all {
+            return "Nothing matches this filter — show all wallpapers or add media."
+        }
+        return "Add videos, GIFs, or images — then tap one to set it on the selected display."
     }
 }
 
@@ -521,6 +537,7 @@ private struct AudioFooterBar: View {
     @StateObject private var musicWidget = NowPlayingWidgetController.shared
     @State private var showQueue: Bool = false
     @State private var queueFavoritesOnly: Bool = false
+    @State private var confirmClearQueue: Bool = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -570,7 +587,7 @@ private struct AudioFooterBar: View {
                             .font(.system(size: DisplayScale.points(28)))
                             .foregroundStyle(audioManager.trackURL != nil ? themeManager.current.color : .secondary)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(LuminaPressableButtonStyle())
                     .help(audioManager.isPlaying ? "Pause" : "Play")
                     .accessibilityLabel(audioManager.isPlaying ? "Pause" : "Play")
                     .disabled(audioManager.trackURL == nil)
@@ -711,7 +728,7 @@ private struct AudioFooterBar: View {
                 .frame(width: uiScale.touchTarget(), height: uiScale.touchTarget())
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(LuminaPressableButtonStyle())
         .help(help)
         .accessibilityLabel(help)
     }
@@ -756,11 +773,23 @@ private struct AudioFooterBar: View {
                 .buttonStyle(LuminaPressableButtonStyle())
                 .help(queueFavoritesOnly ? "Show all tracks" : "Show starred favorites only")
 
-                Button("Clear All") { audioManager.clearLibrary() }
+                Button("Clear All") { confirmClearQueue = true }
                     .font(uiScale.scaledFont(11))
-                    .buttonStyle(.plain)
+                    .buttonStyle(LuminaPressableButtonStyle())
                     .foregroundStyle(.secondary)
                     .disabled(audioManager.library.isEmpty)
+                    .confirmationDialog(
+                        "Clear music queue?",
+                        isPresented: $confirmClearQueue,
+                        titleVisibility: .visible
+                    ) {
+                        Button("Clear All", role: .destructive) {
+                            audioManager.clearLibrary()
+                        }
+                        Button("Cancel", role: .cancel) {}
+                    } message: {
+                        Text("Removes all tracks from the queue. This can’t be undone.")
+                    }
             }
             .padding(.horizontal, DisplayScale.points(16))
             .padding(.vertical, DisplayScale.points(8))
@@ -853,7 +882,7 @@ private struct AudioFooterBar: View {
                 Image(systemName: starred ? "star.fill" : "star")
                     .font(.system(size: DisplayScale.points(13), weight: .semibold))
                     .foregroundStyle(starred ? themeManager.current.color : .secondary)
-                    .frame(width: uiScale.touchTarget() * 0.7, height: uiScale.touchTarget() * 0.7)
+                    .frame(width: uiScale.touchTarget(), height: uiScale.touchTarget())
                     .contentShape(Rectangle())
             }
             .buttonStyle(LuminaPressableButtonStyle())
@@ -1097,6 +1126,12 @@ struct WallpaperGridItem: View {
         .accessibilityLabel(recent.displayName)
         .accessibilityHint(isSelected ? "Currently assigned wallpaper" : "Set as wallpaper")
         .accessibilityAddTraits(.isButton)
+        .accessibilityAction(named: Text(isFavorite ? "Remove from Favorites" : "Add to Favorites")) {
+            onFavorite()
+        }
+        .accessibilityAction(named: Text("Set as Wallpaper")) {
+            onApply()
+        }
         .overlay(alignment: .bottom) {
             Text(recent.displayName)
                 .font(uiScale.scaledFont(12, weight: .medium))

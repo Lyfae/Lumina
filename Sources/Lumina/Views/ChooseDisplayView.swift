@@ -71,7 +71,7 @@ struct ChooseDisplayView: View {
                 Button("Done") {
                     onDone()
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(LuminaProminentButtonStyle())
                 .controlSize(uiScale.controlSize())
                 .keyboardShortcut(.defaultAction)
             }

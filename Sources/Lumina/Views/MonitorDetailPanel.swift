@@ -3,7 +3,7 @@ import AppKit
 import AVFoundation
 
 /// Side panel for the selected monitor: full-height live preview by default, with a
-/// Wallpaper Engine–style Config column that slides in for Pin / Display / Effects / etc.
+/// Per-display Adjust column that slides in for Pin / Display / Effects / etc.
 struct MonitorDetailPanel: View {
     let monitor: MonitorInfo
     @ObservedObject var store: WallpaperManagerStore
@@ -33,6 +33,7 @@ struct MonitorDetailPanel: View {
     private static let settingsToggleDuration: TimeInterval = 0.42
     /// Slightly longer, ease-out collapse so closing doesn't feel stepped.
     private static let settingsCollapseDuration: TimeInterval = 0.55
+    private static let hasDiscoveredAdjustKey = "Lumina.HasDiscoveredAdjust"
 
     // Local state for settings (synced with store)
     @State private var selectedScaling: VideoScaling = .fill
@@ -195,11 +196,17 @@ struct MonitorDetailPanel: View {
         }
         .onAppear {
             loadCurrentValues()
+            maybeAutoOpenAdjustColumn(
+                hasMedia: assignment?.filePath.map { !$0.isEmpty } ?? false
+            )
         }
         .onChange(of: monitor.id) { _, _ in loadCurrentValues() }
         // Reloading when the media itself changes resets the staged adjustments to the new
         // assignment's values (so picking new media doesn't leave stale pending edits).
-        .onChange(of: assignment?.filePath) { _, _ in loadCurrentValues() }
+        .onChange(of: assignment?.filePath) { _, newPath in
+            loadCurrentValues()
+            maybeAutoOpenAdjustColumn(hasMedia: newPath.map { !$0.isEmpty } ?? false)
+        }
         .task(id: previewAssignment?.filePath) {
             if let a = previewAssignment,
                let aspect = await CropRectangle.resolveSourceAspect(for: a),
@@ -219,7 +226,7 @@ struct MonitorDetailPanel: View {
                 userInfo: ["visible": visible]
             )
         }
-        // Config column window resize is driven explicitly from `toggleConfigColumn`
+        // Adjust column window resize is driven explicitly from `toggleConfigColumn`
         // (instant grow on open; column out then soft window shrink on close).
         .onDisappear {
             previewUnlockTask?.cancel()
@@ -639,8 +646,8 @@ struct MonitorDetailPanel: View {
                         .font(uiScale.scaledFont(13, weight: .semibold))
 
                     Text(keepOnStartup
-                         ? "Restores on launch · saves immediately"
-                         : "Off = black desktop next launch")
+                         ? "Restores this wallpaper on launch · saves immediately"
+                         : "Wallpaper stays until you Clear · won’t restore next launch")
                         .font(uiScale.scaledFont(11))
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
@@ -652,10 +659,8 @@ struct MonitorDetailPanel: View {
         .toggleStyle(.switch)
         .controlSize(uiScale.controlSize())
         .onChange(of: keepOnStartup) { _, newValue in
+            // Pin flag only — do not blank the live desktop (use Clear for that).
             store.setKeepOnStartup(for: monitor, enabled: newValue)
-            if !newValue {
-                store.appDelegate?.clearRenderer(for: monitor.id)
-            }
         }
         .padding(.horizontal, DisplayScale.points(10))
         .padding(.vertical, DisplayScale.points(8))
@@ -668,7 +673,7 @@ struct MonitorDetailPanel: View {
                         .strokeBorder(keepOnStartup ? Color.yellow.opacity(0.5) : Color.luminaBorder, lineWidth: 1)
                 )
         )
-        .help("Pin saves immediately. Crop, effects, and playback need Apply.")
+        .help("Pin saves immediately and restores on launch. Turning off does not clear the live wallpaper — use Clear for that. Crop, effects, and playback still need Apply.")
     }
 
     // MARK: - Playback Section Content
@@ -894,20 +899,7 @@ struct MonitorDetailPanel: View {
         let opening = !showSettingsColumn
 
         if opening {
-            // Freeze preview, grow the window immediately so layout has room, then
-            // slide the Config column into the new space — avoids the header squeeze.
-            let width = measuredPreviewWidth > 1 ? measuredPreviewWidth : nil
-            lockedPreviewWidth = width
-            postConfigColumnVisibility(
-                true,
-                animateWindow: false,
-                duration: Self.settingsToggleDuration
-            )
-            withAnimation(
-                .timingCurve(0.25, 0.1, 0.25, 1.0, duration: Self.settingsToggleDuration)
-            ) {
-                showSettingsColumn = true
-            }
+            openAdjustColumn()
         } else {
             // Column out first while the window stays wide (mirrors expand). Shrinking
             // both together desyncs AppKit/SwiftUI and glitches the preview/header.
@@ -927,6 +919,35 @@ struct MonitorDetailPanel: View {
                 lockedPreviewWidth = nil
             }
         }
+    }
+
+    /// Opens Adjust once when the user first assigns media, so Display / Effects aren't hidden.
+    private func maybeAutoOpenAdjustColumn(hasMedia: Bool) {
+        guard hasMedia, !showSettingsColumn else { return }
+        guard !UserDefaults.standard.bool(forKey: Self.hasDiscoveredAdjustKey) else { return }
+        // Defer so layout has measured the preview width before we lock it.
+        DispatchQueue.main.async {
+            guard !self.showSettingsColumn else { return }
+            self.openAdjustColumn()
+        }
+    }
+
+    private func openAdjustColumn() {
+        // Freeze preview, grow the window immediately so layout has room, then
+        // slide the Adjust column into the new space — avoids the header squeeze.
+        let width = measuredPreviewWidth > 1 ? measuredPreviewWidth : nil
+        lockedPreviewWidth = width
+        postConfigColumnVisibility(
+            true,
+            animateWindow: false,
+            duration: Self.settingsToggleDuration
+        )
+        withAnimation(
+            .timingCurve(0.25, 0.1, 0.25, 1.0, duration: Self.settingsToggleDuration)
+        ) {
+            showSettingsColumn = true
+        }
+        UserDefaults.standard.set(true, forKey: Self.hasDiscoveredAdjustKey)
     }
 
     private var actionButtons: some View {
@@ -951,18 +972,6 @@ struct MonitorDetailPanel: View {
                 .accessibilityLabel(assignment == nil ? "No wallpaper assigned" : "Applied, up to date")
             }
 
-            Button {
-                toggleConfigColumn()
-            } label: {
-                Label("Config", systemImage: "slider.horizontal.3")
-            }
-            .buttonStyle(LuminaSecondaryButtonStyle(prominent: showSettingsColumn))
-            .help(showSettingsColumn ? "Hide wallpaper config" : "Show wallpaper config")
-            .accessibilityLabel(showSettingsColumn ? "Hide Config" : "Show Config")
-            .accessibilityAddTraits(showSettingsColumn ? .isSelected : [])
-
-            Spacer(minLength: DisplayScale.points(4))
-
             if monitor.assignedVideoName != nil {
                 Button("Clear", role: .destructive) {
                     store.clearAssignment(for: monitor)
@@ -971,12 +980,24 @@ struct MonitorDetailPanel: View {
                 .help("Remove the wallpaper from this display")
             }
 
-            Button("Reset") {
+            Button("Reset Adjustments") {
                 resetToDefaults()
             }
             .buttonStyle(LuminaSecondaryButtonStyle())
-            .help("Reset staged display settings to defaults (preview only — Apply to commit)")
+            .help("Reset staged crop, speed, and effects to defaults (preview only — Apply to commit)")
             .disabled(assignment == nil)
+
+            Spacer(minLength: DisplayScale.points(4))
+
+            Button {
+                toggleConfigColumn()
+            } label: {
+                Label("Adjust", systemImage: "slider.horizontal.3")
+            }
+            .buttonStyle(LuminaSecondaryButtonStyle(prominent: showSettingsColumn))
+            .help(showSettingsColumn ? "Hide wallpaper adjustments" : "Show wallpaper adjustments")
+            .accessibilityLabel(showSettingsColumn ? "Hide Adjust" : "Show Adjust")
+            .accessibilityAddTraits(showSettingsColumn ? .isSelected : [])
 
             if showHeader {
                 Button("Done") { onClose() }

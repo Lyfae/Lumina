@@ -671,12 +671,12 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     /// Immediately clears the renderer for a specific monitor (makes that display go black).
-    /// Used when the user turns off "Keep on startup" for instant feedback.
+    /// Used by Clear / clearMonitor — not by toggling Keep on startup.
     func clearRenderer(for monitorID: String) {
         guard let index = monitorIndex(for: monitorID) else { return }
         guard index < renderers.count else { return }
         renderers[index].clear()
-        LuminaLog.app.info("Cleared renderer for \(monitorID) (keep on startup turned off)")
+        LuminaLog.app.info("Cleared renderer for \(monitorID)")
     }
 
     /// Fully removes a monitor's wallpaper: blanks the display (to black) and deletes its
@@ -718,14 +718,14 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         controller.window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
 
-        // Tie onboarding to the Wallpaper Manager experience (as requested)
+        // First-run: onboarding only (after splash → Studio). Do not stack Choose Display
+        // or About on top — those stay available from Studio / the menu.
         self.maybeShowOnboardingForManager()
 
-        // Also check for changelog / new version notes when the user opens the manager
-        self.checkForNewVersionAndShowChangelogIfNeeded()
-
-        // Automatically open the Choose Display window so the user can pick a screen first
-        controller.openChooseDisplayWindowIfNeeded()
+        // Changelog only after onboarding has been completed (avoids a third window).
+        if UserDefaults.standard.bool(forKey: "Lumina.HasShownOnboarding") {
+            self.checkForNewVersionAndShowChangelogIfNeeded()
+        }
     }
 
     private var onboardingWindowController: NSWindowController?
@@ -748,6 +748,8 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 UserDefaults.standard.set(true, forKey: "Lumina.HasShownOnboarding")
                 self.onboardingWindowController?.close()
                 self.onboardingWindowController = nil
+                // Safe to surface version notes now that welcome is done.
+                self.checkForNewVersionAndShowChangelogIfNeeded()
             }
         )
 

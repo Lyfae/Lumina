@@ -39,7 +39,7 @@ struct OnboardingView: View {
                         FeatureRow(
                             icon: "slider.horizontal.3",
                             title: "You Stay in Control",
-                            description: "Preview crop, speed, scaling, and effects live — then Apply to Wallpaper when you're ready."
+                            description: "Open Adjust for crop, speed, scaling, and effects — then Apply to Wallpaper when you're ready."
                         )
                         FeatureRow(
                             icon: "display.2",
@@ -64,7 +64,7 @@ struct OnboardingView: View {
                             onContinue()
                         }
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(LuminaProminentButtonStyle())
                     .controlSize(.large)
                     .keyboardShortcut(.defaultAction)
                     .disabled(mediaAccess.enabledLocations.isEmpty)

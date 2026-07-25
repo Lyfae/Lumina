@@ -213,14 +213,14 @@ struct LuminaFilterChip: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: DisplayScale.points(8)) {
+            HStack(spacing: DisplayScale.points(6)) {
                 Image(systemName: icon)
                     .font(.system(size: uiScale.iconSize(.filter), weight: .semibold))
                 Text(label)
-                    .font(.system(size: DisplayScale.points(13), weight: .semibold))
+                    .font(.system(size: DisplayScale.points(12), weight: .semibold))
             }
-            .padding(.horizontal, DisplayScale.points(14))
-            .padding(.vertical, DisplayScale.points(10))
+            .padding(.horizontal, DisplayScale.points(10))
+            .padding(.vertical, DisplayScale.points(7))
             .foregroundStyle(isSelected ? theme.current.color : .secondary)
             .background(
                 RoundedRectangle(cornerRadius: DisplayScale.points(10), style: .continuous)
@@ -236,6 +236,69 @@ struct LuminaFilterChip: View {
         .help(help)
         .accessibilityLabel(label)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
+/// Left-to-right chip/flow layout that wraps to the next line instead of scrolling.
+struct LuminaWrappingHStack: Layout {
+    var spacing: CGFloat = 8
+    var lineSpacing: CGFloat = 8
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let rows = arrange(proposal: proposal, subviews: subviews)
+        let width = proposal.width ?? rows.map(\.width).max() ?? 0
+        let height = rows.map(\.height).reduce(0, +)
+            + CGFloat(max(0, rows.count - 1)) * lineSpacing
+        return CGSize(width: width, height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let rows = arrange(proposal: ProposedViewSize(width: bounds.width, height: bounds.height), subviews: subviews)
+        var y = bounds.minY
+        var index = 0
+        for row in rows {
+            var x = bounds.minX
+            for _ in 0..<row.count {
+                let size = subviews[index].sizeThatFits(.unspecified)
+                subviews[index].place(
+                    at: CGPoint(x: x, y: y),
+                    proposal: ProposedViewSize(size)
+                )
+                x += size.width + spacing
+                index += 1
+            }
+            y += row.height + lineSpacing
+        }
+    }
+
+    private struct Row {
+        var count: Int
+        var width: CGFloat
+        var height: CGFloat
+    }
+
+    private func arrange(proposal: ProposedViewSize, subviews: Subviews) -> [Row] {
+        let maxWidth = proposal.width ?? .infinity
+        var rows: [Row] = []
+        var current = Row(count: 0, width: 0, height: 0)
+
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            let nextWidth = current.count == 0
+                ? size.width
+                : current.width + spacing + size.width
+
+            if current.count > 0, nextWidth > maxWidth {
+                rows.append(current)
+                current = Row(count: 1, width: size.width, height: size.height)
+            } else {
+                current.count += 1
+                current.width = nextWidth
+                current.height = max(current.height, size.height)
+            }
+        }
+        if current.count > 0 { rows.append(current) }
+        return rows
     }
 }
 

@@ -71,8 +71,10 @@ struct SettingsView: View {
             Button(action: onClose) {
                 Image(systemName: "xmark.circle.fill")
                     .font(.system(size: DisplayScale.points(20)))
+                    .frame(width: uiScale.touchTarget(), height: uiScale.touchTarget())
+                    .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(LuminaPressableButtonStyle())
             .foregroundStyle(.secondary)
             .accessibilityLabel("Close settings")
             .keyboardShortcut(.cancelAction)
@@ -206,7 +208,7 @@ struct SettingsView: View {
 
             toggleRow(
                 title: "Remember last wallpapers in Studio",
-                subtitle: "Show each display’s last wallpaper in Studio. To restore on launch, pin with Keep on startup.",
+                subtitle: "Show each display’s last wallpaper in Studio. To restore on launch, pin with Keep on startup (does not clear the live wallpaper when turned off).",
                 isOn: Binding(
                     get: { store.persistAssignments },
                     set: { store.savePersistencePreference($0) }
@@ -322,11 +324,11 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - About & Help
+    // MARK: - About
 
     private var aboutSection: some View {
-        SettingsCard(icon: "info.circle.fill", title: "About & Help") {
-            linkRow(title: "About & Status", icon: "info.circle") { store.showAboutStatus() }
+        SettingsCard(icon: "info.circle.fill", title: "About") {
+            linkRow(title: "Version & Status", icon: "info.circle") { store.showAboutStatus() }
             LuminaDivider()
             linkRow(title: "Check for Updates", icon: "arrow.down.circle") { store.checkForUpdates() }
         }

@@ -168,13 +168,12 @@ final class WallpaperManagerWindowController: NSWindowController {
     }
     
     /// Opens (or brings forward) the Choose Display window.
-    /// Called automatically when the main manager is opened.
+    /// Invoked from Studio / menu — not auto-stacked on Studio open.
     func openChooseDisplayWindowIfNeeded() {
         if let existing = physicalSetupWindow {
             existing.showWindow(nil)
             NSApp.activate(ignoringOtherApps: true)
         } else {
-            // Create it if it doesn't exist yet
             togglePhysicalSetupWindow()
         }
     }
