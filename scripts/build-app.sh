@@ -6,8 +6,8 @@ set -euo pipefail
 
 APP_NAME="Lumina"
 BUNDLE_ID="com.lumina.studio"
-VERSION="0.2.0"
-BUILD_NUMBER="2"
+VERSION="0.3.0"
+BUILD_NUMBER="3"
 ARCH="arm64"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

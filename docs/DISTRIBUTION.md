@@ -10,11 +10,11 @@ Everything you need to build, sign, notarize, and ship Lumina.
 ./scripts/build-dmg.sh
 ```
 
-Produces `dist/Lumina-0.1.0.dmg` — a drag-to-install DMG with a proper `.app` bundle, `Info.plist`, icon, and resource bundle. No Xcode project required.
+Produces `dist/Lumina-0.3.0.dmg` — a drag-to-install DMG with a proper `.app` bundle, `Info.plist`, icon, and resource bundle. No Xcode project required.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `VERSION` | `0.1.0` | `CFBundleShortVersionString` |
+| `VERSION` | `0.3.0` | `CFBundleShortVersionString` |
 | `BUILD_NUMBER` | `1` | `CFBundleVersion` |
 | `ARCH` | `arm64` | `arm64`, `x86_64`, or `universal` |
 | `SIGN_IDENTITY` | *(empty)* | `"Developer ID Application: Name (TEAMID)"` |
@@ -22,7 +22,7 @@ Produces `dist/Lumina-0.1.0.dmg` — a drag-to-install DMG with a proper `.app` 
 ```bash
 # Signed universal binary
 ARCH=universal SIGN_IDENTITY="Developer ID Application: Paul (XXXXXXXXXX)" \
-  VERSION=0.1.0 ./scripts/build-dmg.sh
+  VERSION=0.3.0 ./scripts/build-dmg.sh
 ```
 
 ---

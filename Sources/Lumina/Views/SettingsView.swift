@@ -28,6 +28,9 @@ struct SettingsView: View {
     @State private var pauseWhenFullscreen: Bool = true
     @State private var performanceProfile: PowerManager.PerformanceProfile = .balanced
 
+    /// One section open at a time; Appearance starts expanded.
+    @State private var expandedSection: SettingsSectionID? = .appearance
+
     private var powerManager: PowerManager? { store.appDelegate?.powerManager }
 
     var body: some View {
@@ -36,15 +39,51 @@ struct SettingsView: View {
             LuminaDivider()
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    appearanceSection
-                    interfaceSection
-                    privacySection
-                    generalSection
-                    batterySection
-                    aboutSection
+                VStack(alignment: .leading, spacing: DisplayScale.points(10)) {
+                    SettingsDisclosureCard(
+                        section: .appearance,
+                        expandedSection: $expandedSection
+                    ) {
+                        appearanceContent
+                    }
+
+                    SettingsDisclosureCard(
+                        section: .interface,
+                        expandedSection: $expandedSection
+                    ) {
+                        interfaceContent
+                    }
+
+                    SettingsDisclosureCard(
+                        section: .privacy,
+                        expandedSection: $expandedSection
+                    ) {
+                        privacyContent
+                    }
+
+                    SettingsDisclosureCard(
+                        section: .general,
+                        expandedSection: $expandedSection
+                    ) {
+                        generalContent
+                    }
+
+                    SettingsDisclosureCard(
+                        section: .battery,
+                        expandedSection: $expandedSection
+                    ) {
+                        batteryContent
+                    }
+
+                    SettingsDisclosureCard(
+                        section: .about,
+                        expandedSection: $expandedSection
+                    ) {
+                        aboutContent
+                    }
                 }
                 .padding(DisplayScale.points(20))
+                .animation(.easeInOut(duration: 0.2), value: expandedSection)
             }
             .frame(maxHeight: .infinity)
         }
@@ -86,42 +125,40 @@ struct SettingsView: View {
 
     // MARK: - Appearance
 
-    private var appearanceSection: some View {
-        SettingsCard(icon: "paintbrush.fill", title: "Appearance") {
-            settingRow(
-                title: "Theme",
-                subtitle: "Controls Lumina's windows — not the wallpaper itself."
-            ) {
-                Picker("", selection: appearanceBinding) {
-                    ForEach(AppAppearance.allCases) { mode in
-                        Label(mode.label, systemImage: mode.icon).tag(mode)
-                    }
+    @ViewBuilder private var appearanceContent: some View {
+        settingRow(
+            title: "Theme",
+            subtitle: "Controls Lumina's windows — not the wallpaper itself."
+        ) {
+            Picker("", selection: appearanceBinding) {
+                ForEach(AppAppearance.allCases) { mode in
+                    Label(mode.label, systemImage: mode.icon).tag(mode)
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .controlSize(uiScale.controlSize())
-                .frame(maxWidth: DisplayScale.points(280))
             }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .controlSize(uiScale.controlSize())
+            .frame(maxWidth: DisplayScale.points(280))
+        }
 
-            LuminaDivider()
+        LuminaDivider()
 
-            VStack(alignment: .leading, spacing: DisplayScale.points(8)) {
-                Text("Accent Color")
-                    .font(uiScale.scaledFont(13, weight: .medium))
-                HStack(spacing: DisplayScale.points(8)) {
-                    ForEach(AccentTheme.allCases) { theme in
-                        Button { themeManager.set(theme) } label: {
-                            Circle()
-                                .fill(theme == .system ? AnyShapeStyle(Color.secondary.opacity(0.6)) : AnyShapeStyle(theme.color))
-                                .frame(width: DisplayScale.points(22), height: DisplayScale.points(22))
-                                .overlay(Circle().strokeBorder(themeManager.current == theme ? Color.primary : Color.clear, lineWidth: 2))
-                        }
-                        .buttonStyle(.plain)
-                        .help(theme.label)
-                        .accessibilityLabel(theme.label)
-                        .accessibilityHint("Select accent color")
-                        .accessibilityAddTraits(themeManager.current == theme ? .isSelected : [])
+        VStack(alignment: .leading, spacing: DisplayScale.points(8)) {
+            Text("Accent Color")
+                .font(uiScale.scaledFont(13, weight: .medium))
+            HStack(spacing: DisplayScale.points(8)) {
+                ForEach(AccentTheme.allCases) { theme in
+                    Button { themeManager.set(theme) } label: {
+                        Circle()
+                            .fill(theme == .system ? AnyShapeStyle(Color.secondary.opacity(0.6)) : AnyShapeStyle(theme.color))
+                            .frame(width: DisplayScale.points(22), height: DisplayScale.points(22))
+                            .overlay(Circle().strokeBorder(themeManager.current == theme ? Color.primary : Color.clear, lineWidth: 2))
                     }
+                    .buttonStyle(.plain)
+                    .help(theme.label)
+                    .accessibilityLabel(theme.label)
+                    .accessibilityHint("Select accent color")
+                    .accessibilityAddTraits(themeManager.current == theme ? .isSelected : [])
                 }
             }
         }
@@ -129,209 +166,199 @@ struct SettingsView: View {
 
     // MARK: - Interface scale
 
-    private var interfaceSection: some View {
-        SettingsCard(icon: "textformat.size", title: "Interface Size") {
-            Text("Make buttons, thumbnails, and toolbar icons larger or more compact.")
-                .font(uiScale.scaledFont(11))
-                .foregroundStyle(.secondary)
+    @ViewBuilder private var interfaceContent: some View {
+        Text("Make buttons, thumbnails, and toolbar icons larger or more compact.")
+            .font(uiScale.scaledFont(11))
+            .foregroundStyle(.secondary)
 
-            HStack(spacing: DisplayScale.points(10)) {
-                ForEach(UIScaleManager.Preset.allCases) { preset in
-                    Button {
-                        uiScale.set(preset)
-                    } label: {
-                        VStack(spacing: DisplayScale.points(6)) {
-                            Image(systemName: "square.grid.2x2.fill")
-                                .font(.system(size: DisplayScale.points(preset.sampleIconSize), weight: .semibold))
-                                .foregroundStyle(uiScale.preset == preset ? themeManager.current.color : .secondary)
-                            Text(preset.label)
-                                .font(.system(size: DisplayScale.points(10), weight: .medium))
-                                .foregroundStyle(uiScale.preset == preset ? .primary : .secondary)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, DisplayScale.points(10))
-                        .background(
-                            RoundedRectangle(cornerRadius: DisplayScale.points(8), style: .continuous)
-                                .fill(uiScale.preset == preset ? themeManager.current.color.opacity(0.12) : Color.primary.opacity(0.04))
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: DisplayScale.points(8), style: .continuous)
-                                .strokeBorder(uiScale.preset == preset ? themeManager.current.color.opacity(0.4) : Color.clear, lineWidth: 1)
-                        )
-                        .contentShape(Rectangle())
+        HStack(spacing: DisplayScale.points(10)) {
+            ForEach(UIScaleManager.Preset.allCases) { preset in
+                Button {
+                    uiScale.set(preset)
+                } label: {
+                    VStack(spacing: DisplayScale.points(6)) {
+                        Image(systemName: "square.grid.2x2.fill")
+                            .font(.system(size: DisplayScale.points(preset.sampleIconSize), weight: .semibold))
+                            .foregroundStyle(uiScale.preset == preset ? themeManager.current.color : .secondary)
+                        Text(preset.label)
+                            .font(.system(size: DisplayScale.points(10), weight: .medium))
+                            .foregroundStyle(uiScale.preset == preset ? .primary : .secondary)
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(preset.label)
-                    .accessibilityAddTraits(uiScale.preset == preset ? .isSelected : [])
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, DisplayScale.points(10))
+                    .background(
+                        RoundedRectangle(cornerRadius: DisplayScale.points(8), style: .continuous)
+                            .fill(uiScale.preset == preset ? themeManager.current.color.opacity(0.12) : Color.primary.opacity(0.04))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: DisplayScale.points(8), style: .continuous)
+                            .strokeBorder(uiScale.preset == preset ? themeManager.current.color.opacity(0.4) : Color.clear, lineWidth: 1)
+                    )
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .accessibilityLabel(preset.label)
+                .accessibilityAddTraits(uiScale.preset == preset ? .isSelected : [])
             }
-
-            Text(uiScale.preset.subtitle)
-                .font(uiScale.scaledFont(11))
-                .foregroundStyle(.secondary)
         }
+
+        Text(uiScale.preset.subtitle)
+            .font(uiScale.scaledFont(11))
+            .foregroundStyle(.secondary)
     }
 
     // MARK: - Privacy
 
-    private var privacySection: some View {
-        SettingsCard(icon: "hand.raised.fill", title: "Privacy") {
-            MediaAccessLocationChecklist(settings: mediaAccess, showsHeader: true)
+    @ViewBuilder private var privacyContent: some View {
+        MediaAccessLocationChecklist(settings: mediaAccess, showsHeader: true)
 
-            LuminaDivider()
+        LuminaDivider()
 
-            HStack {
-                Button("Reset to recommended defaults") {
-                    mediaAccess.resetToDefaults()
-                }
-                .buttonStyle(.borderless)
-                .font(uiScale.scaledFont(11, weight: .medium))
-                .foregroundStyle(themeManager.current.color)
-                .help("Pictures and Movies only")
-                Spacer(minLength: 0)
+        HStack {
+            Button("Reset to recommended defaults") {
+                mediaAccess.resetToDefaults()
             }
+            .buttonStyle(.borderless)
+            .font(uiScale.scaledFont(11, weight: .medium))
+            .foregroundStyle(themeManager.current.color)
+            .help("Pictures and Movies only")
+            Spacer(minLength: 0)
         }
     }
 
     // MARK: - General
 
-    private var generalSection: some View {
-        SettingsCard(icon: "gearshape.2.fill", title: "General") {
-            toggleRow(
-                title: "Launch at login",
-                subtitle: "Start Lumina automatically when you sign in.",
-                isOn: $launchAtLogin
+    @ViewBuilder private var generalContent: some View {
+        toggleRow(
+            title: "Launch at login",
+            subtitle: "Start Lumina automatically when you sign in.",
+            isOn: $launchAtLogin
+        )
+        .onChange(of: launchAtLogin) { _, newValue in setLaunchAtLogin(newValue) }
+
+        LuminaDivider()
+
+        toggleRow(
+            title: "Remember last wallpapers in Studio",
+            subtitle: "Show each display’s last wallpaper in Studio. To restore on launch, pin with Keep on startup (does not clear the live wallpaper when turned off).",
+            isOn: Binding(
+                get: { store.persistAssignments },
+                set: { store.savePersistencePreference($0) }
             )
-            .onChange(of: launchAtLogin) { _, newValue in setLaunchAtLogin(newValue) }
+        )
 
-            LuminaDivider()
+        LuminaDivider()
 
-            toggleRow(
-                title: "Remember last wallpapers in Studio",
-                subtitle: "Show each display’s last wallpaper in Studio. To restore on launch, pin with Keep on startup (does not clear the live wallpaper when turned off).",
-                isOn: Binding(
-                    get: { store.persistAssignments },
-                    set: { store.savePersistencePreference($0) }
-                )
+        toggleRow(
+            title: "Sync playback across displays",
+            subtitle: "Lock all video wallpapers to the same playback position.",
+            isOn: Binding(
+                get: { store.syncPlaybackAcrossDisplays },
+                set: { store.setSyncPlayback($0) }
             )
+        )
 
-            LuminaDivider()
-
-            toggleRow(
-                title: "Sync playback across displays",
-                subtitle: "Lock all video wallpapers to the same playback position.",
-                isOn: Binding(
-                    get: { store.syncPlaybackAcrossDisplays },
-                    set: { store.setSyncPlayback($0) }
-                )
-            )
-
-            Button {
-                store.restartDisplaysInSync()
-            } label: {
-                Label("Sync displays now", systemImage: "arrow.triangle.2.circlepath")
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(LuminaSecondaryButtonStyle())
-            .help("Restart matching video/GIF wallpapers together so they play in sync")
-            .padding(.top, DisplayScale.points(4))
-
-            LuminaDivider()
-
-            toggleRow(
-                title: "Show music widget when minimized",
-                subtitle: "Also available anytime from the Studio music footer (desktop widget).",
-                isOn: Binding(
-                    get: { audioManager.showWidgetWhenMinimized },
-                    set: { audioManager.showWidgetWhenMinimized = $0 }
-                )
-            )
-
-            LuminaDivider()
-
-            toggleRow(
-                title: "Automatically check for updates",
-                subtitle: "Check GitHub for new versions on launch (shows a notification when available).",
-                isOn: Binding(
-                    get: {
-                        if UserDefaults.standard.object(forKey: "Lumina.AutoCheckUpdates") == nil { return true }
-                        return UserDefaults.standard.bool(forKey: "Lumina.AutoCheckUpdates")
-                    },
-                    set: { UserDefaults.standard.set($0, forKey: "Lumina.AutoCheckUpdates") }
-                )
-            )
+        Button {
+            store.restartDisplaysInSync()
+        } label: {
+            Label("Sync displays now", systemImage: "arrow.triangle.2.circlepath")
+                .frame(maxWidth: .infinity)
         }
+        .buttonStyle(LuminaSecondaryButtonStyle())
+        .help("Restart matching video/GIF wallpapers together so they play in sync")
+        .padding(.top, DisplayScale.points(4))
+
+        LuminaDivider()
+
+        toggleRow(
+            title: "Show music widget when minimized",
+            subtitle: "Also available anytime from the Studio music footer (desktop widget).",
+            isOn: Binding(
+                get: { audioManager.showWidgetWhenMinimized },
+                set: { audioManager.showWidgetWhenMinimized = $0 }
+            )
+        )
+
+        LuminaDivider()
+
+        toggleRow(
+            title: "Automatically check for updates",
+            subtitle: "Check GitHub for new versions on launch (shows a notification when available).",
+            isOn: Binding(
+                get: {
+                    if UserDefaults.standard.object(forKey: "Lumina.AutoCheckUpdates") == nil { return true }
+                    return UserDefaults.standard.bool(forKey: "Lumina.AutoCheckUpdates")
+                },
+                set: { UserDefaults.standard.set($0, forKey: "Lumina.AutoCheckUpdates") }
+            )
+        )
     }
 
     // MARK: - Battery & Performance
 
-    private var batterySection: some View {
-        SettingsCard(icon: "bolt.fill", title: "Battery & Performance") {
-            toggleRow(
-                title: "Pause in Low Power Mode",
-                subtitle: "Stop wallpaper playback while Low Power Mode is on.",
-                isOn: $pauseOnLowPower
-            )
-            .onChange(of: pauseOnLowPower) { _, v in
-                powerManager?.pauseOnLowPowerMode = v
-                store.reapplyPowerPolicy()
-            }
+    @ViewBuilder private var batteryContent: some View {
+        toggleRow(
+            title: "Pause in Low Power Mode",
+            subtitle: "Stop wallpaper playback while Low Power Mode is on.",
+            isOn: $pauseOnLowPower
+        )
+        .onChange(of: pauseOnLowPower) { _, v in
+            powerManager?.pauseOnLowPowerMode = v
+            store.reapplyPowerPolicy()
+        }
 
-            LuminaDivider()
+        LuminaDivider()
 
-            toggleRow(
-                title: "Pause when running hot",
-                subtitle: "Stop playback if the Mac reaches a high thermal state.",
-                isOn: $pauseOnHighThermal
-            )
-            .onChange(of: pauseOnHighThermal) { _, v in
-                powerManager?.pauseOnHighThermal = v
-                store.reapplyPowerPolicy()
-            }
+        toggleRow(
+            title: "Pause when running hot",
+            subtitle: "Stop playback if the Mac reaches a high thermal state.",
+            isOn: $pauseOnHighThermal
+        )
+        .onChange(of: pauseOnHighThermal) { _, v in
+            powerManager?.pauseOnHighThermal = v
+            store.reapplyPowerPolicy()
+        }
 
-            LuminaDivider()
+        LuminaDivider()
 
-            toggleRow(
-                title: "Pause behind fullscreen apps",
-                subtitle: "Save power when a fullscreen window covers the wallpaper.",
-                isOn: $pauseWhenFullscreen
-            )
-            .onChange(of: pauseWhenFullscreen) { _, v in
-                powerManager?.respectFullscreenApps = v
-                store.reapplyPowerPolicy()
-            }
+        toggleRow(
+            title: "Pause behind fullscreen apps",
+            subtitle: "Save power when a fullscreen window covers the wallpaper.",
+            isOn: $pauseWhenFullscreen
+        )
+        .onChange(of: pauseWhenFullscreen) { _, v in
+            powerManager?.respectFullscreenApps = v
+            store.reapplyPowerPolicy()
+        }
 
-            LuminaDivider()
+        LuminaDivider()
 
-            settingRow(
-                title: "Performance profile",
-                subtitle: "Balance battery savings against playback smoothness."
-            ) {
-                Picker("", selection: $performanceProfile) {
-                    ForEach(PowerManager.PerformanceProfile.allCases) { profile in
-                        Text(profile.label).tag(profile)
-                    }
+        settingRow(
+            title: "Performance profile",
+            subtitle: "Balance battery savings against playback smoothness."
+        ) {
+            Picker("", selection: $performanceProfile) {
+                ForEach(PowerManager.PerformanceProfile.allCases) { profile in
+                    Text(profile.label).tag(profile)
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .controlSize(uiScale.controlSize())
-                .frame(maxWidth: DisplayScale.points(320))
-                .onChange(of: performanceProfile) { _, v in
-                    powerManager?.performanceProfile = v
-                    store.reapplyPowerPolicy()
-                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .controlSize(uiScale.controlSize())
+            .frame(maxWidth: DisplayScale.points(320))
+            .onChange(of: performanceProfile) { _, v in
+                powerManager?.performanceProfile = v
+                store.reapplyPowerPolicy()
             }
         }
     }
 
     // MARK: - About
 
-    private var aboutSection: some View {
-        SettingsCard(icon: "info.circle.fill", title: "About") {
-            linkRow(title: "Version & Status", icon: "info.circle") { store.showAboutStatus() }
-            LuminaDivider()
-            linkRow(title: "Check for Updates", icon: "arrow.down.circle") { store.checkForUpdates() }
-        }
+    @ViewBuilder private var aboutContent: some View {
+        linkRow(title: "Version & Status", icon: "info.circle") { store.showAboutStatus() }
+        LuminaDivider()
+        linkRow(title: "Check for Updates", icon: "arrow.down.circle") { store.checkForUpdates() }
     }
 
     @ViewBuilder
@@ -349,7 +376,7 @@ struct SettingsView: View {
             }
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(LuminaPressableButtonStyle())
     }
 
     // MARK: - Reusable Rows
@@ -424,39 +451,96 @@ struct SettingsView: View {
     }
 }
 
-// MARK: - Settings Card
+// MARK: - Section IDs
 
-/// A titled container matching the visual language of the per-monitor settings groups.
-private struct SettingsCard<Content: View>: View {
-    let icon: String
-    let title: String
+private enum SettingsSectionID: String, CaseIterable, Identifiable {
+    case appearance
+    case interface
+    case privacy
+    case general
+    case battery
+    case about
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .appearance: return "Appearance"
+        case .interface: return "Interface Size"
+        case .privacy: return "Privacy"
+        case .general: return "General"
+        case .battery: return "Battery & Performance"
+        case .about: return "About"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .appearance: return "paintbrush.fill"
+        case .interface: return "textformat.size"
+        case .privacy: return "hand.raised.fill"
+        case .general: return "gearshape.2.fill"
+        case .battery: return "bolt.fill"
+        case .about: return "info.circle.fill"
+        }
+    }
+}
+
+// MARK: - Disclosure Card
+
+/// Accordion field: tap the header to expand/collapse; only one section open at a time.
+private struct SettingsDisclosureCard<Content: View>: View {
+    let section: SettingsSectionID
+    @Binding var expandedSection: SettingsSectionID?
     @ViewBuilder let content: () -> Content
 
     @StateObject private var uiScale = UIScaleManager.shared
     @StateObject private var theme = ThemeManager.shared
 
+    private var isExpanded: Bool { expandedSection == section }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: DisplayScale.points(10)) {
-                Image(systemName: icon)
-                    .font(.system(size: uiScale.iconSize(.card), weight: .semibold))
-                    .foregroundStyle(theme.current.color)
-                    .frame(width: DisplayScale.points(22))
-                Text(title)
-                    .font(uiScale.scaledFont(14, weight: .semibold))
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    expandedSection = isExpanded ? nil : section
+                }
+            } label: {
+                HStack(spacing: DisplayScale.points(10)) {
+                    Image(systemName: section.icon)
+                        .font(.system(size: uiScale.iconSize(.card), weight: .semibold))
+                        .foregroundStyle(theme.current.color)
+                        .frame(width: DisplayScale.points(22))
+                    Text(section.title)
+                        .font(uiScale.scaledFont(14, weight: .semibold))
+                        .foregroundStyle(.primary)
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.down")
+                        .font(uiScale.scaledFont(11, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .rotationEffect(.degrees(isExpanded ? 180 : 0))
+                }
+                .padding(.horizontal, DisplayScale.points(14))
+                .padding(.vertical, DisplayScale.points(12))
+                .contentShape(Rectangle())
             }
-            .padding(.horizontal, DisplayScale.points(14))
-            .padding(.top, DisplayScale.points(12))
-            .padding(.bottom, DisplayScale.points(8))
+            .buttonStyle(LuminaPressableButtonStyle())
+            .accessibilityLabel(section.title)
+            .accessibilityHint(isExpanded ? "Collapse section" : "Expand section")
+            .accessibilityAddTraits(isExpanded ? .isSelected : [])
 
-            VStack(alignment: .leading, spacing: DisplayScale.points(12)) {
-                content()
+            if isExpanded {
+                VStack(alignment: .leading, spacing: DisplayScale.points(12)) {
+                    content()
+                }
+                .padding(.horizontal, DisplayScale.points(14))
+                .padding(.bottom, DisplayScale.points(14))
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
-            .padding(.horizontal, DisplayScale.points(14))
-            .padding(.bottom, DisplayScale.points(14))
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.luminaCard, in: RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.luminaBorder, lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 }

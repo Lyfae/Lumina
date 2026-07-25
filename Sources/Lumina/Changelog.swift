@@ -34,6 +34,33 @@ enum LuminaChangelog {
     ]
 
     static let releases: [ChangelogRelease] = [
+        ChangelogRelease(version: "0.3.0", entries: [
+            ChangelogEntry(
+                icon: "slider.horizontal.3",
+                title: "Adjust Column & Clearer Actions",
+                description: "Per-display Config is now Adjust. Clear removes the wallpaper; Reset Adjustments restores staged crop/effects. Keep on startup only pins for relaunch — it no longer blanks the desktop."
+            ),
+            ChangelogEntry(
+                icon: "rectangle.split.3x1",
+                title: "Studio Launch & Library",
+                description: "Splash opens Studio every launch without stacking Choose Display. Library filters wrap (no stray scroll nub), empty states offer Clear Search / Show All, and Settings sections collapse into accordion fields."
+            ),
+            ChangelogEntry(
+                icon: "music.note.list",
+                title: "Ambient Music Widget",
+                description: "Floating mini-player with artwork, metadata, Up Next queue, horizontal volume, and favorites. Footer scrubber previews time; Clear All asks before wiping the queue."
+            ),
+            ChangelogEntry(
+                icon: "hand.tap",
+                title: "Press Feedback & Polish",
+                description: "Shared press styles across Studio controls, renamed About → Version & Status, and a tighter action bar (Apply / Clear / Reset Adjustments / Adjust)."
+            ),
+            ChangelogEntry(
+                icon: "sparkles",
+                title: "Coming Next — Liquid Glass",
+                description: "0.4.0 will explore macOS Liquid Glass materials for Studio chrome when the OS supports it. Not included in this release."
+            ),
+        ]),
         ChangelogRelease(version: "0.2.0", entries: [
             ChangelogEntry(
                 icon: "sparkles",
