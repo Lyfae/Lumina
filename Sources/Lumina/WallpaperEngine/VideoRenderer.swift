@@ -85,6 +85,32 @@ public final class AVVideoRenderer: @unchecked Sendable {
     private var slideshow: SlideshowEngine?
     public var isSlideshow: Bool { slideshow != nil }
 
+    /// Snapshot for `PlaybackHealthMonitor` — true when video is loaded but not keeping up.
+    func playbackHealthSnapshot() -> PlaybackHealthSnapshot {
+        guard mediaKind == .video, loadedURL != nil, player != nil else {
+            return PlaybackHealthSnapshot(isActiveVideo: false, isStruggling: false, filename: nil)
+        }
+        // Static frame / intentional pause are not "struggling."
+        if holdStaticFrame { return PlaybackHealthSnapshot(isActiveVideo: true, isStruggling: false, filename: loadedURL?.lastPathComponent) }
+        if case .paused = currentPolicy {
+            return PlaybackHealthSnapshot(isActiveVideo: true, isStruggling: false, filename: loadedURL?.lastPathComponent)
+        }
+        guard let player else {
+            return PlaybackHealthSnapshot(isActiveVideo: true, isStruggling: false, filename: loadedURL?.lastPathComponent)
+        }
+        let item = player.currentItem
+        let waiting = player.timeControlStatus == .waitingToPlayAtSpecifiedRate
+        let bufferEmpty = item?.isPlaybackBufferEmpty == true
+        let notKeepUp = item?.isPlaybackLikelyToKeepUp == false
+        // Sustained wait, or empty buffer that can't keep up — classic heavy-file stutter.
+        let struggling = waiting || (bufferEmpty && notKeepUp)
+        return PlaybackHealthSnapshot(
+            isActiveVideo: true,
+            isStruggling: struggling,
+            filename: loadedURL?.lastPathComponent
+        )
+    }
+
     /// One-line human-readable summary of what this renderer is currently showing.
     /// Used by the in-app diagnostics so the user can verify rendering without a debugger.
     public var statusSummary: String {
