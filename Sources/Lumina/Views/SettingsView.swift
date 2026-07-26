@@ -88,7 +88,7 @@ struct SettingsView: View {
             .frame(maxHeight: .infinity)
         }
         .scaledFrame(width: 460, height: 620)
-        .background(Color.luminaBase)
+        .luminaWindowBackdrop()
         .tint(themeManager.current.color)
         .alert("Couldn’t change Launch at Login",
                isPresented: Binding(get: { loginItemError != nil },
@@ -120,7 +120,7 @@ struct SettingsView: View {
         }
         .padding(.horizontal, DisplayScale.points(20))
         .padding(.vertical, DisplayScale.points(14))
-        .background(.bar)
+        .luminaGlassChrome()
     }
 
     // MARK: - Appearance
@@ -153,8 +153,10 @@ struct SettingsView: View {
                             .fill(theme == .system ? AnyShapeStyle(Color.secondary.opacity(0.6)) : AnyShapeStyle(theme.color))
                             .frame(width: DisplayScale.points(22), height: DisplayScale.points(22))
                             .overlay(Circle().strokeBorder(themeManager.current == theme ? Color.primary : Color.clear, lineWidth: 2))
+                            .frame(width: uiScale.touchTarget(), height: uiScale.touchTarget())
+                            .contentShape(Circle())
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(LuminaPressableButtonStyle())
                     .help(theme.label)
                     .accessibilityLabel(theme.label)
                     .accessibilityHint("Select accent color")
@@ -196,7 +198,7 @@ struct SettingsView: View {
                     )
                     .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(LuminaPressableButtonStyle())
                 .accessibilityLabel(preset.label)
                 .accessibilityAddTraits(uiScale.preset == preset ? .isSelected : [])
             }
@@ -539,8 +541,7 @@ private struct SettingsDisclosureCard<Content: View>: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.luminaCard, in: RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.luminaBorder, lineWidth: 1))
+        .luminaGlassPanel(cornerRadius: 10)
         .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 }

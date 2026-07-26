@@ -311,7 +311,7 @@ struct MonitorDetailPanel: View {
             .padding(.horizontal, DisplayScale.points(8))
             .padding(.vertical, DisplayScale.points(8))
         }
-        .background(Color.luminaBase.opacity(0.55))
+        .luminaWindowBackdrop()
     }
 
     /// True when the staged (preview) settings differ from what's currently applied to the
@@ -459,18 +459,22 @@ struct MonitorDetailPanel: View {
                 .padding(DisplayScale.points(8))
             } else {
                 ZStack {
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(Color.black.opacity(0.7))
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Color.luminaCard)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .strokeBorder(Color.luminaBorder, lineWidth: 1)
+                        )
                     VStack(spacing: DisplayScale.points(8)) {
                         Image(systemName: "display")
                             .font(.system(size: DisplayScale.points(36)))
+                            .foregroundStyle(.secondary)
                         Text("No wallpaper assigned")
-                            .font(uiScale.scaledFont(13))
+                            .font(uiScale.scaledFont(13, weight: .medium))
                         Text("Pick one from the library.")
                             .font(uiScale.scaledFont(11))
-                            .foregroundStyle(.white.opacity(0.45))
+                            .foregroundStyle(.tertiary)
                     }
-                    .foregroundStyle(.white.opacity(0.6))
                 }
                 .padding(DisplayScale.points(8))
             }
@@ -1310,8 +1314,7 @@ private struct SettingsGroup<Content: View>: View {
             .padding(.bottom, DisplayScale.points(10))
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
-        .background(Color.luminaCard, in: RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.luminaBorder, lineWidth: 1))
+        .luminaGlassPanel(cornerRadius: 10)
     }
 }
 

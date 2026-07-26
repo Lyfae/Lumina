@@ -5,8 +5,10 @@ import SwiftUI
 @MainActor
 enum LuminaLayout {
     static var libraryColumnWidth: CGFloat { DisplayScale.points(440) }
-    /// Collapsed library rail — just wide enough for the expand control.
-    static var libraryRailWidth: CGFloat { DisplayScale.points(48) }
+    /// Collapsed library rail — wide enough for the expand control at every UI scale.
+    static var libraryRailWidth: CGFloat {
+        max(DisplayScale.points(52), UIScaleManager.shared.touchTarget() + DisplayScale.points(12))
+    }
     static var thumbnailWidth: CGFloat { DisplayScale.points(180) }
     static var thumbnailHeight: CGFloat { DisplayScale.points(101) }
     static var contentPadding: CGFloat { DisplayScale.points(20) }
@@ -381,10 +383,10 @@ struct LuminaHintBubble: View {
                     Image(systemName: "xmark")
                         .font(uiScale.scaledFont(10, weight: .semibold))
                         .foregroundStyle(.secondary)
-                        .frame(width: uiScale.touchTarget() * 0.6, height: uiScale.touchTarget() * 0.6)
+                        .frame(width: uiScale.touchTarget(), height: uiScale.touchTarget())
                         .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(LuminaPressableButtonStyle())
                 .help("Dismiss")
                 .accessibilityLabel("Dismiss")
             }
@@ -496,10 +498,6 @@ struct LuminaSurface<Content: View>: View {
 
     var body: some View {
         content()
-            .background(Color.luminaCard, in: RoundedRectangle(cornerRadius: DisplayScale.points(cornerRadius), style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: DisplayScale.points(cornerRadius), style: .continuous)
-                    .strokeBorder(Color.luminaBorder, lineWidth: 1)
-            )
+            .luminaGlassPanel(cornerRadius: cornerRadius)
     }
 }

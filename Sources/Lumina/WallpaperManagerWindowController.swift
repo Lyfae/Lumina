@@ -53,6 +53,7 @@ final class WallpaperManagerWindowController: NSWindowController {
         
         let hostingView = NSHostingView(rootView: rootView)
         window.contentView = hostingView
+        LuminaGlass.configureWindow(window)
         
         // Listen for request to toggle the physical setup window
         NotificationCenter.default.addObserver(
