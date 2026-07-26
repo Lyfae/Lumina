@@ -34,6 +34,33 @@ enum LuminaChangelog {
     ]
 
     static let releases: [ChangelogRelease] = [
+        ChangelogRelease(version: "0.4.0", entries: [
+            ChangelogEntry(
+                icon: "waveform",
+                title: "Waveform Music Widget",
+                description: "Compact floating player with album art, title/artist, and a live waveform that doubles as the timeline. Hover for transport, volume, and Up Next; drag the playhead thumb to scrub."
+            ),
+            ChangelogEntry(
+                icon: "menubar.arrow.up.rectangle",
+                title: "Music Widget from the Menu Bar",
+                description: "Open just the mini-player with Music Widget (⌘⇧M) — no need to bring Studio forward."
+            ),
+            ChangelogEntry(
+                icon: "shuffle",
+                title: "Shuffle & Shared Scrubbing",
+                description: "Ambient shuffle remembers Previous while randomizing. Studio’s footer scrubber previews seek time while dragging and commits on release."
+            ),
+            ChangelogEntry(
+                icon: "heart.text.square",
+                title: "Playback Health Warnings",
+                description: "Lumina watches for stalled buffers and thermal pressure, then warns in Studio and the menu bar tooltip when a wallpaper is too heavy — with tips to compress or use Max Battery."
+            ),
+            ChangelogEntry(
+                icon: "rectangle.portrait.and.arrow.right",
+                title: "Studio Polish",
+                description: "Collapsed library rail opens again reliably, hit targets are larger, and surfaces stay solid branded cards instead of stacked glass for clearer readability."
+            ),
+        ]),
         ChangelogRelease(version: "0.3.0", entries: [
             ChangelogEntry(
                 icon: "slider.horizontal.3",
@@ -54,11 +81,6 @@ enum LuminaChangelog {
                 icon: "hand.tap",
                 title: "Press Feedback & Polish",
                 description: "Shared press styles across Studio controls, renamed About → Version & Status, and a tighter action bar (Apply / Clear / Reset Adjustments / Adjust)."
-            ),
-            ChangelogEntry(
-                icon: "sparkles",
-                title: "Coming Next — Liquid Glass",
-                description: "0.4.0 will explore macOS Liquid Glass materials for Studio chrome when the OS supports it. Not included in this release."
             ),
         ]),
         ChangelogRelease(version: "0.2.0", entries: [

@@ -1,6 +1,19 @@
 # Releases
 
-## 0.3.0 (current)
+## 0.4.0 (current)
+
+Music widget + Studio polish release — waveform timeline, playback health, restrained surfaces.
+
+- Floating music widget redesigned as a compact bar: art, title/artist, waveform scrubber with hover thumb, hover transport (shuffle / skip / loop / volume / queue)
+- Menu bar: **Music Widget** (`⌘⇧M`) opens the mini-player without Studio
+- Ambient audio: shuffle with Previous history; live meter levels drive the waveform
+- Shared `AudioProgressScrubber` in the Studio footer (preview-on-drag, seek-on-release)
+- Playback health monitor warns when heavy wallpapers stall or the Mac is thermally warm
+- Studio: library rail collapse/expand fix, larger hit targets, solid branded surfaces (no stacked glass)
+
+Full in-app notes: `LuminaChangelog` in `Sources/Lumina/Changelog.swift`.
+
+## 0.3.0
 
 Studio UX release — clearer mental models, music widget, and Settings accordion.
 
@@ -10,12 +23,6 @@ Studio UX release — clearer mental models, music widget, and Settings accordio
 - Library filters wrap; empty states offer recovery actions
 - Ambient music: metadata/favorites, floating widget with Up Next + horizontal volume
 - Settings: accordion sections (one open at a time); About → Version & Status
-
-Full in-app notes: `LuminaChangelog` in `Sources/Lumina/Changelog.swift`.
-
-## 0.4.0 (planned)
-
-**Liquid Glass** — explore macOS Liquid Glass / material APIs for Studio chrome when the OS supports them. Deferred from 0.3.0 so this release stays focused on Studio UX.
 
 ## Earlier
 
