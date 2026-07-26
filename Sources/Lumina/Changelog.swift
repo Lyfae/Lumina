@@ -34,6 +34,18 @@ enum LuminaChangelog {
     ]
 
     static let releases: [ChangelogRelease] = [
+        ChangelogRelease(version: "0.4.2", entries: [
+            ChangelogEntry(
+                icon: "speedometer",
+                title: "Simpler Adjust Column",
+                description: "The video Performance section is hidden while it gets reworked. Its quality presets ignored the video's real resolution — offering 4K for a 1080p file — and the size estimates were rough guesses."
+            ),
+            ChangelogEntry(
+                icon: "exclamationmark.triangle",
+                title: "Clearer Performance Tips",
+                description: "When a wallpaper is straining your Mac, Lumina now suggests a smaller or lower-resolution video, or Max Battery in Settings."
+            ),
+        ]),
         ChangelogRelease(version: "0.4.1", entries: [
             ChangelogEntry(
                 icon: "crop",
