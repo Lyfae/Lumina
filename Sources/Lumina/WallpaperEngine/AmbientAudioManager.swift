@@ -1,5 +1,6 @@
 import AVFoundation
 import AppKit
+import QuartzCore
 
 @MainActor
 final class AmbientAudioManager: NSObject, ObservableObject {
@@ -15,8 +16,12 @@ final class AmbientAudioManager: NSObject, ObservableObject {
     @Published var trackAlbum: String = ""
     @Published var trackArtwork: NSImage? = nil
     @Published var loops: Bool = true
+    /// When on, Next / auto-advance pick a random library track instead of list order.
+    @Published var shuffle: Bool = false
     @Published var currentTime: Double = 0
     @Published var duration: Double = 0
+    /// Normalized bar heights (0…1) for the widget wave visualizer — driven by player meters.
+    @Published private(set) var meterLevels: [CGFloat] = Array(repeating: 0.12, count: 28)
     /// When on, a floating now-playing widget appears while the Studio window is minimized.
     @Published var showWidgetWhenMinimized: Bool = true {
         didSet { UserDefaults.standard.set(showWidgetWhenMinimized, forKey: widgetKey) }
@@ -29,8 +34,10 @@ final class AmbientAudioManager: NSObject, ObservableObject {
     @Published private(set) var favoriteIDs: Set<String> = []
 
     private var playbackTimer: Timer?
+    private var meterTimer: Timer?
     private var metadataTask: Task<Void, Never>?
     private var libraryMetadataTask: Task<Void, Never>?
+    private let meterBarCount = 28
 
     struct AudioTrack: Identifiable, Equatable {
         let id: String   // path as stable identity
@@ -68,16 +75,20 @@ final class AmbientAudioManager: NSObject, ObservableObject {
     private let trackURLKey      = "Lumina.AmbientAudio.TrackPath"
     private let volumeKey        = "Lumina.AmbientAudio.Volume"
     private let loopsKey         = "Lumina.AmbientAudio.Loops"
+    private let shuffleKey       = "Lumina.AmbientAudio.Shuffle"
     private let libraryKey       = "Lumina.AmbientAudio.Library"
     private let durationCacheKey = "Lumina.AmbientAudio.Durations"
     private let widgetKey        = "Lumina.AmbientAudio.ShowWidgetWhenMinimized"
     private let favoritesKey     = "Lumina.AmbientAudio.Favorites"
+    /// Paths visited while shuffling — powers Previous.
+    private var shuffleHistory: [String] = []
 
     private override init() {
         super.init()
         let savedVolume = UserDefaults.standard.double(forKey: volumeKey).clamped(to: 0...1)
         volume = savedVolume == 0 ? 0.5 : savedVolume
         loops = UserDefaults.standard.object(forKey: loopsKey) as? Bool ?? true
+        shuffle = UserDefaults.standard.object(forKey: shuffleKey) as? Bool ?? false
         showWidgetWhenMinimized = UserDefaults.standard.object(forKey: widgetKey) as? Bool ?? true
         favoriteIDs = Set(UserDefaults.standard.stringArray(forKey: favoritesKey) ?? [])
         loadLibrary()
@@ -181,19 +192,76 @@ final class AmbientAudioManager: NSObject, ObservableObject {
 
     private func startPlaybackTimer() {
         playbackTimer?.invalidate()
-        playbackTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                guard let self, let p = self.player else { return }
+        let timer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            MainActor.assumeIsolated {
+                guard let p = self.player else { return }
                 self.currentTime = p.currentTime
                 self.duration = p.duration
                 self.isPlaying = p.isPlaying
             }
         }
+        // `.common` keeps ticks flowing while the user scrubs / drags the widget.
+        RunLoop.main.add(timer, forMode: .common)
+        playbackTimer = timer
     }
 
     private func stopPlaybackTimer() {
         playbackTimer?.invalidate()
         playbackTimer = nil
+    }
+
+    private func startMeterTimer() {
+        meterTimer?.invalidate()
+        let timer = Timer(timeInterval: 1.0 / 24.0, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            MainActor.assumeIsolated {
+                self.sampleMeters()
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        meterTimer = timer
+    }
+
+    private func stopMeterTimer(decay: Bool) {
+        meterTimer?.invalidate()
+        meterTimer = nil
+        if decay {
+            meterLevels = meterLevels.map { max(0.08, $0 * 0.35) }
+        }
+    }
+
+    /// Builds dancing bar heights from AVAudioPlayer meters + light phase motion.
+    private func sampleMeters() {
+        guard let player else {
+            meterLevels = Array(repeating: 0.1, count: meterBarCount)
+            return
+        }
+        guard player.isPlaying else {
+            meterLevels = meterLevels.map { max(0.08, $0 * 0.82) }
+            return
+        }
+
+        player.isMeteringEnabled = true
+        player.updateMeters()
+        let avg = normalizedMeter(player.averagePower(forChannel: 0))
+        let peak = normalizedMeter(player.peakPower(forChannel: 0))
+        let energy = max(avg, peak * 0.85)
+        let t = CACurrentMediaTime()
+
+        meterLevels = (0..<meterBarCount).map { index in
+            let wave = sin(t * 9.5 + Double(index) * 0.55)
+            let pulse = sin(t * 4.2 + Double(index) * 0.2) * 0.5 + 0.5
+            let shape = 0.55 + 0.45 * wave
+            let height = energy * (0.35 + 0.65 * shape) + energy * pulse * 0.25
+            return CGFloat(min(1, max(0.08, height)))
+        }
+    }
+
+    /// Maps AVAudioPlayer dB (−160…0) into a usable 0…1 display range.
+    private func normalizedMeter(_ power: Float) -> Double {
+        let clamped = max(-60, min(0, Double(power)))
+        return (clamped + 60) / 60
     }
 
     // MARK: - Transport controls
@@ -216,7 +284,12 @@ final class AmbientAudioManager: NSObject, ObservableObject {
     func nextTrack() {
         guard !library.isEmpty else { return }
         let wasPlaying = isPlaying
-        if let current = trackURL, let idx = library.firstIndex(where: { $0.url == current }) {
+        if shuffle, library.count > 1 {
+            pushShuffleHistory()
+            if let pick = shuffledTrack(excluding: trackURL) {
+                selectTrack(pick)
+            }
+        } else if let current = trackURL, let idx = library.firstIndex(where: { $0.url == current }) {
             selectTrack(library[(idx + 1) % library.count])
         } else if let first = library.first {
             selectTrack(first)
@@ -227,7 +300,10 @@ final class AmbientAudioManager: NSObject, ObservableObject {
     func previousTrack() {
         guard !library.isEmpty else { return }
         let wasPlaying = isPlaying
-        if let current = trackURL, let idx = library.firstIndex(where: { $0.url == current }) {
+        if shuffle, let lastPath = shuffleHistory.popLast(),
+           let prior = library.first(where: { $0.id == lastPath }) {
+            selectTrack(prior)
+        } else if let current = trackURL, let idx = library.firstIndex(where: { $0.url == current }) {
             let prev = idx == 0 ? library.count - 1 : idx - 1
             selectTrack(library[prev])
         } else if let last = library.last {
@@ -272,6 +348,7 @@ final class AmbientAudioManager: NSObject, ObservableObject {
             // end) while the audio buffer keeps draining.
             p.numberOfLoops = 0
             p.volume = Float(volume)
+            p.isMeteringEnabled = true
             p.delegate = self   // drives loop-restart / auto-advance when the track ends
             p.prepareToPlay()
             player = p
@@ -284,6 +361,7 @@ final class AmbientAudioManager: NSObject, ObservableObject {
             trackArtwork = nil
             currentTime = 0
             duration = p.duration
+            meterLevels = Array(repeating: 0.12, count: meterBarCount)
             addToLibrary(url: url)
             scheduleMetadataLoad(for: url)
             return true
@@ -309,15 +387,18 @@ final class AmbientAudioManager: NSObject, ObservableObject {
     // MARK: - Playback controls
 
     func play() {
+        player?.isMeteringEnabled = true
         player?.play()
         isPlaying = player?.isPlaying ?? false
         startPlaybackTimer()
+        startMeterTimer()
     }
 
     func pause() {
         player?.pause()
         isPlaying = false
         stopPlaybackTimer()
+        stopMeterTimer(decay: true)
     }
 
     func toggle() {
@@ -338,6 +419,12 @@ final class AmbientAudioManager: NSObject, ObservableObject {
         UserDefaults.standard.set(enabled, forKey: loopsKey)
     }
 
+    func setShuffle(_ enabled: Bool) {
+        shuffle = enabled
+        if !enabled { shuffleHistory.removeAll() }
+        UserDefaults.standard.set(enabled, forKey: shuffleKey)
+    }
+
     func clearTrack() {
         pause()
         stopPlaybackTimer()
@@ -352,6 +439,7 @@ final class AmbientAudioManager: NSObject, ObservableObject {
         trackArtwork = nil
         currentTime = 0
         duration = 0
+        meterLevels = Array(repeating: 0.1, count: meterBarCount)
         UserDefaults.standard.removeObject(forKey: trackURLKey)
     }
 
@@ -459,7 +547,7 @@ final class AmbientAudioManager: NSObject, ObservableObject {
     // MARK: - End-of-track handling
 
     /// Called when the current track finishes. Repeats it when looping is on, otherwise
-    /// advances to the next track in the library (and stops cleanly at the end of the list).
+    /// advances (shuffled or in order). Sequential mode stops at the end of the list.
     private func handleTrackFinished() {
         if loops {
             // Repeat the current track from the top.
@@ -467,14 +555,40 @@ final class AmbientAudioManager: NSObject, ObservableObject {
             player?.play()
             isPlaying = player?.isPlaying ?? false
             startPlaybackTimer()
+            startMeterTimer()
             return
         }
 
-        // Auto-advance to the next track in the library.
+        guard !library.isEmpty else {
+            isPlaying = false
+            stopPlaybackTimer()
+            stopMeterTimer(decay: true)
+            return
+        }
+
+        if shuffle {
+            if library.count == 1 {
+                player?.currentTime = 0
+                player?.play()
+                isPlaying = player?.isPlaying ?? false
+                startPlaybackTimer()
+                startMeterTimer()
+                return
+            }
+            pushShuffleHistory()
+            if let pick = shuffledTrack(excluding: trackURL) {
+                selectTrack(pick)
+                play()
+            }
+            return
+        }
+
+        // Auto-advance in library order; stop cleanly at the end.
         guard let current = trackURL,
               let idx = library.firstIndex(where: { $0.url == current }) else {
             isPlaying = false
             stopPlaybackTimer()
+            stopMeterTimer(decay: true)
             return
         }
 
@@ -483,11 +597,24 @@ final class AmbientAudioManager: NSObject, ObservableObject {
             selectTrack(library[nextIdx])
             play()
         } else {
-            // Reached the end of the playlist without looping — stop cleanly on the last frame.
             isPlaying = false
             currentTime = duration
             stopPlaybackTimer()
+            stopMeterTimer(decay: true)
         }
+    }
+
+    private func pushShuffleHistory() {
+        guard let path = trackURL?.path else { return }
+        shuffleHistory.append(path)
+        if shuffleHistory.count > 64 {
+            shuffleHistory.removeFirst(shuffleHistory.count - 64)
+        }
+    }
+
+    private func shuffledTrack(excluding current: URL?) -> AudioTrack? {
+        let candidates = library.filter { $0.url != current }
+        return (candidates.isEmpty ? library : candidates).randomElement()
     }
 }
 
