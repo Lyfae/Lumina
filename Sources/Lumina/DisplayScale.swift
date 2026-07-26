@@ -39,7 +39,8 @@ enum DisplayScale {
     static var managerWindowMinSize: NSSize { nsSize(width: 1080, height: 740) }
     static var physicalSetupWindowSize: NSSize { nsSize(width: 620, height: 420) }
     static var splashWindowSize: NSSize { nsSize(width: 360, height: 260) }
-    static var musicWidgetSize: NSSize { nsSize(width: 356, height: 184) }
+    /// Music widget is a fixed-size compact bar: art tile, waveform timeline, hover controls.
+    static var musicWidgetSize: NSSize { nsSize(width: 288, height: 140) }
 
     // MARK: - Icons
 
