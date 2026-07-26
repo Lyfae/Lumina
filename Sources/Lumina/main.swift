@@ -17,7 +17,7 @@ import SwiftUI
 
 @main
 @MainActor
-final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
+final class LuminaApp: NSObject, NSApplicationDelegate {
 
     // MARK: - Core Engine
     var powerManager: PowerManager!           // Made internal so window controllers can notify about activity
@@ -149,6 +149,7 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Single teardown path for every exit (menu Quit, ⌘Q, logout, system shutdown):
         // stop all playback and remove the desktop wallpaper windows so nothing lingers.
         powerManager?.pauseManually()
+        PlaybackHealthMonitor.shared.stop()
         stopDriftWatcher()
         updateCheckTask?.cancel()
         reconcileWorkItem?.cancel()
@@ -203,6 +204,28 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // idle, and pauses ONLY the display a fullscreen app actually covers — so a second
         // monitor's wallpaper keeps playing while you game fullscreen on the first.
         fullscreenDetector = nil
+
+        setupPlaybackHealthMonitor()
+    }
+
+    /// Samples wallpaper renderers for stalls / thermal pressure and warns the user.
+    private func setupPlaybackHealthMonitor() {
+        let health = PlaybackHealthMonitor.shared
+        health.snapshotProvider = { [weak self] in
+            guard let self else { return [] }
+            return self.renderers.map { $0.playbackHealthSnapshot() }
+        }
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(playbackHealthDidChange),
+            name: .luminaPlaybackHealthDidChange,
+            object: nil
+        )
+        health.start()
+    }
+
+    @objc private func playbackHealthDidChange() {
+        updateStatusItem(for: powerManager.currentPolicy)
     }
 
     private func setupWallpaperWindowsAndRenderers() {
@@ -1289,15 +1312,27 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         
         updateStatusItem(for: .normal)
 
-        // Minimal menu bar: open the app, or quit. Everything else (power toggles,
-        // performance profile, about/welcome/what's new) now lives in Settings inside
-        // Lumina Studio, so we don't duplicate it here.
+        // Minimal menu bar: Studio, music widget, or quit. Everything else (power toggles,
+        // performance profile, about/welcome/what's new) lives in Settings inside Studio.
         let menu = NSMenu()
         menu.addItem(NSMenuItem(title: "Lumina Studio", action: #selector(openWallpaperManager), keyEquivalent: "m"))
+
+        let musicItem = NSMenuItem(
+            title: "Music Widget",
+            action: #selector(toggleMusicWidget),
+            keyEquivalent: "m"
+        )
+        musicItem.keyEquivalentModifierMask = [.command, .shift]
+        menu.addItem(musicItem)
+
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Quit Lumina", action: #selector(quit), keyEquivalent: "q"))
 
         statusItem.menu = menu
+    }
+
+    @objc private func toggleMusicWidget() {
+        NowPlayingWidgetController.shared.toggle()
     }
 
     private func updateStatusItem(for policy: WallpaperPlaybackPolicy) {
@@ -1310,16 +1345,20 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // All dynamic state now lives in the tooltip (hover) and the top menu item ("Wallpaper: ...").
         // This produces a clean, correctly aligned, native-looking menu bar icon at all times.
         let filename = currentVideoURL?.lastPathComponent ?? "none"
+        let health = PlaybackHealthMonitor.shared
+        let base: String
         switch policy {
         case .normal:
-            let tip = hasVideo ? "Lumina – \(filename) (playing)" : "Lumina – ready (no wallpaper loaded)"
-            button?.toolTip = tip
+            base = hasVideo ? "Lumina – \(filename) (playing)" : "Lumina – ready (no wallpaper loaded)"
         case .throttled:
-            let tip = hasVideo ? "Lumina – Throttled (\(filename))" : "Lumina – Throttled (no wallpaper)"
-            button?.toolTip = tip
+            base = hasVideo ? "Lumina – Throttled (\(filename))" : "Lumina – Throttled (no wallpaper)"
         case .paused(let reason):
-            let tip = hasVideo ? "Lumina – Paused (\(reason.rawValue)) – \(filename)" : "Lumina – Paused (\(reason.rawValue))"
-            button?.toolTip = tip
+            base = hasVideo ? "Lumina – Paused (\(reason.rawValue)) – \(filename)" : "Lumina – Paused (\(reason.rawValue))"
+        }
+        if health.isStruggling {
+            button?.toolTip = "\(base)\n⚠ \(health.reason)\nTip: Compress the video or use Max Battery in Settings."
+        } else {
+            button?.toolTip = base
         }
     }
 
