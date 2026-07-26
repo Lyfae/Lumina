@@ -34,6 +34,18 @@ enum LuminaChangelog {
     ]
 
     static let releases: [ChangelogRelease] = [
+        ChangelogRelease(version: "0.4.1", entries: [
+            ChangelogEntry(
+                icon: "crop",
+                title: "Previews Show the Real Crop",
+                description: "Previews now render exactly what lands on your desktop. The dimmed original image and the blue rectangle marking the crop area are gone — you just see the cropped picture."
+            ),
+            ChangelogEntry(
+                icon: "paintbrush",
+                title: "Cleaner Preview Chrome",
+                description: "Removed the leftover blue outlines around the preview card and crop editor, and the Crop button now scales with the rest of the interface."
+            ),
+        ]),
         ChangelogRelease(version: "0.4.0", entries: [
             ChangelogEntry(
                 icon: "waveform",
