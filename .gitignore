@@ -22,6 +22,13 @@ Package.resolved
 *.xcscmblueprint
 .swiftpm/xcode/package.xcworkspace/xcuserdata/
 
+# Local tooling / notes used while building Lumina (kept on disk, not in the public repo)
+docs/
+scripts/
+Tests/
+/build
+/run
+
 # Local test media or user data (never commit personal wallpapers)
 # UserMedia/
 # Thumbnails/  (if ever cached locally outside build)
