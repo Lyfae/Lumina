@@ -34,6 +34,13 @@ enum LuminaChangelog {
     ]
 
     static let releases: [ChangelogRelease] = [
+        ChangelogRelease(version: "0.4.3", entries: [
+            ChangelogEntry(
+                icon: "paintpalette",
+                title: "Gray Accent Is Actually Gray",
+                description: "The first accent swatch looked gray but applied the macOS system accent (usually blue). It now uses a real neutral gray, and the swatch matches what the UI tints."
+            ),
+        ]),
         ChangelogRelease(version: "0.4.2", entries: [
             ChangelogEntry(
                 icon: "speedometer",

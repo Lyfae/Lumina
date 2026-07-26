@@ -150,7 +150,7 @@ struct SettingsView: View {
                 ForEach(AccentTheme.allCases) { theme in
                     Button { themeManager.set(theme) } label: {
                         Circle()
-                            .fill(theme == .system ? AnyShapeStyle(Color.secondary.opacity(0.6)) : AnyShapeStyle(theme.color))
+                            .fill(theme.color)
                             .frame(width: DisplayScale.points(22), height: DisplayScale.points(22))
                             .overlay(Circle().strokeBorder(themeManager.current == theme ? Color.primary : Color.clear, lineWidth: 2))
                             .frame(width: uiScale.touchTarget(), height: uiScale.touchTarget())

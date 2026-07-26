@@ -55,13 +55,14 @@ struct LuminaVerticalDivider: View {
 }
 
 enum AccentTheme: String, CaseIterable, Identifiable {
+    /// Neutral gray accent. Raw value stays `system` so existing installs keep their pick.
     case system, blue, purple, pink, red, orange, yellow, green, teal
 
     var id: String { rawValue }
 
     var label: String {
         switch self {
-        case .system:  return "System"
+        case .system:  return "Gray"
         case .blue:    return "Ocean"
         case .purple:  return "Aurora"
         case .pink:    return "Blossom"
@@ -75,7 +76,9 @@ enum AccentTheme: String, CaseIterable, Identifiable {
 
     var color: Color {
         switch self {
-        case .system:  return .accentColor
+        // True neutral — used to follow macOS `.accentColor` (usually blue), which made
+        // the gray swatch lie about what the UI would actually tint.
+        case .system:  return Color(white: 0.55)
         case .blue:    return Color(red: 0.18, green: 0.53, blue: 0.95)
         case .purple:  return Color(red: 0.60, green: 0.35, blue: 0.95)
         case .pink:    return Color(red: 0.95, green: 0.30, blue: 0.60)
@@ -93,11 +96,11 @@ final class ThemeManager: ObservableObject {
     static let shared = ThemeManager()
     private let key = "Lumina.AccentTheme"
 
-    @Published var current: AccentTheme = .system
+    @Published var current: AccentTheme = .blue
 
     private init() {
         let saved = UserDefaults.standard.string(forKey: key) ?? ""
-        current = AccentTheme(rawValue: saved) ?? .system
+        current = AccentTheme(rawValue: saved) ?? .blue
     }
 
     func set(_ theme: AccentTheme) {
