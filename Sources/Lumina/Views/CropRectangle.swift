@@ -142,7 +142,7 @@ struct CropRectangle: View {
             .fill(Color.black.opacity(0.85))
             .overlay(
                 RoundedRectangle(cornerRadius: previewCornerRadius)
-                    .stroke(Color.accentColor.opacity(0.35), lineWidth: 1)
+                    .stroke(Color.luminaBorder, lineWidth: 1)
             )
     }
 

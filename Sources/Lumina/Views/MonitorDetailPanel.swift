@@ -449,7 +449,7 @@ struct MonitorDetailPanel: View {
                         .opacity(previewOpacity)
 
                         cropToggleButton
-                            .padding(10)
+                            .padding(DisplayScale.points(10))
                             .opacity(cropEditMode ? 0 : 1)
                             .allowsHitTesting(!cropEditMode)
                     }

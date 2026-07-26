@@ -61,7 +61,7 @@ struct WallpaperPreview: View {
                         .fill(Color.black.opacity(0.85))
                         .overlay(
                             RoundedRectangle(cornerRadius: 10)
-                                .stroke(Color.accentColor.opacity(0.35), lineWidth: 1)
+                                .stroke(Color.luminaBorder, lineWidth: 1)
                         )
                 }
 
@@ -147,28 +147,29 @@ struct WallpaperPreview: View {
         GeometryReader { geo in
             let containerSize = geo.size
 
-            Group {
-                if scaling == .stretch {
-                    // Stretch: fill the frame with distortion (no aspectRatio constraint)
-                    Image(nsImage: image)
-                        .resizable()
-                        .frame(width: containerSize.width, height: containerSize.height)
-                } else if scaling == .fill {
-                    // Fill: fill entire frame, crop any overflow (matches AVLayerVideoGravity.resizeAspectFill)
-                    Image(nsImage: image)
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                        .frame(width: containerSize.width, height: containerSize.height)
-                        .clipped()
-                } else {
-                    // Fit: show full image with letterbox/pillarbox (matches AVLayerVideoGravity.resizeAspect)
-                    Image(nsImage: image)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(width: containerSize.width, height: containerSize.height)
+            cropped(to: containerSize) { renderSize in
+                Group {
+                    if scaling == .stretch {
+                        // Stretch: fill the frame with distortion (no aspectRatio constraint)
+                        Image(nsImage: image)
+                            .resizable()
+                            .frame(width: renderSize.width, height: renderSize.height)
+                    } else if scaling == .fill {
+                        // Fill: fill entire frame, crop any overflow (matches AVLayerVideoGravity.resizeAspectFill)
+                        Image(nsImage: image)
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .frame(width: renderSize.width, height: renderSize.height)
+                            .clipped()
+                    } else {
+                        // Fit: show full image with letterbox/pillarbox (matches AVLayerVideoGravity.resizeAspect)
+                        Image(nsImage: image)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: renderSize.width, height: renderSize.height)
+                    }
                 }
             }
-            .overlay(cropOverlay(size: containerSize))
             .clipShape(RoundedRectangle(cornerRadius: 8))
         }
         .overlay(alignment: .bottomTrailing) {
@@ -196,11 +197,12 @@ struct WallpaperPreview: View {
     @ViewBuilder
     private func liveVideoView(assignment: MonitorAssignment, size: CGSize) -> some View {
         if let player = player {
-            PlayerLayerView(player: player, videoGravity: gravityForScaling(effectiveScaling))
-                .frame(width: size.width, height: size.height)
-                .clipped()
-                .overlay(cropOverlay(size: size))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+            cropped(to: size) { renderSize in
+                PlayerLayerView(player: player, videoGravity: gravityForScaling(effectiveScaling))
+                    .frame(width: renderSize.width, height: renderSize.height)
+                    .clipped()
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 8))
         } else {
             Color.black.opacity(0.7)
                 .overlay(ProgressView().tint(.white))
@@ -211,25 +213,27 @@ struct WallpaperPreview: View {
     /// while the next seek lands (no black flash).
     @ViewBuilder
     private func scrubVideoView(assignment: MonitorAssignment, size: CGSize) -> some View {
-        ZStack {
-            // Fallback under the player so seeks never flash an empty black frame.
-            if let thumb = thumbnail {
-                Image(nsImage: thumb)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: size.width, height: size.height)
-            }
+        cropped(to: size) { renderSize in
+            ZStack {
+                // Fallback under the player so seeks never flash an empty black frame.
+                if let thumb = thumbnail {
+                    Image(nsImage: thumb)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: renderSize.width, height: renderSize.height)
+                }
 
-            if let player {
-                PlayerLayerView(player: player, videoGravity: gravityForScaling(effectiveScaling))
-                    .frame(width: size.width, height: size.height)
-                    .clipped()
-            } else if thumbnail == nil {
-                ProgressView()
-                    .tint(.white)
+                if let player {
+                    PlayerLayerView(player: player, videoGravity: gravityForScaling(effectiveScaling))
+                        .frame(width: renderSize.width, height: renderSize.height)
+                        .clipped()
+                } else if thumbnail == nil {
+                    ProgressView()
+                        .tint(.white)
+                }
             }
+            .frame(width: renderSize.width, height: renderSize.height)
         }
-        .overlay(cropOverlay(size: size))
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay(alignment: .bottomTrailing) {
             if showsChrome {
@@ -249,38 +253,32 @@ struct WallpaperPreview: View {
         }
     }
 
-    /// Draws a semi-transparent dim outside the crop region and a clean accent-color border
-    /// around it. Uses Canvas with even-odd fill so the crop area is a true hole in the overlay.
-    @ViewBuilder
-    private func cropOverlay(size: CGSize) -> some View {
+    private var isFullCrop: Bool {
         let crop = effectiveCrop
-        let isFullCrop = abs(crop.minX) < 0.001 && abs(crop.minY) < 0.001
-                      && abs(crop.width - 1) < 0.001 && abs(crop.height - 1) < 0.001
+        return abs(crop.minX) < 0.001 && abs(crop.minY) < 0.001
+            && abs(crop.width - 1) < 0.001 && abs(crop.height - 1) < 0.001
+    }
 
-        if !isFullCrop {
-            Canvas { context, canvasSize in
-                let cx = crop.minX * canvasSize.width
-                let cy = crop.minY * canvasSize.height
-                let cw = crop.width  * canvasSize.width
-                let ch = crop.height * canvasSize.height
-                let cropRect = CGRect(x: cx, y: cy, width: cw, height: ch)
-
-                // Dim everything outside the crop using even-odd rule (hole = no fill inside crop)
-                var dimPath = Path()
-                dimPath.addRect(CGRect(origin: .zero, size: canvasSize))
-                dimPath.addRoundedRect(in: cropRect, cornerSize: CGSize(width: 3, height: 3))
-                context.fill(dimPath, with: .color(.black.opacity(0.45)),
-                             style: FillStyle(eoFill: true))
-
-                // Bright border on the crop region
-                context.stroke(
-                    Path(roundedRect: cropRect, cornerSize: CGSize(width: 3, height: 3)),
-                    with: .color(Color.accentColor.opacity(0.95)),
-                    style: StrokeStyle(lineWidth: 2.5)
-                )
-            }
-            .frame(width: size.width, height: size.height)
-            .allowsHitTesting(false)
+    /// Renders the crop *result*: the media is enlarged and shifted so the crop region
+    /// exactly fills `size`. The preview then matches what lands on the desktop, instead of
+    /// showing the whole source with a marker rectangle drawn on it.
+    @ViewBuilder
+    private func cropped<Content: View>(
+        to size: CGSize,
+        @ViewBuilder content: (CGSize) -> Content
+    ) -> some View {
+        let crop = effectiveCrop
+        if isFullCrop || crop.width <= 0.001 || crop.height <= 0.001 {
+            content(size)
+        } else {
+            let scaled = CGSize(
+                width: size.width / crop.width,
+                height: size.height / crop.height
+            )
+            content(scaled)
+                .offset(x: -crop.minX * scaled.width, y: -crop.minY * scaled.height)
+                .frame(width: size.width, height: size.height, alignment: .topLeading)
+                .clipped()
         }
     }
 
