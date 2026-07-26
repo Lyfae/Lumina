@@ -81,11 +81,13 @@ No subscription. No account. Just your wallpapers.
 
 ---
 
-## Help & feedback
+## Questions & changes
 
-Something broken or missing? [Open an issue](https://github.com/Lyfae/Lumina/issues) — include your macOS version and what you were doing.
+Want help or an idea considered? Reach out to me ([@Lyfae](https://github.com/Lyfae)).
 
-Release notes for each version live on the [Releases](https://github.com/Lyfae/Lumina/releases) page and in **Settings → Version & Status** inside the app.
+Prefer to change the code yourself? Fork the repo and open a pull request.
+
+Release notes are on the [Releases](https://github.com/Lyfae/Lumina/releases) page and in **Settings → Version & Status** inside the app.
 
 ---
 
