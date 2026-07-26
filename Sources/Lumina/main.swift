@@ -1356,7 +1356,7 @@ final class LuminaApp: NSObject, NSApplicationDelegate {
             base = hasVideo ? "Lumina – Paused (\(reason.rawValue)) – \(filename)" : "Lumina – Paused (\(reason.rawValue))"
         }
         if health.isStruggling {
-            button?.toolTip = "\(base)\n⚠ \(health.reason)\nTip: Compress the video or use Max Battery in Settings."
+            button?.toolTip = "\(base)\n⚠ \(health.reason)\nTip: Use a smaller video or Max Battery in Settings."
         } else {
             button?.toolTip = base
         }

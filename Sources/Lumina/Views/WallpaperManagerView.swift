@@ -155,7 +155,7 @@ struct WallpaperManagerView: View {
     }
 
     private var playbackHealthBannerDetail: String {
-        let tip = "Try Compress in Adjust → Performance, or Settings → Battery → Max Battery."
+        let tip = "Try a smaller or lower-resolution video, or Settings → Battery → Max Battery."
         if playbackHealth.reason.isEmpty { return tip }
         return "\(playbackHealth.reason). \(tip)"
     }

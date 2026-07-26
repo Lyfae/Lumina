@@ -298,11 +298,9 @@ struct MonitorDetailPanel: View {
                     }
                 }
 
-                if assignment?.mediaType == .video, let _ = assignment?.filePath {
-                    SettingsGroup(icon: "speedometer", title: "Performance") {
-                        performanceContent
-                    }
-                }
+                // Performance / compression is hidden for now: the resolution presets ignore the
+                // source size (offering 4K for a 1080p file) and the size estimates are guesses.
+                // `performanceContent` + VideoCompressor stay in the tree for a source-aware redo.
 
                 SettingsGroup(icon: "photo.on.rectangle.angled", title: "Slideshow") {
                     slideshowContent
