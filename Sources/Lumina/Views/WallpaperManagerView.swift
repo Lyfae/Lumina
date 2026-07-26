@@ -47,6 +47,7 @@ struct WallpaperManagerView: View {
 
     @StateObject private var themeManager = ThemeManager.shared
     @StateObject private var uiScale = UIScaleManager.shared
+    @StateObject private var playbackHealth = PlaybackHealthMonitor.shared
     // NOTE: AmbientAudioManager is deliberately NOT observed here. It publishes currentTime
     // 4×/sec during playback, which would invalidate the entire manager tree (library grid,
     // live preview, crop UI) on every tick. Only AudioFooterBar observes it.
@@ -92,7 +93,7 @@ struct WallpaperManagerView: View {
         coreContent
             .scaledMinFrame(width: 1080, height: 740)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color.luminaBase)
+            .luminaWindowBackdrop()
             .tint(themeManager.current.color)
             .onAppear { autoSelectFirstMonitor() }
     }
@@ -100,11 +101,63 @@ struct WallpaperManagerView: View {
     private var coreContent: some View {
         VStack(spacing: 0) {
             headerBar
+            if playbackHealth.isStruggling, !playbackHealth.bannerDismissed {
+                playbackHealthBanner
+            }
             LuminaDivider()
             mainContent
             LuminaDivider()
             AudioFooterBar()
         }
+    }
+
+    private var playbackHealthBanner: some View {
+        HStack(alignment: .center, spacing: DisplayScale.points(12)) {
+            Image(systemName: "gauge.with.dots.needle.67percent")
+                .font(.system(size: DisplayScale.points(16), weight: .semibold))
+                .foregroundStyle(.orange)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Wallpaper is straining this Mac")
+                    .font(.system(size: DisplayScale.points(13), weight: .semibold))
+                Text(playbackHealthBannerDetail)
+                    .font(.system(size: DisplayScale.points(11)))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: DisplayScale.points(8))
+
+            Button("Settings") { showSettings = true }
+                .buttonStyle(LuminaSecondaryButtonStyle())
+
+            Button {
+                playbackHealth.dismissBanner()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: DisplayScale.points(11), weight: .bold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: uiScale.touchTarget(), height: uiScale.touchTarget())
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(LuminaPressableButtonStyle())
+            .help("Dismiss for now")
+            .accessibilityLabel("Dismiss performance warning")
+        }
+        .padding(.horizontal, LuminaLayout.contentPadding)
+        .padding(.vertical, DisplayScale.points(10))
+        .background(Color.orange.opacity(0.12))
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(Color.orange.opacity(0.35)).frame(height: 1)
+        }
+        .transition(.move(edge: .top).combined(with: .opacity))
+        .animation(.easeInOut(duration: 0.2), value: playbackHealth.isStruggling)
+    }
+
+    private var playbackHealthBannerDetail: String {
+        let tip = "Try Compress in Adjust → Performance, or Settings → Battery → Max Battery."
+        if playbackHealth.reason.isEmpty { return tip }
+        return "\(playbackHealth.reason). \(tip)"
     }
 
     // MARK: - Header Bar
@@ -130,7 +183,7 @@ struct WallpaperManagerView: View {
         }
         .padding(.horizontal, LuminaLayout.contentPadding)
         .padding(.vertical, DisplayScale.points(12))
-        .background(.bar)
+        .luminaGlassChrome()
         .sheet(isPresented: $showSettings) {
             SettingsView(store: store, onClose: { showSettings = false })
         }
@@ -140,15 +193,25 @@ struct WallpaperManagerView: View {
 
     private var mainContent: some View {
         HStack(spacing: 0) {
-            librarySidebar
-                .frame(width: showLibraryColumn
-                       ? LuminaLayout.libraryColumnWidth
-                       : LuminaLayout.libraryRailWidth)
-                .clipped()
-                .animation(
-                    .timingCurve(0.25, 0.1, 0.25, 1.0, duration: Self.libraryToggleDuration),
-                    value: showLibraryColumn
-                )
+            // Swap views — don't clip a full-width column into the rail (that centered
+            // the library, hid the expand control, and left a thumbnail sliver).
+            Group {
+                if showLibraryColumn {
+                    libraryColumn
+                } else {
+                    libraryRail
+                }
+            }
+            .frame(
+                width: showLibraryColumn
+                    ? LuminaLayout.libraryColumnWidth
+                    : LuminaLayout.libraryRailWidth,
+                alignment: .leading
+            )
+            .animation(
+                .timingCurve(0.25, 0.1, 0.25, 1.0, duration: Self.libraryToggleDuration),
+                value: showLibraryColumn
+            )
 
             Rectangle()
                 .fill(Color.luminaBorder)
@@ -157,21 +220,6 @@ struct WallpaperManagerView: View {
             configurationColumn
         }
         .frame(maxHeight: .infinity)
-    }
-
-    private var librarySidebar: some View {
-        ZStack(alignment: .topLeading) {
-            libraryColumn
-                .frame(width: LuminaLayout.libraryColumnWidth, alignment: .topLeading)
-                .opacity(showLibraryColumn ? 1 : 0)
-                .allowsHitTesting(showLibraryColumn)
-
-            if !showLibraryColumn {
-                libraryRail
-            }
-        }
-        .frame(maxHeight: .infinity)
-        .background(Color.luminaBase)
     }
 
     /// Slim strip shown while the library is collapsed — one click brings it back.
@@ -212,6 +260,14 @@ struct WallpaperManagerView: View {
         }
         .frame(width: LuminaLayout.libraryRailWidth)
         .frame(maxHeight: .infinity)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            withAnimation(
+                .timingCurve(0.25, 0.1, 0.25, 1.0, duration: Self.libraryToggleDuration)
+            ) {
+                showLibraryColumn = true
+            }
+        }
     }
 
     // MARK: - Library Column (left)
@@ -254,11 +310,7 @@ struct WallpaperManagerView: View {
                 }
                 .padding(.horizontal, DisplayScale.points(12))
                 .padding(.vertical, DisplayScale.points(8))
-                .background(Color.luminaCard, in: RoundedRectangle(cornerRadius: DisplayScale.points(10), style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: DisplayScale.points(10), style: .continuous)
-                        .strokeBorder(Color.luminaBorder, lineWidth: 1)
-                )
+                .luminaGlassPanel(cornerRadius: 10)
 
                 // Wrap chips — never horizontal-scroll. AppKit overlay scrollers were
                 // flashing as a stray nub under the row on first layout.
@@ -278,7 +330,6 @@ struct WallpaperManagerView: View {
             .padding(.horizontal, LuminaLayout.contentPadding)
             .padding(.top, DisplayScale.points(16))
             .padding(.bottom, DisplayScale.points(12))
-            .background(Color.luminaBase)
 
             LuminaDivider()
 
@@ -328,10 +379,10 @@ struct WallpaperManagerView: View {
             }
             .padding(.horizontal, LuminaLayout.contentPadding)
             .padding(.vertical, DisplayScale.points(14))
-            .background(.bar)
+            .luminaGlassChrome()
         }
         .frame(width: LuminaLayout.libraryColumnWidth)
-        .background(Color.luminaBase)
+        .luminaWindowBackdrop()
     }
 
     // MARK: - Configuration Column (right)
@@ -390,7 +441,7 @@ struct WallpaperManagerView: View {
             }
             .padding(.horizontal, LuminaLayout.contentPadding)
             .padding(.vertical, DisplayScale.points(14))
-            .background(.bar)
+            .luminaGlassChrome()
 
             LuminaDivider()
 
@@ -565,9 +616,18 @@ private struct AudioFooterBar: View {
 
                 HStack(spacing: DisplayScale.points(14)) {
                     transportIcon(
+                        "shuffle",
+                        active: audioManager.shuffle,
+                        help: audioManager.shuffle ? "Shuffle on" : "Shuffle off"
+                    ) {
+                        audioManager.setShuffle(!audioManager.shuffle)
+                    }
+                    .disabled(audioManager.library.count < 2)
+
+                    transportIcon(
                         "repeat",
                         active: audioManager.loops,
-                        help: audioManager.loops ? "Looping on — track repeats" : "Looping off"
+                        help: audioManager.loops ? "Loop on — track repeats" : "Loop off — play through queue"
                     ) {
                         audioManager.setLoops(!audioManager.loops)
                     }
@@ -639,9 +699,13 @@ private struct AudioFooterBar: View {
 
                 // Library actions
                 Button { audioManager.chooseTrack() } label: {
-                    Label("Add Track", systemImage: "plus.circle.fill").font(.callout)
+                    Label("Add Track", systemImage: "plus.circle.fill")
+                        .font(uiScale.scaledFont(13, weight: .semibold))
+                        .labelStyle(.titleAndIcon)
+                        .frame(minHeight: uiScale.touchTarget() * 0.85)
+                        .contentShape(Rectangle())
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(LuminaPressableButtonStyle())
                 .help("Add audio tracks to your music library")
 
                 if audioManager.trackURL != nil {
@@ -670,6 +734,7 @@ private struct AudioFooterBar: View {
             }
             .padding(.horizontal, LuminaLayout.contentPadding)
             .padding(.vertical, DisplayScale.points(10))
+            .luminaGlassChrome()
         }
     }
 
@@ -818,7 +883,7 @@ private struct AudioFooterBar: View {
                 ))
             }
         }
-        .background(Color.luminaBase)
+        .luminaWindowBackdrop()
     }
 
     private func queueRow(track: AmbientAudioManager.AudioTrack, index: Int) -> some View {
@@ -895,7 +960,7 @@ private struct AudioFooterBar: View {
                 Image(systemName: "xmark.circle.fill")
                     .font(.system(size: DisplayScale.points(14)))
                     .foregroundStyle(.secondary)
-                    .frame(width: uiScale.touchTarget() * 0.7, height: uiScale.touchTarget() * 0.7)
+                    .frame(width: uiScale.touchTarget(), height: uiScale.touchTarget())
                     .contentShape(Rectangle())
             }
             .buttonStyle(LuminaPressableButtonStyle())
@@ -917,117 +982,6 @@ private struct AudioFooterBar: View {
         let s = Int(track.duration)
         return String(format: "%d:%02d", s / 60, s % 60)
     }
-
-    private func formatAudioTime(_ seconds: Double) -> String {
-        let s = Int(max(0, seconds))
-        return String(format: "%d:%02d", s / 60, s % 60)
-    }
-}
-
-// MARK: - Audio progress scrubber
-
-/// Studio footer scrubber: previews the target time while dragging, commits seek on release.
-/// Avoids binding a live Slider to `currentTime` (that fought the playback timer and snapped back).
-private struct AudioProgressScrubber: View {
-    let currentTime: Double
-    let duration: Double
-    let accent: Color
-    var onSeek: (Double) -> Void
-
-    @State private var scrubTime: Double? = nil
-    @StateObject private var uiScale = UIScaleManager.shared
-
-    private var displayTime: Double { scrubTime ?? currentTime }
-
-    private var fraction: CGFloat {
-        guard duration > 0 else { return 0 }
-        return CGFloat(min(1, max(0, displayTime / duration)))
-    }
-
-    var body: some View {
-        HStack(spacing: DisplayScale.points(8)) {
-            Text(formatTime(displayTime))
-                .font(uiScale.scaledFont(11).monospacedDigit())
-                .foregroundStyle(scrubTime == nil ? .secondary : accent)
-                .frame(width: DisplayScale.points(38), alignment: .trailing)
-                .accessibilityHidden(true)
-
-            GeometryReader { geo in
-                let trackH = DisplayScale.points(6)
-                let thumb = DisplayScale.points(14)
-                let x = max(0, min(geo.size.width, geo.size.width * fraction))
-
-                ZStack(alignment: .leading) {
-                    Capsule()
-                        .fill(Color.primary.opacity(0.12))
-                        .frame(height: trackH)
-
-                    Capsule()
-                        .fill(accent)
-                        .frame(width: max(trackH, x), height: trackH)
-
-                    Circle()
-                        .fill(Color.luminaCard)
-                        .overlay(
-                            Circle().strokeBorder(accent.opacity(0.9), lineWidth: 1.5)
-                        )
-                        .shadow(color: .black.opacity(0.16), radius: 1.5, y: 0.5)
-                        .frame(width: thumb, height: thumb)
-                        .scaleEffect(scrubTime == nil ? 1 : 1.12)
-                        .offset(x: max(0, x - thumb / 2))
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .contentShape(Rectangle())
-                .gesture(
-                    DragGesture(minimumDistance: 0)
-                        .onChanged { value in
-                            guard duration > 0 else { return }
-                            scrubTime = time(at: value.location.x, width: geo.size.width)
-                        }
-                        .onEnded { value in
-                            guard duration > 0 else {
-                                scrubTime = nil
-                                return
-                            }
-                            let t = time(at: value.location.x, width: geo.size.width)
-                            onSeek(t)
-                            scrubTime = nil
-                        }
-                )
-                .help(scrubTime.map { "Release to seek to \(formatTime($0))" }
-                      ?? "Click or drag to scrub — time previews as you move")
-            }
-            .frame(height: DisplayScale.points(28))
-
-            Text(formatTime(duration))
-                .font(uiScale.scaledFont(11).monospacedDigit())
-                .foregroundStyle(.secondary)
-                .frame(width: DisplayScale.points(38), alignment: .leading)
-                .accessibilityHidden(true)
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Track position")
-        .accessibilityValue(formatTime(displayTime))
-        .accessibilityAdjustableAction { direction in
-            guard duration > 0 else { return }
-            let step = max(1, duration * 0.05)
-            switch direction {
-            case .increment: onSeek(min(duration, currentTime + step))
-            case .decrement: onSeek(max(0, currentTime - step))
-            @unknown default: break
-            }
-        }
-    }
-
-    private func time(at x: CGFloat, width: CGFloat) -> Double {
-        let f = Double(min(1, max(0, x / max(width, 1))))
-        return f * duration
-    }
-
-    private func formatTime(_ seconds: Double) -> String {
-        let s = Int(max(0, seconds).rounded())
-        return String(format: "%d:%02d", s / 60, s % 60)
-    }
 }
 
 // MARK: - Wallpaper Grid Item
@@ -1042,7 +996,6 @@ struct WallpaperGridItem: View {
 
     @State private var thumbnail: NSImage?
     @State private var isLoading = true
-    @State private var loadFailed = false
     @State private var isHovered = false
     @StateObject private var uiScale = UIScaleManager.shared
 
@@ -1074,7 +1027,7 @@ struct WallpaperGridItem: View {
                                     .frame(width: uiScale.touchTarget(), height: uiScale.touchTarget())
                                     .contentShape(Rectangle())
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(LuminaPressableButtonStyle())
                             .help("Set as Wallpaper")
                             .accessibilityLabel("Set as Wallpaper")
 
@@ -1085,7 +1038,7 @@ struct WallpaperGridItem: View {
                                     .frame(width: uiScale.touchTarget(), height: uiScale.touchTarget())
                                     .contentShape(Rectangle())
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(LuminaPressableButtonStyle())
                             .help(isFavorite ? "Remove from Favorites" : "Add to Favorites")
                             .accessibilityLabel(isFavorite ? "Remove from Favorites" : "Add to Favorites")
                         }
@@ -1204,11 +1157,12 @@ struct WallpaperGridItem: View {
     }
 
     private func loadThumbnail() async {
-        isLoading = true; loadFailed = false
+        isLoading = true
         nonisolated(unsafe) let mt = recent.mediaType
         let img = await ThumbnailService.shared.smallThumbnail(for: recent.url, mediaType: mt)
         await MainActor.run {
-            thumbnail = img; isLoading = false; loadFailed = (img == nil)
+            thumbnail = img
+            isLoading = false
         }
     }
 }
