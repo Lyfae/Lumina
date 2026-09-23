@@ -33,11 +33,13 @@ final class NowPlayingWidgetController: NSObject, ObservableObject {
         }
         panel.orderFrontRegardless()
         isVisible = true
+        AmbientAudioManager.shared.setVisualizerActive(true)
     }
 
     func hide() {
         panel?.orderOut(nil)
         isVisible = false
+        AmbientAudioManager.shared.setVisualizerActive(false)
     }
 
     func toggle() {
@@ -302,7 +304,6 @@ struct NowPlayingWidgetView: View {
                 .foregroundStyle(scrubPreview == nil ? Color.secondary : accent)
 
             WaveformScrubber(
-                levels: audio.meterLevels,
                 currentTime: audio.currentTime,
                 duration: max(audio.duration, 0),
                 accent: accent,
@@ -454,7 +455,7 @@ struct NowPlayingWidgetView: View {
 /// Live meter bars that double as the track timeline: bars left of the playhead
 /// are filled, the rest are dimmed. Hovering reveals a draggable thumb.
 private struct WaveformScrubber: View {
-    let levels: [CGFloat]
+    @ObservedObject private var meter = AudioMeterModel.shared
     let currentTime: Double
     let duration: Double
     let accent: Color
@@ -467,6 +468,7 @@ private struct WaveformScrubber: View {
     private var barCount: Int { 32 }
     private var displayTime: Double { preview ?? currentTime }
     private var showThumb: Bool { isHovered || preview != nil }
+    private var levels: [CGFloat] { meter.levels }
 
     private var fraction: CGFloat {
         guard duration > 0, duration.isFinite, displayTime.isFinite else { return 0 }

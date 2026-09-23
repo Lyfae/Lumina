@@ -583,7 +583,7 @@ struct WallpaperManagerView: View {
 /// manager window (library grid, live preview, crop editor, …).
 private struct AudioFooterBar: View {
     @StateObject private var themeManager = ThemeManager.shared
-    @StateObject private var audioManager = AmbientAudioManager.shared
+    @ObservedObject private var audioManager = AmbientAudioManager.shared
     @StateObject private var uiScale = UIScaleManager.shared
     @StateObject private var musicWidget = NowPlayingWidgetController.shared
     @State private var showQueue: Bool = false

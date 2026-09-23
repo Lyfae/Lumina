@@ -21,11 +21,23 @@ public final class FullscreenDetector {
     // nonisolated(unsafe): only ever touched on the main actor while alive; read once
     // from the (nonisolated) deinit, which is race-free for this access pattern.
     nonisolated(unsafe) private var timer: Timer?
+    // Workspace / distributed observer tokens — removed from the centers that added them.
+    nonisolated(unsafe) private var workspaceObservers: [NSObjectProtocol] = []
+    nonisolated(unsafe) private var distributedObservers: [NSObjectProtocol] = []
     private var isCurrentlyObscured: Bool = false
+    // Independent flags so unlock-while-asleep (etc.) does not resume scanning early.
+    private var screensAsleep = false
+    private var sessionInactive = false
+    private var screenLocked = false
+    /// After sleep/lock we force one notify so a still-fullscreen desktop re-pauses
+    /// (isCurrentlyObscured may be unchanged while policy was overwritten by displayInactive).
+    private var forceNextNotify = false
+
+    private var isScreenInactive: Bool { screensAsleep || sessionInactive || screenLocked }
 
     /// How often we do a full window list scan (seconds).
-    /// We also react to app activation, so we can keep this relatively infrequent.
-    private let scanInterval: TimeInterval = 2.5
+    /// App-activation triggers an immediate rescan, so the poll can stay infrequent.
+    private let scanInterval: TimeInterval = 4.0
 
     public init(powerManager: PowerManager) {
         self.powerManager = powerManager
@@ -36,6 +48,10 @@ public final class FullscreenDetector {
         // Timer and NotificationCenter observers strongly reference self / keep firing;
         // without cleanup a deallocated detector would leave a leaked timer behind.
         timer?.invalidate()
+        let wsnc = NSWorkspace.shared.notificationCenter
+        workspaceObservers.forEach { wsnc.removeObserver($0) }
+        let dnc = DistributedNotificationCenter.default()
+        distributedObservers.forEach { dnc.removeObserver($0) }
         NotificationCenter.default.removeObserver(self)
     }
 
@@ -56,26 +72,101 @@ public final class FullscreenDetector {
             }
         }
 
-        // React quickly when the user switches apps or goes fullscreen
-        let nc = NotificationCenter.default
-        nc.addObserver(self, selector: #selector(applicationDidActivate),
-                       name: NSWorkspace.didActivateApplicationNotification, object: nil)
+        // Workspace notifications only arrive on NSWorkspace's own center.
+        let wsnc = NSWorkspace.shared.notificationCenter
+        workspaceObservers.append(wsnc.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.applicationDidActivate() }
+        })
+        workspaceObservers.append(wsnc.addObserver(
+            forName: NSWorkspace.screensDidSleepNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.screensAsleep = true
+                self?.forceNextNotify = true
+            }
+        })
+        workspaceObservers.append(wsnc.addObserver(
+            forName: NSWorkspace.screensDidWakeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.screensAsleep = false
+                self?.performFullscreenCheck()
+            }
+        })
+        workspaceObservers.append(wsnc.addObserver(
+            forName: NSWorkspace.sessionDidResignActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.sessionInactive = true
+                self?.forceNextNotify = true
+            }
+        })
+        workspaceObservers.append(wsnc.addObserver(
+            forName: NSWorkspace.sessionDidBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.sessionInactive = false
+                self?.performFullscreenCheck()
+            }
+        })
 
-        // When displays change or we wake up
-        nc.addObserver(self, selector: #selector(screensDidChange),
+        let dnc = DistributedNotificationCenter.default()
+        distributedObservers.append(dnc.addObserver(
+            forName: NSNotification.Name("com.apple.screenIsLocked"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.screenLocked = true
+                self?.forceNextNotify = true
+            }
+        })
+        distributedObservers.append(dnc.addObserver(
+            forName: NSNotification.Name("com.apple.screenIsUnlocked"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.screenLocked = false
+                self?.performFullscreenCheck()
+            }
+        })
+
+        // When displays change (default center — NSApplication notification).
+        NotificationCenter.default.addObserver(self, selector: #selector(screensDidChange),
                        name: NSApplication.didChangeScreenParametersNotification, object: nil)
     }
 
     private func stopMonitoring() {
         timer?.invalidate()
         timer = nil
+        let wsnc = NSWorkspace.shared.notificationCenter
+        workspaceObservers.forEach { wsnc.removeObserver($0) }
+        workspaceObservers.removeAll()
+        let dnc = DistributedNotificationCenter.default()
+        distributedObservers.forEach { dnc.removeObserver($0) }
+        distributedObservers.removeAll()
         NotificationCenter.default.removeObserver(self)
     }
 
-    @objc private func applicationDidActivate(_ notification: Notification) {
-        // Small delay so the fullscreen transition can complete
+    private func applicationDidActivate() {
+        // Immediate rescan so the slower periodic poll does not delay fullscreen detection.
+        // A short follow-up catches transitions that complete after activation.
+        performFullscreenCheck()
         Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .milliseconds(600))
+            try? await Task.sleep(for: .milliseconds(350))
             self?.performFullscreenCheck()
         }
     }
@@ -87,12 +178,29 @@ public final class FullscreenDetector {
     // MARK: - Core Detection Logic
 
     private func performFullscreenCheck() {
-        let obscured = isAnyScreenObscuredByFullscreenWindow()
+        guard !shouldSkipScan else { return }
 
-        guard obscured != isCurrentlyObscured else { return }
+        let obscured = isAnyScreenObscuredByFullscreenWindow()
+        let force = forceNextNotify
+        forceNextNotify = false
+
+        guard force || obscured != isCurrentlyObscured else { return }
         isCurrentlyObscured = obscured
 
         powerManager?.updateFullscreenObscured(obscured)
+    }
+
+    /// Skip expensive CGWindowList work while asleep/locked, or when wallpapers are already
+    /// paused for a non-fullscreen reason (manual / LPM / thermal / displayInactive).
+    /// Still scan when paused for `.fullscreenApp` so we notice when fullscreen ends.
+    private var shouldSkipScan: Bool {
+        if isScreenInactive { return true }
+        if powerManager?.isDisplayInactive == true { return true }
+        guard let policy = powerManager?.currentPolicy else { return false }
+        if case .paused(let reason) = policy, reason != .fullscreenApp {
+            return true
+        }
+        return false
     }
 
     private func isAnyScreenObscuredByFullscreenWindow() -> Bool {

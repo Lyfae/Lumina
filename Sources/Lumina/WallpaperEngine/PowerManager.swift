@@ -24,6 +24,8 @@ public enum WallpaperPlaybackPolicy: Equatable, Sendable {
         case userPaused
         case batteryCritical
         case manual
+        /// Displays asleep, session inactive (fast user switch), or screen locked.
+        case displayInactive
     }
 }
 
@@ -108,6 +110,15 @@ public final class PowerManager {
     /// system events (thermal, low power, focus changes) can't silently resume playback.
     private var isManuallyPaused = false
 
+    // Independent flags so unlocking while displays are still asleep (or vice versa)
+    // does not resume wallpaper playback early.
+    private var screensAsleep = false
+    private var sessionInactive = false
+    private var screenLocked = false
+
+    /// True while displays are asleep, the login session is inactive, or the screen is locked.
+    public var isDisplayInactive: Bool { screensAsleep || sessionInactive || screenLocked }
+
     /// Temporarily force a pause (e.g. from menu bar or hotkey). User can resume.
     public func pauseManually() {
         isManuallyPaused = true
@@ -125,13 +136,41 @@ public final class PowerManager {
         updatePolicy()
     }
 
+    public func setScreensAsleep(_ asleep: Bool) {
+        screensAsleep = asleep
+        applyDisplayInactivePolicy()
+    }
+
+    public func setSessionInactive(_ inactive: Bool) {
+        sessionInactive = inactive
+        applyDisplayInactivePolicy()
+    }
+
+    public func setScreenLocked(_ locked: Bool) {
+        screenLocked = locked
+        applyDisplayInactivePolicy()
+    }
+
     /// Called by FullscreenDetector when the desktop is (or is no longer) obscured by a fullscreen window.
     public func updateFullscreenObscured(_ isObscured: Bool) {
-        guard respectFullscreenApps, !isManuallyPaused else { return }
+        guard respectFullscreenApps, !isManuallyPaused, !isDisplayInactive else { return }
         if isObscured {
             setPolicy(.paused(reason: .fullscreenApp))
         } else {
             updatePolicy() // re-evaluate other conditions
+        }
+    }
+
+    private func applyDisplayInactivePolicy() {
+        if isManuallyPaused {
+            setPolicy(.paused(reason: .manual))
+            return
+        }
+        if isDisplayInactive {
+            setPolicy(.paused(reason: .displayInactive))
+        } else {
+            // Clearing sleep/lock must not resume a low-power / thermal / fullscreen pause.
+            updatePolicy()
         }
     }
 
@@ -167,6 +206,12 @@ public final class PowerManager {
         // A manual pause is sticky: only resumeManually() may clear it.
         if isManuallyPaused {
             setPolicy(.paused(reason: .manual))
+            return
+        }
+
+        // Sleep / lock / session-switch: sticky until every inactive flag clears.
+        if isDisplayInactive {
+            setPolicy(.paused(reason: .displayInactive))
             return
         }
 

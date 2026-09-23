@@ -125,6 +125,23 @@ final class LuminaApp: NSObject, NSApplicationDelegate {
             name: NSWorkspace.didActivateApplicationNotification, object: nil)
         wsnc.addObserver(self, selector: #selector(activeContextChanged),
             name: NSWorkspace.activeSpaceDidChangeNotification, object: nil)
+        // Pause wallpaper visuals while displays sleep or the login session is inactive.
+        // Ambient audio is intentionally left alone (users often lock with music playing).
+        wsnc.addObserver(self, selector: #selector(screensDidSleep),
+            name: NSWorkspace.screensDidSleepNotification, object: nil)
+        wsnc.addObserver(self, selector: #selector(screensDidWake),
+            name: NSWorkspace.screensDidWakeNotification, object: nil)
+        wsnc.addObserver(self, selector: #selector(sessionDidResignActive),
+            name: NSWorkspace.sessionDidResignActiveNotification, object: nil)
+        wsnc.addObserver(self, selector: #selector(sessionDidBecomeActive),
+            name: NSWorkspace.sessionDidBecomeActiveNotification, object: nil)
+
+        // Lock-screen notifications are posted on the distributed center (not NSWorkspace).
+        let dnc = DistributedNotificationCenter.default()
+        dnc.addObserver(self, selector: #selector(screenIsLocked),
+            name: NSNotification.Name("com.apple.screenIsLocked"), object: nil)
+        dnc.addObserver(self, selector: #selector(screenIsUnlocked),
+            name: NSNotification.Name("com.apple.screenIsUnlocked"), object: nil)
 
         LuminaLog.app.info("Lumina started (menu-bar accessory). Studio opens after splash; close it anytime to stay in the menu bar.")
 
@@ -171,6 +188,38 @@ final class LuminaApp: NSObject, NSApplicationDelegate {
         scheduleReconcile()
         for window in wallpaperWindows { window.showOnDesktop() }
         fullscreenDetector?.checkNow()
+    }
+
+    @objc private func screensDidSleep() {
+        powerManager?.setScreensAsleep(true)
+    }
+
+    @objc private func screensDidWake() {
+        powerManager?.setScreensAsleep(false)
+        scheduleReconcile()
+        for window in wallpaperWindows { window.showOnDesktop() }
+        fullscreenDetector?.checkNow()
+        activeContextChanged()
+    }
+
+    @objc private func sessionDidResignActive() {
+        powerManager?.setSessionInactive(true)
+    }
+
+    @objc private func sessionDidBecomeActive() {
+        powerManager?.setSessionInactive(false)
+        fullscreenDetector?.checkNow()
+        activeContextChanged()
+    }
+
+    @objc private func screenIsLocked() {
+        powerManager?.setScreenLocked(true)
+    }
+
+    @objc private func screenIsUnlocked() {
+        powerManager?.setScreenLocked(false)
+        fullscreenDetector?.checkNow()
+        activeContextChanged()
     }
 
     @objc private func screensChanged() {
@@ -541,6 +590,9 @@ final class LuminaApp: NSObject, NSApplicationDelegate {
     private var occlusionRescanWorkItem: DispatchWorkItem?
 
     @objc private func activeContextChanged() {
+        // No point re-querying occlusion while displays are asleep / locked — wallpapers are
+        // already paused for `.displayInactive`, and CG/AppKit state can be stale until wake.
+        guard powerManager?.isDisplayInactive != true else { return }
         // App/Space changed: the app has been running so occlusion is reliable here — do a full
         // re-query (may pause a now-covered display or resume a newly-revealed one).
         occlusionRescanWorkItem?.cancel()

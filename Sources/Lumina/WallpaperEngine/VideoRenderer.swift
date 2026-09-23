@@ -80,6 +80,9 @@ public final class AVVideoRenderer: @unchecked Sendable {
     /// The current GIF keyframe animation, retained so it can be restarted in lockstep with
     /// other displays (see `restartInSync`). nil for non-GIF media.
     private var gifAnimation: CAKeyframeAnimation?
+    /// Bumped whenever image/GIF content is cleared or a new decode starts, so in-flight
+    /// background decodes discard their result if the renderer has moved on.
+    private var imageLoadGeneration: UInt64 = 0
 
     // MARK: - Slideshow support
     private var slideshow: SlideshowEngine?
@@ -528,6 +531,7 @@ public final class AVVideoRenderer: @unchecked Sendable {
         playerLayer?.player = nil
         player = nil
 
+        imageLoadGeneration &+= 1
         imageLayer?.removeAnimation(forKey: "gif")
         gifAnimation = nil
         imageLayer?.contents = nil
@@ -838,7 +842,9 @@ public final class AVVideoRenderer: @unchecked Sendable {
         slideshow = nil
 
         // Tear down any image/GIF content (keep the layer object for reuse).
+        imageLoadGeneration &+= 1
         imageLayer?.removeAnimation(forKey: "gif")
+        gifAnimation = nil
         imageLayer?.contents = nil
         imageLayer?.isHidden = true
         // Make sure CALayer timing is reset in case a GIF was paused via speed=0.
@@ -1169,20 +1175,43 @@ public final class AVVideoRenderer: @unchecked Sendable {
         if kind == .animatedImage {
             applyGIFAnimation(url: url, to: layer, autoPlay: autoPlay)
         } else {
-            layer.removeAnimation(forKey: "gif")
-            let maxPixel = targetMaxPixelSize()
-            if let source = CGImageSourceCreateWithURL(url as CFURL, nil),
-               let cg = Self.downsampledImage(source: source, index: 0, maxPixelSize: maxPixel) {
-                layer.contents = cg
-            } else if let image = NSImage(contentsOf: url),
-                      let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) {
-                layer.contents = cg   // fallback for anything ImageIO can't open
-            } else {
-                LuminaLog.wallpaper.error("Failed to decode image at \(url.path)")
-            }
+            applyStaticImage(url: url, to: layer)
         }
 
         applyCurrentCrop()
+    }
+
+    /// Decodes a still image off the main thread (same pattern as slideshow advances) and
+    /// installs it only if this load is still current.
+    private func applyStaticImage(url: URL, to layer: CALayer) {
+        layer.removeAnimation(forKey: "gif")
+        gifAnimation = nil
+        imageLoadGeneration &+= 1
+        let generation = imageLoadGeneration
+        let maxPixel = targetMaxPixelSize()
+        let path = url.path
+
+        Task.detached(priority: .userInitiated) {
+            let cgImage: CGImage? =
+                CGImageSourceCreateWithURL(url as CFURL, nil)
+                    .flatMap { AVVideoRenderer.downsampledImage(source: $0, index: 0, maxPixelSize: maxPixel) }
+                ?? NSImage(contentsOf: url)?.cgImage(forProposedRect: nil, context: nil, hints: nil)
+
+            await MainActor.run { [weak self] in
+                guard let self,
+                      self.imageLoadGeneration == generation,
+                      self.currentURL == url,
+                      self.mediaKind == .image,
+                      let layer = self.imageLayer
+                else { return }
+
+                if let cgImage {
+                    layer.contents = cgImage
+                } else {
+                    LuminaLog.wallpaper.error("Failed to decode image at \(path)")
+                }
+            }
+        }
     }
 
     /// The largest pixel dimension worth decoding for this display — the host layer's longest
@@ -1209,55 +1238,78 @@ public final class AVVideoRenderer: @unchecked Sendable {
 
     /// Decodes a GIF with ImageIO and drives it with a discrete keyframe animation on the
     /// layer's `contents` — native, hardware-composited, and very low power.
+    /// Frame 0 is installed synchronously so the layer never flashes blank; remaining frames
+    /// decode off-main and the keyframe animation is applied on the main actor when ready.
     private func applyGIFAnimation(url: URL, to layer: CALayer, autoPlay: Bool) {
         layer.removeAnimation(forKey: "gif")
+        gifAnimation = nil
+        imageLoadGeneration &+= 1
+        let generation = imageLoadGeneration
+
+        let maxPixel = targetMaxPixelSize()
+        let playbackSpeed = userPlaybackSpeed
+
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return }
         let count = CGImageSourceGetCount(source)
 
-        let maxPixel = targetMaxPixelSize()
+        // Cheap first-frame paint — avoids a blank flash while the rest decode.
+        if let cg = Self.downsampledImage(source: source, index: 0, maxPixelSize: maxPixel)
+                 ?? CGImageSourceCreateImageAtIndex(source, 0, nil) {
+            layer.contents = cg
+        }
+        guard count > 1 else { return }
 
-        guard count > 1 else {
-            if let cg = Self.downsampledImage(source: source, index: 0, maxPixelSize: maxPixel)
-                     ?? CGImageSourceCreateImageAtIndex(source, 0, nil) {
-                layer.contents = cg
+        Task.detached(priority: .userInitiated) {
+            guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return }
+            let count = CGImageSourceGetCount(source)
+
+            // Decode every frame downsampled to display resolution — a large/high-res GIF would
+            // otherwise hold every full-size frame in memory simultaneously.
+            var frames: [CGImage] = []
+            var delays: [Double] = []
+            var total = 0.0
+            for i in 0..<count {
+                guard let cg = AVVideoRenderer.downsampledImage(source: source, index: i, maxPixelSize: maxPixel)
+                            ?? CGImageSourceCreateImageAtIndex(source, i, nil) else { continue }
+                frames.append(cg)
+                let delay = AVVideoRenderer.gifFrameDelay(source: source, index: i)
+                delays.append(delay)
+                total += delay
             }
-            return
+            guard !frames.isEmpty, total > 0 else { return }
+
+            var keyTimes: [NSNumber] = []
+            var acc = 0.0
+            for delay in delays {
+                keyTimes.append(NSNumber(value: acc / total))
+                acc += delay
+            }
+            let finalKeyTimes = keyTimes
+            let finalTotal = total
+            let finalFrames = frames
+
+            await MainActor.run { [weak self] in
+                guard let self,
+                      self.imageLoadGeneration == generation,
+                      self.currentURL == url,
+                      self.mediaKind == .animatedImage,
+                      let layer = self.imageLayer
+                else { return }
+
+                let animation = CAKeyframeAnimation(keyPath: "contents")
+                animation.values = finalFrames
+                animation.keyTimes = finalKeyTimes
+                animation.duration = finalTotal / max(0.05, playbackSpeed)   // honor playback speed
+                animation.repeatCount = .infinity
+                animation.calculationMode = .discrete
+                animation.isRemovedOnCompletion = false
+                layer.contents = finalFrames.last
+                layer.add(animation, forKey: "gif")
+                self.gifAnimation = animation   // retained so the displays can be restarted in sync
+
+                if !autoPlay { self.pauseLayerAnimation(layer) }
+            }
         }
-
-        // Decode every frame downsampled to display resolution — a large/high-res GIF would
-        // otherwise hold every full-size frame in memory simultaneously.
-        var frames: [CGImage] = []
-        var delays: [Double] = []
-        var total = 0.0
-        for i in 0..<count {
-            guard let cg = Self.downsampledImage(source: source, index: i, maxPixelSize: maxPixel)
-                        ?? CGImageSourceCreateImageAtIndex(source, i, nil) else { continue }
-            frames.append(cg)
-            let delay = Self.gifFrameDelay(source: source, index: i)
-            delays.append(delay)
-            total += delay
-        }
-        guard !frames.isEmpty, total > 0 else { return }
-
-        var keyTimes: [NSNumber] = []
-        var acc = 0.0
-        for delay in delays {
-            keyTimes.append(NSNumber(value: acc / total))
-            acc += delay
-        }
-
-        let animation = CAKeyframeAnimation(keyPath: "contents")
-        animation.values = frames
-        animation.keyTimes = keyTimes
-        animation.duration = total / max(0.05, userPlaybackSpeed)   // honor playback speed
-        animation.repeatCount = .infinity
-        animation.calculationMode = .discrete
-        animation.isRemovedOnCompletion = false
-        layer.contents = frames.last
-        layer.add(animation, forKey: "gif")
-        gifAnimation = animation   // retained so the displays can be restarted in sync
-
-        if !autoPlay { pauseLayerAnimation(layer) }
     }
 
     private static func gifFrameDelay(source: CGImageSource, index: Int) -> Double {

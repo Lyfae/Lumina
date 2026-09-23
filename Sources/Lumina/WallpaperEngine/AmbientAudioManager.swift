@@ -20,8 +20,8 @@ final class AmbientAudioManager: NSObject, ObservableObject {
     @Published var shuffle: Bool = false
     @Published var currentTime: Double = 0
     @Published var duration: Double = 0
-    /// Normalized bar heights (0…1) for the widget wave visualizer — driven by player meters.
-    @Published private(set) var meterLevels: [CGFloat] = Array(repeating: 0.12, count: 28)
+    /// Waveform bar heights — separate object so meter ticks don't redraw Studio observers.
+    let meter = AudioMeterModel.shared
     /// When on, a floating now-playing widget appears while the Studio window is minimized.
     @Published var showWidgetWhenMinimized: Bool = true {
         didSet { UserDefaults.standard.set(showWidgetWhenMinimized, forKey: widgetKey) }
@@ -38,6 +38,8 @@ final class AmbientAudioManager: NSObject, ObservableObject {
     private var metadataTask: Task<Void, Never>?
     private var libraryMetadataTask: Task<Void, Never>?
     private let meterBarCount = 28
+    /// True while the floating music widget is on screen — gates the 24 Hz meter timer.
+    private var isVisualizerActive = false
 
     struct AudioTrack: Identifiable, Equatable {
         let id: String   // path as stable identity
@@ -196,9 +198,18 @@ final class AmbientAudioManager: NSObject, ObservableObject {
             guard let self else { return }
             MainActor.assumeIsolated {
                 guard let p = self.player else { return }
-                self.currentTime = p.currentTime
-                self.duration = p.duration
-                self.isPlaying = p.isPlaying
+                let t = p.currentTime
+                if abs(self.currentTime - t) > 0.05 {
+                    self.currentTime = t
+                }
+                let d = p.duration
+                if self.duration != d {
+                    self.duration = d
+                }
+                let playing = p.isPlaying
+                if self.isPlaying != playing {
+                    self.isPlaying = playing
+                }
             }
         }
         // `.common` keeps ticks flowing while the user scrubs / drags the widget.
@@ -209,6 +220,29 @@ final class AmbientAudioManager: NSObject, ObservableObject {
     private func stopPlaybackTimer() {
         playbackTimer?.invalidate()
         playbackTimer = nil
+    }
+
+    /// Called by the floating widget when it appears / disappears.
+    /// Metering only runs while the widget is visible and audio is playing.
+    func setVisualizerActive(_ active: Bool) {
+        guard isVisualizerActive != active else { return }
+        isVisualizerActive = active
+        if active {
+            resumeMeteringIfNeeded()
+        } else {
+            stopMetering(decay: meterTimer != nil)
+        }
+    }
+
+    private func resumeMeteringIfNeeded() {
+        guard isVisualizerActive, player?.isPlaying == true else { return }
+        player?.isMeteringEnabled = true
+        startMeterTimer()
+    }
+
+    private func stopMetering(decay: Bool) {
+        stopMeterTimer(decay: decay)
+        player?.isMeteringEnabled = false
     }
 
     private func startMeterTimer() {
@@ -227,18 +261,18 @@ final class AmbientAudioManager: NSObject, ObservableObject {
         meterTimer?.invalidate()
         meterTimer = nil
         if decay {
-            meterLevels = meterLevels.map { max(0.08, $0 * 0.35) }
+            meter.mapLevels { max(0.08, $0 * 0.35) }
         }
     }
 
     /// Builds dancing bar heights from AVAudioPlayer meters + light phase motion.
     private func sampleMeters() {
         guard let player else {
-            meterLevels = Array(repeating: 0.1, count: meterBarCount)
+            meter.replace(Array(repeating: 0.1, count: meterBarCount))
             return
         }
         guard player.isPlaying else {
-            meterLevels = meterLevels.map { max(0.08, $0 * 0.82) }
+            meter.mapLevels { max(0.08, $0 * 0.82) }
             return
         }
 
@@ -249,13 +283,13 @@ final class AmbientAudioManager: NSObject, ObservableObject {
         let energy = max(avg, peak * 0.85)
         let t = CACurrentMediaTime()
 
-        meterLevels = (0..<meterBarCount).map { index in
+        meter.replace((0..<meterBarCount).map { index in
             let wave = sin(t * 9.5 + Double(index) * 0.55)
             let pulse = sin(t * 4.2 + Double(index) * 0.2) * 0.5 + 0.5
             let shape = 0.55 + 0.45 * wave
             let height = energy * (0.35 + 0.65 * shape) + energy * pulse * 0.25
             return CGFloat(min(1, max(0.08, height)))
-        }
+        })
     }
 
     /// Maps AVAudioPlayer dB (−160…0) into a usable 0…1 display range.
@@ -348,7 +382,7 @@ final class AmbientAudioManager: NSObject, ObservableObject {
             // end) while the audio buffer keeps draining.
             p.numberOfLoops = 0
             p.volume = Float(volume)
-            p.isMeteringEnabled = true
+            p.isMeteringEnabled = false
             p.delegate = self   // drives loop-restart / auto-advance when the track ends
             p.prepareToPlay()
             player = p
@@ -361,7 +395,7 @@ final class AmbientAudioManager: NSObject, ObservableObject {
             trackArtwork = nil
             currentTime = 0
             duration = p.duration
-            meterLevels = Array(repeating: 0.12, count: meterBarCount)
+            meter.replace(Array(repeating: 0.12, count: meterBarCount))
             addToLibrary(url: url)
             scheduleMetadataLoad(for: url)
             return true
@@ -387,18 +421,17 @@ final class AmbientAudioManager: NSObject, ObservableObject {
     // MARK: - Playback controls
 
     func play() {
-        player?.isMeteringEnabled = true
         player?.play()
         isPlaying = player?.isPlaying ?? false
         startPlaybackTimer()
-        startMeterTimer()
+        resumeMeteringIfNeeded()
     }
 
     func pause() {
         player?.pause()
         isPlaying = false
         stopPlaybackTimer()
-        stopMeterTimer(decay: true)
+        stopMetering(decay: true)
     }
 
     func toggle() {
@@ -439,7 +472,7 @@ final class AmbientAudioManager: NSObject, ObservableObject {
         trackArtwork = nil
         currentTime = 0
         duration = 0
-        meterLevels = Array(repeating: 0.1, count: meterBarCount)
+        meter.replace(Array(repeating: 0.1, count: meterBarCount))
         UserDefaults.standard.removeObject(forKey: trackURLKey)
     }
 
@@ -555,14 +588,14 @@ final class AmbientAudioManager: NSObject, ObservableObject {
             player?.play()
             isPlaying = player?.isPlaying ?? false
             startPlaybackTimer()
-            startMeterTimer()
+            resumeMeteringIfNeeded()
             return
         }
 
         guard !library.isEmpty else {
             isPlaying = false
             stopPlaybackTimer()
-            stopMeterTimer(decay: true)
+            stopMetering(decay: true)
             return
         }
 
@@ -572,7 +605,7 @@ final class AmbientAudioManager: NSObject, ObservableObject {
                 player?.play()
                 isPlaying = player?.isPlaying ?? false
                 startPlaybackTimer()
-                startMeterTimer()
+                resumeMeteringIfNeeded()
                 return
             }
             pushShuffleHistory()
@@ -588,7 +621,7 @@ final class AmbientAudioManager: NSObject, ObservableObject {
               let idx = library.firstIndex(where: { $0.url == current }) else {
             isPlaying = false
             stopPlaybackTimer()
-            stopMeterTimer(decay: true)
+            stopMetering(decay: true)
             return
         }
 
@@ -600,7 +633,7 @@ final class AmbientAudioManager: NSObject, ObservableObject {
             isPlaying = false
             currentTime = duration
             stopPlaybackTimer()
-            stopMeterTimer(decay: true)
+            stopMetering(decay: true)
         }
     }
 
