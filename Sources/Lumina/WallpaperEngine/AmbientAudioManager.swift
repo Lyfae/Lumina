@@ -24,7 +24,7 @@ final class AmbientAudioManager: NSObject, ObservableObject {
     let meter = AudioMeterModel.shared
     /// When on, a floating now-playing widget appears while the Studio window is minimized.
     @Published var showWidgetWhenMinimized: Bool = true {
-        didSet { UserDefaults.standard.set(showWidgetWhenMinimized, forKey: widgetKey) }
+        didSet { writeWidgetPreference() }
     }
     /// Persistent library of audio tracks the user has added
     @Published private(set) var library: [AudioTrack] = []
@@ -40,6 +40,9 @@ final class AmbientAudioManager: NSObject, ObservableObject {
     private let meterBarCount = 28
     /// True while the floating music widget is on screen — gates the 24 Hz meter timer.
     private var isVisualizerActive = false
+    private weak var preferences: PreferencesStore?
+    /// Tracks whether we paused ourselves because of a screen lock (so unlock can resume).
+    private var pausedForScreenLock = false
 
     struct AudioTrack: Identifiable, Equatable {
         let id: String   // path as stable identity
@@ -74,32 +77,85 @@ final class AmbientAudioManager: NSObject, ObservableObject {
     }
 
     private var player: AVAudioPlayer?
-    private let trackURLKey      = "Lumina.AmbientAudio.TrackPath"
-    private let volumeKey        = "Lumina.AmbientAudio.Volume"
-    private let loopsKey         = "Lumina.AmbientAudio.Loops"
-    private let shuffleKey       = "Lumina.AmbientAudio.Shuffle"
+    /// Library path list and duration cache stay on UserDefaults (data/caches, not preferences).
     private let libraryKey       = "Lumina.AmbientAudio.Library"
     private let durationCacheKey = "Lumina.AmbientAudio.Durations"
-    private let widgetKey        = "Lumina.AmbientAudio.ShowWidgetWhenMinimized"
-    private let favoritesKey     = "Lumina.AmbientAudio.Favorites"
     /// Paths visited while shuffling — powers Previous.
     private var shuffleHistory: [String] = []
 
     private override init() {
         super.init()
-        let savedVolume = UserDefaults.standard.double(forKey: volumeKey).clamped(to: 0...1)
-        volume = savedVolume == 0 ? 0.5 : savedVolume
-        loops = UserDefaults.standard.object(forKey: loopsKey) as? Bool ?? true
-        shuffle = UserDefaults.standard.object(forKey: shuffleKey) as? Bool ?? false
-        showWidgetWhenMinimized = UserDefaults.standard.object(forKey: widgetKey) as? Bool ?? true
-        favoriteIDs = Set(UserDefaults.standard.stringArray(forKey: favoritesKey) ?? [])
         loadLibrary()
-        if let path = UserDefaults.standard.string(forKey: trackURLKey) {
+    }
+
+    func attach(preferences: PreferencesStore) {
+        self.preferences = preferences
+        let audio = preferences.audio
+        volume = audio.volume.clamped(to: 0...1)
+        if volume == 0 { volume = 0.5 }
+        loops = audio.loops
+        shuffle = audio.shuffle
+        showWidgetWhenMinimized = preferences.widget.autoShow.whenStudioMinimized
+        favoriteIDs = Set(audio.favoriteTrackPaths)
+        if let path = audio.trackPath {
             let url = URL(fileURLWithPath: path)
             if FileManager.default.fileExists(atPath: url.path) {
                 _ = loadTrack(url: url)
             }
         }
+        trackPreferenceChanges()
+    }
+
+    /// Called from the lock/unlock observers. Pauses only when `keepsPlayingWhenLocked` is false.
+    func handleScreenLock(_ locked: Bool) {
+        let keepPlaying = preferences?.audio.keepsPlayingWhenLocked ?? true
+        if locked {
+            guard !keepPlaying, isPlaying else { return }
+            pause()
+            pausedForScreenLock = true
+        } else if pausedForScreenLock {
+            pausedForScreenLock = false
+            play()
+        }
+    }
+
+    private func trackPreferenceChanges() {
+        withObservationTracking {
+            _ = preferences?.audio
+            _ = preferences?.widget.autoShow.whenStudioMinimized
+        } onChange: { [weak self] in
+            Task { @MainActor in
+                guard let self, let preferences = self.preferences else { return }
+                let audio = preferences.audio
+                if abs(self.volume - audio.volume) > 0.0001 {
+                    self.volume = audio.volume.clamped(to: 0...1)
+                    self.player?.volume = Float(self.volume)
+                }
+                if self.loops != audio.loops { self.loops = audio.loops }
+                if self.shuffle != audio.shuffle { self.shuffle = audio.shuffle }
+                let widget = preferences.widget.autoShow.whenStudioMinimized
+                if self.showWidgetWhenMinimized != widget {
+                    self.showWidgetWhenMinimized = widget
+                }
+                let favs = Set(audio.favoriteTrackPaths)
+                if self.favoriteIDs != favs { self.favoriteIDs = favs }
+                self.trackPreferenceChanges()
+            }
+        }
+    }
+
+    private func mutateAudio(_ body: (inout AmbientAudioPreferences) -> Void) {
+        guard let preferences else { return }
+        var audio = preferences.audio
+        body(&audio)
+        preferences.audio = audio
+    }
+
+    private func writeWidgetPreference() {
+        guard let preferences else { return }
+        var widget = preferences.widget
+        widget.autoShow.whenStudioMinimized = showWidgetWhenMinimized
+        preferences.widget = widget
     }
 
     // MARK: - Library management
@@ -136,7 +192,7 @@ final class AmbientAudioManager: NSObject, ObservableObject {
     func artwork(for track: AudioTrack) -> NSImage? { artworkByID[track.id] }
 
     private func persistFavorites() {
-        UserDefaults.standard.set(Array(favoriteIDs), forKey: favoritesKey)
+        mutateAudio { $0.favoriteTrackPaths = Array(favoriteIDs) }
     }
 
     private func loadLibrary() {
@@ -361,13 +417,13 @@ final class AmbientAudioManager: NSObject, ObservableObject {
         }
         if let first = urls.first {
             _ = loadTrack(url: first)
-            UserDefaults.standard.set(first.path, forKey: trackURLKey)
+            mutateAudio { $0.trackPath = first.path }
         }
     }
 
     func selectTrack(_ track: AudioTrack) {
         _ = loadTrack(url: track.url)
-        UserDefaults.standard.set(track.url.path, forKey: trackURLKey)
+        mutateAudio { $0.trackPath = track.url.path }
     }
 
     @discardableResult
@@ -441,7 +497,7 @@ final class AmbientAudioManager: NSObject, ObservableObject {
     func setVolume(_ v: Double) {
         volume = v.clamped(to: 0...1)
         player?.volume = Float(volume)
-        UserDefaults.standard.set(volume, forKey: volumeKey)
+        mutateAudio { $0.volume = volume }
     }
 
     func setLoops(_ enabled: Bool) {
@@ -449,13 +505,13 @@ final class AmbientAudioManager: NSObject, ObservableObject {
         // Looping is handled in the finish callback (player always plays once), so toggling
         // this never disturbs the currently playing track — no timer jump on unloop.
         player?.numberOfLoops = 0
-        UserDefaults.standard.set(enabled, forKey: loopsKey)
+        mutateAudio { $0.loops = enabled }
     }
 
     func setShuffle(_ enabled: Bool) {
         shuffle = enabled
         if !enabled { shuffleHistory.removeAll() }
-        UserDefaults.standard.set(enabled, forKey: shuffleKey)
+        mutateAudio { $0.shuffle = enabled }
     }
 
     func clearTrack() {
@@ -473,7 +529,7 @@ final class AmbientAudioManager: NSObject, ObservableObject {
         currentTime = 0
         duration = 0
         meter.replace(Array(repeating: 0.1, count: meterBarCount))
-        UserDefaults.standard.removeObject(forKey: trackURLKey)
+        mutateAudio { $0.trackPath = nil }
     }
 
     // MARK: - Metadata (artwork / artist / album)

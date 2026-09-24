@@ -29,11 +29,7 @@ struct MonitorDetailPanel: View {
     @State private var previewUnlockTask: Task<Void, Never>? = nil
 
     /// Must match the window growth delta so the preview width stays stable while toggling.
-    private static var settingsInspectorWidth: CGFloat { DisplayScale.points(340) }
-    private static let settingsToggleDuration: TimeInterval = 0.42
-    /// Slightly longer, ease-out collapse so closing doesn't feel stepped.
-    private static let settingsCollapseDuration: TimeInterval = 0.55
-    private static let hasDiscoveredAdjustKey = "Lumina.HasDiscoveredAdjust"
+    private static var settingsInspectorWidth: CGFloat { LuminaMetrics.adjustColumnWidth }
 
     // Local state for settings (synced with store)
     @State private var selectedScaling: VideoScaling = .fill
@@ -48,11 +44,11 @@ struct MonitorDetailPanel: View {
     @State private var frameFeedbackTask: Task<Void, Never>?
     @State private var loopFadeEnabled: Bool = false
     @State private var loopFadeDuration: Double = 1.5
-    @State private var loopFadeEasing: MonitorAssignment.FadeEasing = .easeInOut
+    @State private var loopFadeEasing: FadeEasing = .easeInOut
     @State private var brightness: Double = 0.0
     @State private var slideshowItems: [String] = []
     @State private var slideshowInterval: Double = 10.0
-    @State private var slideshowTransition: MonitorAssignment.SlideshowTransition = .fade
+    @State private var slideshowTransition: SlideshowTransition = .fade
     @State private var slideshowKenBurnsEnabled: Bool = true
 
     // Compressor
@@ -72,10 +68,15 @@ struct MonitorDetailPanel: View {
     @State private var hue: Double = 0.0
     @State private var grayscale: Bool = false
     @State private var audioVolume: Double = 0.0
-    @State private var loopMode: MonitorAssignment.LoopMode = .loop
+    @State private var loopMode: LoopMode = .loop
 
     @StateObject private var uiScale = UIScaleManager.shared
     @StateObject private var themeManager = ThemeManager.shared
+    @Environment(PlaybackEngine.self) private var playbackEngine: PlaybackEngine?
+    @Environment(PreferencesStore.self) private var prefs: PreferencesStore?
+    @State private var qualityPowerFlash = false
+    @State private var previewHovered = false
+    @FocusState private var previewFocused: Bool
 
     // MARK: - Computed
 
@@ -85,10 +86,47 @@ struct MonitorDetailPanel: View {
 
     private var scalingDescription: String {
         switch selectedScaling {
-        case .fit:     return "Full video visible with letterbox/pillarbox bars."
-        case .fill:    return "Video crops to fill the screen — edges may be cut off."
-        case .stretch: return "Video stretches to cover the screen — may look distorted."
+        case .fit:     return "Shows the whole video, with bars if needed."
+        case .fill:    return "Fills the screen. Edges may be cut off."
+        case .stretch: return "Stretches to fill the screen. May look squashed."
         }
+    }
+
+    private var displayKey: DisplayKey { DisplayKey(monitor.id) }
+
+    private func formatSpeed(_ v: Double) -> String {
+        let s = String(format: "%g", v)
+        return "\(s)×"
+    }
+
+    private func formatBrightness(_ v: Double) -> String {
+        let pct = Int((v * 200).rounded())
+        if pct == 0 { return "0%" }
+        let sign = pct > 0 ? "+" : "−"
+        return "\(sign)\(abs(pct))%"
+    }
+
+    private func formatSaturation(_ v: Double) -> String {
+        "\(Int((v * 100).rounded()))%"
+    }
+
+    private func formatFade(_ v: Double) -> String {
+        let s = String(format: "%g", v)
+        return "\(s) s"
+    }
+
+    private func aspectLockLabel() -> String {
+        let components = monitor.resolution.lowercased().split(separator: "x")
+        let w = Int(components.first.flatMap { Double($0) } ?? 16) ?? 16
+        let h = Int(components.dropFirst().first.flatMap { Double($0) } ?? 10) ?? 10
+        func gcd(_ a: Int, _ b: Int) -> Int { b == 0 ? abs(a) : gcd(b, a % b) }
+        let g = max(1, gcd(w, h))
+        let rw = max(1, w / g)
+        let rh = max(1, h / g)
+        if rw > 32 || rh > 32 {
+            return String(format: "Locked to %.2g:1", Double(monitor.aspectRatio))
+        }
+        return "Locked to \(rw):\(rh)"
     }
 
     /// Monitor aspect expressed in normalized crop coordinates (width ÷ height in 0–1 space).
@@ -128,9 +166,9 @@ struct MonitorDetailPanel: View {
         store.setVideoFrameTime(for: monitor, time: videoPreviewTime, useStatic: useStatic)
         let label = formattedVideoTime(videoPreviewTime * max(videoDuration, 0))
         if useStatic {
-            showFrameFeedback("Desktop is now a still at \(label). Your crop is applied.")
+            showFrameFeedback("Your desktop now shows a still from \(label).")
         } else {
-            showFrameFeedback("Desktop video now plays from \(label).")
+            showFrameFeedback("Your desktop video now starts at \(label).")
         }
     }
 
@@ -191,8 +229,8 @@ struct MonitorDetailPanel: View {
             LuminaDivider()
 
             actionButtons
-                .padding(.horizontal, DisplayScale.points(12))
-                .padding(.vertical, DisplayScale.points(10))
+                .padding(.horizontal, LuminaSpace.md)
+                .padding(.vertical, LuminaSpace.barPaddingV)
         }
         .onAppear {
             loadCurrentValues()
@@ -218,6 +256,10 @@ struct MonitorDetailPanel: View {
         .sheet(isPresented: $showSlideshowConfig, onDismiss: { loadCurrentValues() }) {
             SlideshowConfigView(monitor: monitor, store: store,
                                 onClose: { showSlideshowConfig = false })
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .luminaRevealAdjustSection)) { note in
+            guard (note.object as? String) == "qualityPower" else { return }
+            revealQualityPower()
         }
         .onChange(of: cropEditMode) { _, visible in
             NotificationCenter.default.post(
@@ -265,49 +307,68 @@ struct MonitorDetailPanel: View {
                 LuminaDivider()
                 cropEditorToolbar(assignment: a)
             } else if let a = previewAssignment, !a.slideshowItems.isEmpty {
-                HStack(spacing: 6) {
+                HStack(spacing: LuminaSpace.tight) {
                     Image(systemName: "photo.on.rectangle.angled")
-                    Text("Slideshow active on desktop — \(a.slideshowItems.count) images cycling")
-                        .font(uiScale.scaledFont(11, weight: .medium))
+                        .font(.system(size: uiScale.iconSize(.inline)))
+                    Text("Slideshow · \(a.slideshowItems.count) images")
+                        .font(uiScale.font(.caption))
                 }
                 .foregroundStyle(.secondary)
-                .padding(.horizontal, DisplayScale.points(10))
-                .padding(.vertical, DisplayScale.points(8))
+                .padding(LuminaSpace.sm)
             }
         }
-        .padding(.horizontal, DisplayScale.points(8))
-        .padding(.bottom, DisplayScale.points(6))
+        .padding(.horizontal, LuminaSpace.sm)
+        .padding(.bottom, LuminaSpace.tight)
     }
 
     private var settingsColumn: some View {
-        ScrollView {
-            VStack(spacing: DisplayScale.points(10)) {
-                keepOnStartupControl
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(spacing: LuminaSpace.cardGap) {
+                    keepOnStartupControl
 
-                SettingsGroup(icon: "display", title: "Display") {
-                    displayContent
+                    SettingsGroup(icon: "aspectratio", title: "Framing") {
+                        displayContent
+                    }
+
+                    SettingsGroup(icon: "camera.filters", title: "Color") {
+                        visualEffectsContent
+                    }
+
+                    if assignment?.mediaType == .video || assignment?.mediaType == .animatedImage {
+                        SettingsGroup(icon: "play.fill", title: "Playback") {
+                            playbackContent
+                        }
+                    }
+
+                    SettingsGroup(
+                        icon: "photo.on.rectangle.angled",
+                        title: "Slideshow",
+                        caption: "Applies right away"
+                    ) {
+                        slideshowContent
+                    }
+
+                    SettingsGroup(
+                        icon: "gauge.with.dots.needle.50percent",
+                        title: "Quality & Power",
+                        caption: "Applies right away",
+                        flash: qualityPowerFlash
+                    ) {
+                        qualityPowerContent
+                    }
+                    .id("qualityPower")
                 }
-
-                SettingsGroup(icon: "wand.and.stars", title: "Visual Effects") {
-                    visualEffectsContent
-                }
-
-                if assignment?.mediaType == .video || assignment?.mediaType == .animatedImage {
-                    SettingsGroup(icon: "play.fill", title: "Playback & Looping") {
-                        playbackContent
+                .padding(.horizontal, LuminaSpace.sm)
+                .padding(.vertical, LuminaSpace.sm)
+            }
+            .onChange(of: qualityPowerFlash) { _, flashing in
+                if flashing {
+                    withAnimation(nil) {
+                        proxy.scrollTo("qualityPower", anchor: .top)
                     }
                 }
-
-                // Performance / compression is hidden for now: the resolution presets ignore the
-                // source size (offering 4K for a 1080p file) and the size estimates are guesses.
-                // `performanceContent` + VideoCompressor stay in the tree for a source-aware redo.
-
-                SettingsGroup(icon: "photo.on.rectangle.angled", title: "Slideshow") {
-                    slideshowContent
-                }
             }
-            .padding(.horizontal, DisplayScale.points(8))
-            .padding(.vertical, DisplayScale.points(8))
         }
         .luminaWindowBackdrop()
     }
@@ -361,22 +422,15 @@ struct MonitorDetailPanel: View {
         HStack {
             VStack(alignment: .leading, spacing: DisplayScale.points(2)) {
                 Text(monitor.name)
-                    .font(uiScale.scaledFont(18, weight: .semibold))
+                    .font(uiScale.font(.title))
                 Text(monitor.resolution)
-                    .font(uiScale.scaledFont(12))
+                    .font(uiScale.font(.callout))
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            Button(action: onClose) {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: DisplayScale.points(20)))
-            }
-            .buttonStyle(LuminaPressableButtonStyle())
-            .foregroundStyle(.secondary)
-            .frame(width: uiScale.touchTarget(), height: uiScale.touchTarget())
-            .contentShape(Rectangle())
+            LuminaCloseButton(action: onClose)
         }
-        .padding(DisplayScale.points(20))
+        .padding(LuminaSpace.xl)
     }
 
     // MARK: - Live Preview
@@ -404,16 +458,20 @@ struct MonitorDetailPanel: View {
                     let maxH = max(geo.size.height, 1)
                     let fittedWidth = min(maxW, maxH * aspect)
                     let fittedHeight = fittedWidth / aspect
+                    let failedMessage: String? = {
+                        guard let engine = playbackEngine else { return nil }
+                        if case .failed(let msg) = engine.plan.surfaces[.desktop(displayKey)]?.content {
+                            return msg
+                        }
+                        return nil
+                    }()
 
                     ZStack(alignment: .topTrailing) {
                         Group {
                             if cropEditMode {
-                                // Crop editing happens directly on the preview: the editor shows the
-                                // full (uncropped) media as its background with draggable handles.
                                 CropRectangle(
                                     cropRect: $localCropRect,
                                     onChange: { newRect in
-                                        // Staged only — committed to the desktop on Apply.
                                         localCropRect = newRect
                                     },
                                     assignment: a,
@@ -426,6 +484,10 @@ struct MonitorDetailPanel: View {
                                     hueDegrees: hue,
                                     grayscale: grayscale
                                 )
+                                .overlay(alignment: .topLeading) {
+                                    LuminaOverlayChip(text: aspectLockLabel())
+                                        .padding(LuminaSpace.sm)
+                                }
                             } else {
                                 WallpaperPreview(
                                     assignment: a,
@@ -443,38 +505,60 @@ struct MonitorDetailPanel: View {
                                 )
                             }
                         }
-                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .clipShape(RoundedRectangle(cornerRadius: LuminaRadius.panel, style: .continuous))
                         .opacity(previewOpacity)
 
-                        cropToggleButton
-                            .padding(DisplayScale.points(10))
-                            .opacity(cropEditMode ? 0 : 1)
-                            .allowsHitTesting(!cropEditMode)
+                        if let msg = failedMessage, !cropEditMode {
+                            LuminaErrorState(title: "Can’t play this file", detail: msg) {
+                                Button("Choose Another…") {
+                                    store.chooseVideo(for: monitor)
+                                }
+                                .buttonStyle(LuminaSecondaryButtonStyle())
+                                Button("Clear Display") {
+                                    store.clearAssignment(for: monitor)
+                                }
+                                .buttonStyle(LuminaSecondaryButtonStyle(destructive: true))
+                            }
+                            .padding(LuminaSpace.md)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        }
+
+                        if !cropEditMode {
+                            cropToggleButton
+                                .padding(LuminaSpace.sm)
+                                .opacity(
+                                    previewHovered || previewFocused || NSWorkspace.shared.isVoiceOverEnabled
+                                    ? 1 : 0
+                                )
+                                .allowsHitTesting(previewHovered || previewFocused || NSWorkspace.shared.isVoiceOverEnabled)
+                        }
                     }
                     .frame(width: fittedWidth, height: fittedHeight)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                    .focusable()
+                    .focused($previewFocused)
+                    .onHover { previewHovered = $0 }
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Preview of \(a.displayName) on \(monitor.name)")
+                    .accessibilityAddTraits(.isImage)
                 }
-                .padding(DisplayScale.points(8))
+                .padding(LuminaSpace.sm)
             } else {
                 ZStack {
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    RoundedRectangle(cornerRadius: LuminaRadius.panel, style: .continuous)
                         .fill(Color.luminaCard)
                         .overlay(
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            RoundedRectangle(cornerRadius: LuminaRadius.panel, style: .continuous)
                                 .strokeBorder(Color.luminaBorder, lineWidth: 1)
                         )
-                    VStack(spacing: DisplayScale.points(8)) {
-                        Image(systemName: "display")
-                            .font(.system(size: DisplayScale.points(36)))
-                            .foregroundStyle(.secondary)
-                        Text("No wallpaper assigned")
-                            .font(uiScale.scaledFont(13, weight: .medium))
-                        Text("Pick one from the library.")
-                            .font(uiScale.scaledFont(11))
-                            .foregroundStyle(.tertiary)
-                    }
+                    LuminaEmptyState(
+                        icon: "display",
+                        title: "No wallpaper yet",
+                        message: "Choose one from the library.",
+                        compact: true
+                    )
                 }
-                .padding(DisplayScale.points(8))
+                .padding(LuminaSpace.sm)
             }
         }
     }
@@ -482,7 +566,7 @@ struct MonitorDetailPanel: View {
     /// Floating button on the preview that enters interactive crop editing.
     private var cropToggleButton: some View {
         Button {
-            withAnimation(.easeInOut(duration: 0.15)) {
+            LuminaMotion.animate(LuminaMotion.state) {
                 cropEditMode = true
                 if localCropRect == CGRect(x: 0, y: 0, width: 1, height: 1) {
                     resetCropToDefault()
@@ -490,47 +574,48 @@ struct MonitorDetailPanel: View {
             }
         } label: {
             Label("Crop", systemImage: "crop")
-                .font(.system(size: DisplayScale.points(12), weight: .semibold))
-                .foregroundStyle(.white)
-                .padding(.horizontal, DisplayScale.points(10))
-                .padding(.vertical, DisplayScale.points(6))
-                .background(Color.black.opacity(0.6), in: Capsule())
-                .overlay(Capsule().strokeBorder(Color.white.opacity(0.35), lineWidth: 0.5))
-                .shadow(color: .black.opacity(0.35), radius: 2, y: 1)
         }
         .buttonStyle(LuminaPressableButtonStyle())
-        .help("Crop and position — drag inside to move, pull corners to resize")
+        .luminaOverlayChipStyle()
+        .help("Crop and position")
+        .accessibilityLabel("Crop")
     }
 
     @ViewBuilder
     private func cropEditorToolbar(assignment a: MonitorAssignment) -> some View {
-        VStack(alignment: .leading, spacing: DisplayScale.points(10)) {
-            HStack(alignment: .center, spacing: DisplayScale.points(8)) {
+        VStack(alignment: .leading, spacing: LuminaSpace.sm) {
+            HStack(alignment: .center, spacing: LuminaSpace.sm) {
+                Text("Drag to move. Drag a corner to resize.")
+                    .font(uiScale.font(.caption))
+                    .foregroundStyle(.secondary)
                 Spacer(minLength: 0)
-
-                Button {
-                    withAnimation(.easeInOut(duration: 0.15)) { cropEditMode = false }
-                } label: {
-                    Label("Done", systemImage: "checkmark")
-                        .labelStyle(.titleAndIcon)
-                }
-                .buttonStyle(LuminaSecondaryButtonStyle(prominent: true))
 
                 Button { resetCropToDefault() } label: {
                     Text("Reset")
                 }
                 .buttonStyle(LuminaSecondaryButtonStyle())
-                .help("Center the crop frame on the media")
+                .help("Center the crop")
+
+                Button {
+                    LuminaMotion.animate(LuminaMotion.state) { cropEditMode = false }
+                } label: {
+                    Label("Done", systemImage: "checkmark")
+                        .labelStyle(.titleAndIcon)
+                }
+                .buttonStyle(LuminaSecondaryButtonStyle(prominent: true))
+                .keyboardShortcut(.defaultAction)
             }
-            .padding(.top, DisplayScale.points(12))
+            .padding(.top, LuminaSpace.md)
 
             if a.mediaType == .video {
                 cropVideoFrameControls(assignment: a)
             }
         }
-        .padding(.horizontal, DisplayScale.points(12))
-        .padding(.bottom, DisplayScale.points(10))
-        .help("Drag inside the crop to move · pull corners to resize")
+        .padding(.horizontal, LuminaSpace.md)
+        .padding(.bottom, LuminaSpace.barPaddingV)
+        .onExitCommand {
+            LuminaMotion.animate(LuminaMotion.state) { cropEditMode = false }
+        }
     }
 
     @ViewBuilder
@@ -541,7 +626,7 @@ struct MonitorDetailPanel: View {
             if showVideoFrameGuide {
                 LuminaHintBubble(
                     icon: "lightbulb.fill",
-                    message: "Scrub the timeline to preview a moment, then pick how it should appear on your desktop — as a frozen still or as a playing video from that point.",
+                    message: "Drag to find a frame. Then use it as a still, or start the video there.",
                     style: .tip,
                     onDismiss: { showVideoFrameGuide = false }
                 )
@@ -549,7 +634,7 @@ struct MonitorDetailPanel: View {
 
             VStack(alignment: .leading, spacing: DisplayScale.points(8)) {
                 HStack(alignment: .firstTextBaseline, spacing: DisplayScale.points(8)) {
-                    Label("Pick a frame", systemImage: "film")
+                    Label("Frame", systemImage: "film")
                         .font(uiScale.scaledFont(12, weight: .semibold))
                         .foregroundStyle(.secondary)
                     Spacer(minLength: 0)
@@ -561,44 +646,24 @@ struct MonitorDetailPanel: View {
                 }
 
                 LuminaSlider(value: $videoPreviewTime, range: 0...1)
-                    .help("Scrub to preview a frame — nothing changes on your desktop until you choose an option below")
+                    .help("Preview only. Your desktop changes when you pick an option.")
 
-                HStack(spacing: DisplayScale.points(8)) {
-                    Group {
-                        if committedUseStaticFrame {
-                            Button { commitVideoFrame(useStatic: true) } label: {
-                                Label("Use as still", systemImage: "photo.fill")
-                                    .font(uiScale.scaledFont(12, weight: .semibold))
-                            }
-                            .buttonStyle(LuminaProminentButtonStyle())
-                        } else {
-                            Button { commitVideoFrame(useStatic: true) } label: {
-                                Label("Use as still", systemImage: "photo.fill")
-                                    .font(uiScale.scaledFont(12, weight: .semibold))
-                            }
-                            .buttonStyle(LuminaSecondaryButtonStyle())
-                        }
+                HStack(spacing: LuminaSpace.sm) {
+                    Button { commitVideoFrame(useStatic: true) } label: {
+                        Label("Use as Still", systemImage: "photo.fill")
                     }
-                    .controlSize(uiScale.controlSize())
-                    .help("Freeze this exact frame on your desktop — no video playback")
+                    .buttonStyle(LuminaSecondaryButtonStyle(prominent: committedUseStaticFrame))
+                    .controlSize(.small)
+                    .help("Show this frame as a still image")
 
-                    Group {
-                        if !committedUseStaticFrame, a.videoFrameTime != nil {
-                            Button { commitVideoFrame(useStatic: false) } label: {
-                                Label("Start video here", systemImage: "play.rectangle.fill")
-                                    .font(uiScale.scaledFont(12, weight: .semibold))
-                            }
-                            .buttonStyle(LuminaProminentButtonStyle())
-                        } else {
-                            Button { commitVideoFrame(useStatic: false) } label: {
-                                Label("Start video here", systemImage: "play.rectangle.fill")
-                                    .font(uiScale.scaledFont(12, weight: .semibold))
-                            }
-                            .buttonStyle(LuminaSecondaryButtonStyle())
-                        }
+                    Button { commitVideoFrame(useStatic: false) } label: {
+                        Label("Start Here", systemImage: "play.rectangle.fill")
                     }
-                    .controlSize(uiScale.controlSize())
-                    .help("Play the video from this frame with your crop applied")
+                    .buttonStyle(LuminaSecondaryButtonStyle(
+                        prominent: !committedUseStaticFrame && a.videoFrameTime != nil
+                    ))
+                    .controlSize(.small)
+                    .help("Play the video from this frame")
                 }
             }
 
@@ -610,8 +675,8 @@ struct MonitorDetailPanel: View {
                 LuminaHintBubble(
                     icon: committedUseStaticFrame ? "photo.fill" : "play.fill",
                     message: committedUseStaticFrame
-                        ? "Desktop: frozen still at \(label)"
-                        : "Desktop: video playing from \(label)",
+                        ? "Desktop: still at \(label)"
+                        : "Desktop: plays from \(label)",
                     style: .info
                 )
             }
@@ -637,20 +702,20 @@ struct MonitorDetailPanel: View {
 
     private var keepOnStartupControl: some View {
         Toggle(isOn: $keepOnStartup) {
-            HStack(alignment: .center, spacing: DisplayScale.points(8)) {
+            HStack(alignment: .center, spacing: LuminaSpace.sm) {
                 Image(systemName: keepOnStartup ? "pin.fill" : "pin")
                     .font(.system(size: uiScale.iconSize(.card), weight: .semibold))
-                    .foregroundStyle(keepOnStartup ? Color.yellow : .secondary)
+                    .foregroundStyle(keepOnStartup ? themeManager.current.color : .secondary)
                     .frame(width: DisplayScale.points(20), alignment: .center)
 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Keep on startup")
-                        .font(uiScale.scaledFont(13, weight: .semibold))
+                VStack(alignment: .leading, spacing: LuminaSpace.hair) {
+                    Text("Restore at launch")
+                        .font(uiScale.font(.bodyStrong))
 
                     Text(keepOnStartup
-                         ? "Restores this wallpaper on launch · saves immediately"
-                         : "Wallpaper stays until you Clear · won’t restore next launch")
-                        .font(uiScale.scaledFont(11))
+                         ? "Comes back when Lumina starts. Saves right away."
+                         : "Stays until you quit Lumina.")
+                        .font(uiScale.font(.caption))
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
@@ -661,118 +726,105 @@ struct MonitorDetailPanel: View {
         .toggleStyle(.switch)
         .controlSize(uiScale.controlSize())
         .onChange(of: keepOnStartup) { _, newValue in
-            // Pin flag only — do not blank the live desktop (use Clear for that).
             store.setKeepOnStartup(for: monitor, enabled: newValue)
         }
-        .padding(.horizontal, DisplayScale.points(10))
-        .padding(.vertical, DisplayScale.points(8))
+        .padding(LuminaSpace.cardPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(Color.luminaCard)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .strokeBorder(keepOnStartup ? Color.yellow.opacity(0.5) : Color.luminaBorder, lineWidth: 1)
+        .luminaGlassPanel(cornerRadius: LuminaRadius.panel)
+        .overlay(
+            RoundedRectangle(cornerRadius: LuminaRadius.panel, style: .continuous)
+                .strokeBorder(
+                    keepOnStartup ? themeManager.current.color.opacity(0.5) : Color.luminaBorder,
+                    lineWidth: 1
                 )
         )
-        .help("Pin saves immediately and restores on launch. Turning off does not clear the live wallpaper — use Clear for that. Crop, effects, and playback still need Apply.")
+        .help("Saves right away. Turning it off doesn’t clear the wallpaper.")
     }
 
     // MARK: - Playback Section Content
 
     private var playbackContent: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Playback Speed
-            VStack(alignment: .leading, spacing: 4) {
-                LuminaSliderLabel(title: "Playback Speed", value: String(format: "%.2fx", playbackSpeed))
-                LuminaSlider(value: $playbackSpeed, range: 0.25...4.0, step: 0.25)
+        VStack(alignment: .leading, spacing: LuminaSpace.md) {
+            VStack(alignment: .leading, spacing: LuminaSpace.xs) {
+                LuminaSliderLabel(title: "Speed", value: formatSpeed(playbackSpeed))
+                    .help("Double-click to reset")
+                    .onTapGesture(count: 2) { playbackSpeed = 1.0 }
+                LuminaSlider(value: $playbackSpeed, range: 0.25...4.0, step: 0.25, label: formatSpeed(playbackSpeed))
             }
 
-            // Loop Mode (video only — GIFs and stills use their own playback path)
             if assignment?.mediaType == .video {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Loop Mode").font(uiScale.scaledFont(13)).foregroundStyle(.secondary)
-                    Picker("Loop Mode", selection: $loopMode) {
-                        ForEach(MonitorAssignment.LoopMode.allCases, id: \.self) { mode in
+                VStack(alignment: .leading, spacing: LuminaSpace.tight) {
+                    Text("At the end").font(uiScale.font(.body)).foregroundStyle(.secondary)
+                    Picker("At the end", selection: $loopMode) {
+                        ForEach(LoopMode.allCases, id: \.self) { mode in
                             Text(mode.label).tag(mode)
-                                .help(mode.modeDescription)
                         }
                     }
                     .pickerStyle(.segmented)
+                    .labelsHidden()
                     .controlSize(uiScale.controlSize())
-                    Text(loopMode.modeDescription)
-                        .font(uiScale.scaledFont(11)).foregroundStyle(.secondary)
-                        .animation(.easeInOut(duration: 0.15), value: loopMode)
+                    Text(loopMode.uiDescription)
+                        .font(uiScale.font(.caption)).foregroundStyle(.secondary)
+                        .animation(LuminaMotion.state, value: loopMode)
                 }
             }
 
-            // Loop Crossfade (video only — requires Loop mode)
             if assignment?.mediaType == .video {
-                Toggle("Fade at loop point", isOn: $loopFadeEnabled)
+                Toggle("Fade between loops", isOn: $loopFadeEnabled)
                     .toggleStyle(.switch)
-                    .font(uiScale.scaledFont(13))
+                    .font(uiScale.font(.body))
                     .controlSize(uiScale.controlSize())
                     .disabled(loopMode != .loop)
                     .help(loopMode == .loop
-                          ? "Smoothly fade out and back in each time the video loops"
-                          : "Only available when Loop Mode is set to Loop")
+                          ? "Fades out and back in at each loop."
+                          : "Needs Loop.")
 
                 if loopMode != .loop {
-                    Text("Set Loop Mode to Loop to use crossfade.")
-                        .font(uiScale.scaledFont(11))
+                    Text("Needs Loop.")
+                        .font(uiScale.font(.caption))
                         .foregroundStyle(.secondary)
                 }
 
                 if loopFadeEnabled && loopMode == .loop {
-                    VStack(alignment: .leading, spacing: 8) {
-                        if hasUnappliedChanges && (assignment.map { a in
-                            loopFadeEnabled != a.loopFadeEnabled
-                                || abs(loopFadeDuration - a.loopFadeDuration) > 0.001
-                                || loopFadeEasing != a.loopFadeEasing
-                        } ?? false) {
-                            LuminaHintBubble(
-                                icon: "arrow.up.circle",
-                                message: "Apply to Wallpaper to enable the fade on your desktop.",
-                                style: .tip
-                            )
+                    VStack(alignment: .leading, spacing: LuminaSpace.sm) {
+                        VStack(alignment: .leading, spacing: LuminaSpace.xs) {
+                            LuminaSliderLabel(title: "Fade length", value: formatFade(loopFadeDuration))
+                            LuminaSlider(value: $loopFadeDuration, range: 0.1...5.0, step: 0.05, label: formatFade(loopFadeDuration))
                         }
 
-                        VStack(alignment: .leading, spacing: 4) {
-                            LuminaSliderLabel(title: "Fade Duration", value: "\(Int(loopFadeDuration * 1000))ms")
-                            LuminaSlider(value: $loopFadeDuration, range: 0.1...5.0, step: 0.05)
-                        }
-                        .help("Total crossfade duration at each loop point (100ms–5000ms)")
-
-                        VStack(alignment: .leading, spacing: 4) {
-                            LuminaSliderLabel(title: "Easing")
-                            Picker("Easing", selection: $loopFadeEasing) {
-                                ForEach(MonitorAssignment.FadeEasing.allCases, id: \.self) { e in
+                        VStack(alignment: .leading, spacing: LuminaSpace.xs) {
+                            LuminaSliderLabel(title: "Curve")
+                            Picker("Curve", selection: $loopFadeEasing) {
+                                ForEach(FadeEasing.allCases, id: \.self) { e in
                                     Text(e.label).tag(e)
                                 }
                             }
                             .pickerStyle(.segmented)
+                            .labelsHidden()
                         }
-                        .help("Controls how the opacity ramps in and out during the fade")
 
-                        Button("Preview fade") { previewFadeInPreview() }
+                        Button("Preview Fade") { previewFadeInPreview() }
                             .buttonStyle(LuminaSecondaryButtonStyle())
-                            .controlSize(uiScale.controlSize())
-                            .help("Simulate this fade in the preview above")
+                            .controlSize(.small)
+                            .help("Plays the fade in the preview")
                     }
                 }
             }
 
-            // Volume
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: LuminaSpace.xs) {
                 LuminaSliderLabel(
                     title: "Volume",
-                    value: audioVolume < 0.01 ? "Muted" : String(format: "%.0f%%", audioVolume * 100)
+                    value: audioVolume < 0.01 ? "Muted" : "\(Int((audioVolume * 100).rounded()))%"
                 )
                 HStack {
                     Image(systemName: audioVolume < 0.01 ? "speaker.slash.fill" : "speaker.wave.2.fill")
                         .foregroundStyle(.secondary)
-                        .font(uiScale.scaledFont(12))
-                    LuminaSlider(value: $audioVolume, range: 0...1)
+                        .font(uiScale.font(.callout))
+                    LuminaSlider(
+                        value: $audioVolume,
+                        range: 0...1,
+                        label: audioVolume < 0.01 ? "Muted" : "\(Int((audioVolume * 100).rounded()))%"
+                    )
                 }
             }
         }
@@ -781,30 +833,35 @@ struct MonitorDetailPanel: View {
     // MARK: - Display Section Content
 
     private var displayContent: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Scaling Mode
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Scaling Mode").font(uiScale.scaledFont(13)).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: LuminaSpace.md) {
+            VStack(alignment: .leading, spacing: LuminaSpace.tight) {
+                Text("Scaling").font(uiScale.font(.body)).foregroundStyle(.secondary)
                 Picker("Scaling", selection: $selectedScaling) {
                     Text("Fit").tag(VideoScaling.fit)
-                        .help("Letterbox: shows full video with black bars on sides/top")
                     Text("Fill").tag(VideoScaling.fill)
-                        .help("Crop to fill: video fills the screen, edges may be cropped")
                     Text("Stretch").tag(VideoScaling.stretch)
-                        .help("Stretch: video fills screen, may appear distorted")
                 }
                 .pickerStyle(.segmented)
+                .labelsHidden()
                 .controlSize(uiScale.controlSize())
                 Text(scalingDescription)
-                    .font(uiScale.scaledFont(11)).foregroundStyle(.secondary)
-                    .animation(.easeInOut(duration: 0.15), value: selectedScaling)
+                    .font(uiScale.font(.caption)).foregroundStyle(.secondary)
+                    .animation(LuminaMotion.state, value: selectedScaling)
             }
 
-            // Crop is edited on the live preview — use the Crop pill on the preview image.
             if assignment != nil, !cropEditMode {
-                Text("Use Crop on the preview to position the frame.")
-                    .font(uiScale.scaledFont(11))
-                    .foregroundStyle(.secondary)
+                Button {
+                    LuminaMotion.animate(LuminaMotion.state) {
+                        cropEditMode = true
+                        if localCropRect == CGRect(x: 0, y: 0, width: 1, height: 1) {
+                            resetCropToDefault()
+                        }
+                    }
+                } label: {
+                    Label("Crop…", systemImage: "crop")
+                }
+                .buttonStyle(LuminaSecondaryButtonStyle())
+                .controlSize(.small)
             }
         }
     }
@@ -812,66 +869,77 @@ struct MonitorDetailPanel: View {
     // MARK: - Visual Effects Section Content
 
     private var visualEffectsContent: some View {
-        VStack(alignment: .leading, spacing: DisplayScale.points(10)) {
-            VStack(alignment: .leading, spacing: 4) {
-                LuminaSliderLabel(title: "Brightness", value: String(format: "%+.2f", brightness))
-                LuminaSlider(value: $brightness, range: -0.5...0.5, step: 0.05)
+        VStack(alignment: .leading, spacing: LuminaSpace.sm) {
+            VStack(alignment: .leading, spacing: LuminaSpace.xs) {
+                LuminaSliderLabel(title: "Brightness", value: formatBrightness(brightness))
+                    .help("Double-click to reset")
+                    .onTapGesture(count: 2) { brightness = 0 }
+                LuminaSlider(value: $brightness, range: -0.5...0.5, step: 0.05, label: formatBrightness(brightness))
             }
 
-            VStack(alignment: .leading, spacing: 4) {
-                LuminaSliderLabel(title: "Opacity", value: String(format: "%.0f%%", opacity * 100))
-                LuminaSlider(value: $opacity, range: 0...1)
+            VStack(alignment: .leading, spacing: LuminaSpace.xs) {
+                LuminaSliderLabel(title: "Opacity", value: "\(Int((opacity * 100).rounded()))%")
+                    .help("Double-click to reset")
+                    .onTapGesture(count: 2) { opacity = 1 }
+                LuminaSlider(value: $opacity, range: 0...1, label: "\(Int((opacity * 100).rounded()))%")
             }
 
-            VStack(alignment: .leading, spacing: 4) {
-                LuminaSliderLabel(title: "Saturation", value: String(format: "%.1f", saturation))
-                LuminaSlider(value: $saturation, range: 0...2)
+            VStack(alignment: .leading, spacing: LuminaSpace.xs) {
+                LuminaSliderLabel(title: "Saturation", value: formatSaturation(saturation))
+                    .help("Double-click to reset")
+                    .onTapGesture(count: 2) { saturation = 1 }
+                LuminaSlider(value: $saturation, range: 0...2, label: formatSaturation(saturation))
             }
 
-            VStack(alignment: .leading, spacing: 4) {
-                LuminaSliderLabel(title: "Hue", value: String(format: "%.0f°", hue))
-                LuminaSlider(value: $hue, range: -180...180)
+            VStack(alignment: .leading, spacing: LuminaSpace.xs) {
+                LuminaSliderLabel(title: "Hue", value: "\(Int(hue.rounded()))°")
+                    .help("Double-click to reset")
+                    .onTapGesture(count: 2) { hue = 0 }
+                LuminaSlider(value: $hue, range: -180...180, label: "\(Int(hue.rounded()))°")
             }
 
-            // Grayscale
-            Toggle("Grayscale", isOn: $grayscale)
+            Toggle("Black and white", isOn: $grayscale)
                 .toggleStyle(.switch)
                 .controlSize(uiScale.controlSize())
-                .font(uiScale.scaledFont(13))
+                .font(uiScale.font(.body))
         }
     }
 
     // MARK: - Slideshow Section Content
 
     private var slideshowContent: some View {
-        VStack(alignment: .leading, spacing: DisplayScale.points(8)) {
+        VStack(alignment: .leading, spacing: LuminaSpace.sm) {
             if slideshowItems.isEmpty {
-                Text("Build an image queue for this display.")
-                    .font(uiScale.scaledFont(12))
+                Text("Show a rotating set of images on this display.")
+                    .font(uiScale.font(.callout))
                     .foregroundStyle(.secondary)
             } else {
-                Text("^[\(slideshowItems.count) image](inflect: true) · \(Int(slideshowInterval))s · \(slideshowTransition.rawValue.capitalized)\(slideshowKenBurnsEnabled ? " · Ken Burns" : "")")
-                    .font(uiScale.scaledFont(12, weight: .medium))
+                let transitionLabel = slideshowTransition.rawValue.capitalized
+                let ken = slideshowKenBurnsEnabled ? " · Pan and zoom" : ""
+                Text("\(slideshowItems.count) images · every \(Int(slideshowInterval)) s · \(transitionLabel)\(ken)")
+                    .font(uiScale.font(.callout).weight(.medium))
                     .foregroundStyle(.secondary)
             }
 
-            HStack(spacing: 8) {
+            HStack(spacing: LuminaSpace.sm) {
                 Button {
                     showSlideshowConfig = true
                 } label: {
-                    Label(slideshowItems.isEmpty ? "Create Slideshow…" : "Configure…",
-                          systemImage: "slider.horizontal.below.rectangle")
+                    Label(
+                        slideshowItems.isEmpty ? "Create Slideshow…" : "Edit Slideshow…",
+                        systemImage: "slider.horizontal.below.rectangle"
+                    )
                 }
                 .buttonStyle(LuminaProminentButtonStyle())
-                .controlSize(uiScale.controlSize())
+                .controlSize(.small)
 
                 if !slideshowItems.isEmpty {
-                    Button("Clear") {
+                    Button("Remove") {
                         slideshowItems.removeAll()
                         store.setSlideshowItems(for: monitor, items: [])
                     }
-                    .buttonStyle(LuminaSecondaryButtonStyle())
-                    .controlSize(uiScale.controlSize())
+                    .buttonStyle(LuminaSecondaryButtonStyle(destructive: true))
+                    .controlSize(.small)
                 }
             }
         }
@@ -905,17 +973,20 @@ struct MonitorDetailPanel: View {
         } else {
             // Column out first while the window stays wide (mirrors expand). Shrinking
             // both together desyncs AppKit/SwiftUI and glitches the preview/header.
-            let columnDuration = Self.settingsCollapseDuration
-            let windowDuration: TimeInterval = 0.40
-            withAnimation(.timingCurve(0.22, 1.0, 0.36, 1.0, duration: columnDuration)) {
+            let columnDuration = LuminaMotion.adjustClose.map { _ in 0.55 } ?? 0
+            let windowDuration = LuminaMotion.adjustCloseWindow
+            let animateWindow = windowDuration > 0
+            if let anim = LuminaMotion.adjustClose {
+                withAnimation(anim) { showSettingsColumn = false }
+            } else {
                 showSettingsColumn = false
             }
             previewUnlockTask = Task { @MainActor in
-                let columnNs = UInt64(columnDuration * 1_000_000_000)
+                let columnNs = UInt64(max(columnDuration, 0.01) * 1_000_000_000)
                 try? await Task.sleep(nanoseconds: columnNs)
                 guard !Task.isCancelled else { return }
-                postConfigColumnVisibility(false, animateWindow: true, duration: windowDuration)
-                let windowNs = UInt64(windowDuration * 1_000_000_000)
+                postConfigColumnVisibility(false, animateWindow: animateWindow, duration: max(windowDuration, 0.01))
+                let windowNs = UInt64(max(windowDuration, 0.01) * 1_000_000_000)
                 try? await Task.sleep(nanoseconds: windowNs)
                 guard !Task.isCancelled else { return }
                 lockedPreviewWidth = nil
@@ -926,7 +997,7 @@ struct MonitorDetailPanel: View {
     /// Opens Adjust once when the user first assigns media, so Display / Effects aren't hidden.
     private func maybeAutoOpenAdjustColumn(hasMedia: Bool) {
         guard hasMedia, !showSettingsColumn else { return }
-        guard !UserDefaults.standard.bool(forKey: Self.hasDiscoveredAdjustKey) else { return }
+        if store.appDelegate?.preferencesStore?.milestones.hasDiscoveredAdjust == true { return }
         // Defer so layout has measured the preview width before we lock it.
         DispatchQueue.main.async {
             guard !self.showSettingsColumn else { return }
@@ -942,54 +1013,68 @@ struct MonitorDetailPanel: View {
         postConfigColumnVisibility(
             true,
             animateWindow: false,
-            duration: Self.settingsToggleDuration
+            duration: 0.42
         )
-        withAnimation(
-            .timingCurve(0.25, 0.1, 0.25, 1.0, duration: Self.settingsToggleDuration)
-        ) {
+        if let anim = LuminaMotion.adjustOpen {
+            withAnimation(anim) { showSettingsColumn = true }
+        } else {
             showSettingsColumn = true
         }
-        UserDefaults.standard.set(true, forKey: Self.hasDiscoveredAdjustKey)
+        if let prefs = store.appDelegate?.preferencesStore {
+            prefs.milestones.hasDiscoveredAdjust = true
+        }
     }
 
     private var actionButtons: some View {
-        HStack(spacing: DisplayScale.points(8)) {
+        HStack(spacing: LuminaSpace.sm) {
             if hasUnappliedChanges, assignment != nil {
+                HStack(spacing: LuminaSpace.xs) {
+                    Circle()
+                        .fill(LuminaStatusColor.paused)
+                        .frame(width: DisplayScale.points(6), height: DisplayScale.points(6))
+                    Text("Not applied")
+                        .font(uiScale.font(.caption))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
                 Button {
                     applyToWallpaper()
                 } label: {
-                    Label("Apply to Wallpaper", systemImage: "checkmark.circle.fill")
-                        .frame(maxWidth: .infinity)
+                    Text("Apply")
                 }
                 .buttonStyle(LuminaProminentButtonStyle())
-                .help(applyButtonHelp)
-            } else {
-                Label(
-                    assignment == nil ? "No wallpaper" : "Up to date",
-                    systemImage: assignment == nil ? "photo" : "checkmark.circle.fill"
-                )
-                .font(uiScale.scaledFont(12, weight: .medium))
-                .foregroundStyle(.secondary)
-                .help(applyButtonHelp)
-                .accessibilityLabel(assignment == nil ? "No wallpaper assigned" : "Applied, up to date")
-            }
-
-            if monitor.assignedVideoName != nil {
-                Button("Clear", role: .destructive) {
-                    store.clearAssignment(for: monitor)
+                .controlSize(.regular)
+                .keyboardShortcut(.return, modifiers: .command)
+                .help("Use these settings on your desktop (⌘↩)")
+            } else if assignment != nil {
+                HStack(spacing: LuminaSpace.xs) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(LuminaStatusColor.playing)
+                    Text("Up to date")
+                        .font(uiScale.font(.caption))
+                        .foregroundStyle(.secondary)
                 }
-                .buttonStyle(LuminaSecondaryButtonStyle(destructive: true))
-                .help("Remove the wallpaper from this display")
+                .accessibilityLabel("Up to date")
             }
 
-            Button("Reset Adjustments") {
+            Button("Reset") {
                 resetToDefaults()
             }
             .buttonStyle(LuminaSecondaryButtonStyle())
-            .help("Reset staged crop, speed, and effects to defaults (preview only — Apply to commit)")
+            .controlSize(.regular)
+            .help("Reset crop, speed, and color. Click Apply to use it.")
             .disabled(assignment == nil)
 
-            Spacer(minLength: DisplayScale.points(4))
+            if monitor.assignedVideoName != nil || assignment != nil {
+                Button("Clear Display", role: .destructive) {
+                    store.clearAssignment(for: monitor)
+                }
+                .buttonStyle(LuminaSecondaryButtonStyle(destructive: true))
+                .controlSize(.regular)
+                .help("Remove the wallpaper from this display")
+            }
+
+            Spacer(minLength: LuminaSpace.xs)
 
             Button {
                 toggleConfigColumn()
@@ -997,13 +1082,16 @@ struct MonitorDetailPanel: View {
                 Label("Adjust", systemImage: "slider.horizontal.3")
             }
             .buttonStyle(LuminaSecondaryButtonStyle(prominent: showSettingsColumn))
-            .help(showSettingsColumn ? "Hide wallpaper adjustments" : "Show wallpaper adjustments")
+            .controlSize(.regular)
+            .keyboardShortcut("i", modifiers: [.command, .option])
+            .help(showSettingsColumn ? "Hide Adjust (⌥⌘I)" : "Show Adjust (⌥⌘I)")
             .accessibilityLabel(showSettingsColumn ? "Hide Adjust" : "Show Adjust")
             .accessibilityAddTraits(showSettingsColumn ? .isSelected : [])
 
             if showHeader {
                 Button("Done") { onClose() }
                     .buttonStyle(LuminaSecondaryButtonStyle())
+                    .controlSize(.regular)
             }
         }
     }
@@ -1011,12 +1099,12 @@ struct MonitorDetailPanel: View {
     /// Help text for the Apply control.
     private var applyButtonHelp: String {
         if assignment == nil {
-            return "Pick a wallpaper from the library first"
+            return "Choose a wallpaper first"
         }
         if !hasUnappliedChanges {
-            return "Preview already matches the live desktop"
+            return "Your desktop matches the preview"
         }
-        return "Push the previewed settings to the live desktop wallpaper"
+        return "Use these settings on your desktop (⌘↩)"
     }
 
     /// Simulates the loop crossfade in the live preview panel so the user can
@@ -1120,6 +1208,286 @@ struct MonitorDetailPanel: View {
             audioVolume = 0.0
             loopMode = .loop
         }
+    }
+
+    private func revealQualityPower() {
+        if !showSettingsColumn {
+            openAdjustColumn()
+        }
+        qualityPowerFlash = true
+        let reduce = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        DispatchQueue.main.asyncAfter(deadline: .now() + (reduce ? 0.05 : 0.6)) {
+            qualityPowerFlash = false
+        }
+    }
+
+    // MARK: - Quality & Power
+
+    private var usesGlobalQualityPower: Bool {
+        guard let prefs else { return true }
+        return !prefs.power.hasOverride(for: displayKey) && prefs.playback.qualityOverrides[displayKey] == nil
+    }
+
+    private var qualityPowerContent: some View {
+        let key = displayKey
+        return VStack(alignment: .leading, spacing: LuminaSpace.md) {
+            Toggle(isOn: Binding(
+                get: { usesGlobalQualityPower },
+                set: { on in
+                    guard let prefs else { return }
+                    if on {
+                        var power = prefs.power
+                        power.clearOverride(for: key)
+                        prefs.power = power
+                        var playback = prefs.playback
+                        playback.clearOverride(for: key)
+                        prefs.playback = playback
+                    } else {
+                        var power = prefs.power
+                        power[display: key] = power.defaults
+                        prefs.power = power
+                        var playback = prefs.playback
+                        playback[display: key] = playback.defaultQuality
+                        prefs.playback = playback
+                    }
+                }
+            )) {
+                Text("Use global settings")
+                    .font(uiScale.font(.bodyStrong))
+            }
+            .toggleStyle(.switch)
+            .controlSize(uiScale.controlSize())
+
+            if usesGlobalQualityPower {
+                HStack(spacing: LuminaSpace.xs) {
+                    Text("Same as Settings → Power.")
+                        .font(uiScale.font(.caption))
+                        .foregroundStyle(.secondary)
+                    Button("Open Settings") {
+                        SettingsRouter.shared.open(.power)
+                    }
+                    .buttonStyle(LuminaPressableButtonStyle())
+                    .font(uiScale.font(.caption))
+                    .foregroundStyle(themeManager.current.color)
+                }
+            } else {
+                HStack(spacing: LuminaSpace.xs) {
+                    Text("Only this display.")
+                        .font(uiScale.font(.caption))
+                        .foregroundStyle(.secondary)
+                    Button("Reset to Global") {
+                        guard let prefs else { return }
+                        var power = prefs.power
+                        power.clearOverride(for: key)
+                        prefs.power = power
+                        var playback = prefs.playback
+                        playback.clearOverride(for: key)
+                        prefs.playback = playback
+                    }
+                    .buttonStyle(LuminaSecondaryButtonStyle())
+                    .controlSize(.small)
+                }
+            }
+
+            LuminaDivider()
+
+            qualityResolutionControls(disabled: usesGlobalQualityPower)
+            qualityFrameRateControls(disabled: usesGlobalQualityPower)
+
+            LuminaDivider()
+
+            Text("Pause this display when")
+                .font(uiScale.font(.callout).weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            qualityPauseControls(disabled: usesGlobalQualityPower)
+
+            if let engine = playbackEngine {
+                let state = LuminaDisplayState.from(plan: engine.plan, key: key)
+                if case .paused = state {
+                    let threshold = Int(prefs?.power[display: key].battery.pauseBelowPercent ?? 20)
+                    LuminaStatusPill(
+                        style: .status(state),
+                        batteryThreshold: threshold,
+                        usesAdjustCopy: !usesGlobalQualityPower
+                    )
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func qualityResolutionControls(disabled: Bool) -> some View {
+        let key = displayKey
+        let preset = prefs?.playback[display: key] ?? .automatic
+        let choice = DecodeCapChoice(preset)
+        VStack(alignment: .leading, spacing: LuminaSpace.xs) {
+            LuminaSliderLabel(title: "Resolution")
+            Picker("Resolution", selection: Binding(
+                get: { DecodeCapChoice(prefs?.playback[display: key] ?? .automatic) },
+                set: { newChoice in
+                    guard let prefs else { return }
+                    var playback = prefs.playback
+                    playback[display: key] = newChoice.qualityPreset
+                    prefs.playback = playback
+                }
+            )) {
+                ForEach(DecodeCapChoice.allCases) { c in
+                    Text(c.label).tag(c)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .disabled(disabled)
+            Text(choice.caption)
+                .font(uiScale.font(.caption))
+                .foregroundStyle(.secondary)
+            if DecodeCapChoice.showsLegacyEfficientCaption(preset) {
+                Text("Also limited to 30 fps by an older setting. Pick a resolution to remove the limit.")
+                    .font(uiScale.font(.caption))
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func qualityFrameRateControls(disabled: Bool) -> some View {
+        let key = displayKey
+        let cap = prefs?.power[display: key].frameCap ?? .native
+        let choice = FrameRateChoice(cap)
+        VStack(alignment: .leading, spacing: LuminaSpace.xs) {
+            LuminaSliderLabel(title: "Frame rate", value: choice.longLabel)
+            Picker("Frame rate", selection: Binding(
+                get: { FrameRateChoice(prefs?.power[display: key].frameCap ?? .native) },
+                set: { newChoice in
+                    guard let prefs else { return }
+                    var power = prefs.power
+                    var rules = power[display: key]
+                    rules.frameCap = newChoice.frameRateCap
+                    power[display: key] = rules
+                    prefs.power = power
+                }
+            )) {
+                ForEach(FrameRateChoice.choices(includingSelected: cap)) { c in
+                    Text(c.shortLabel).tag(c)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .disabled(disabled)
+            Text("Lower rates use less power.")
+                .font(uiScale.font(.caption))
+                .foregroundStyle(.secondary)
+            if prefs?.power[display: key].fullQualityWhileStudioOpen == true {
+                Text("Studio shows full quality while it’s open.")
+                    .font(uiScale.font(.caption))
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func qualityPauseControls(disabled: Bool) -> some View {
+        let key = displayKey
+        let pauseOnBattery = prefs?.power[display: key].battery.pauseOnBattery ?? false
+        let pauseBelowEnabled = prefs?.power[display: key].battery.pauseBelowEnabled ?? false
+
+        Toggle("On battery", isOn: Binding(
+            get: { prefs?.power[display: key].battery.pauseOnBattery ?? false },
+            set: { val in
+                guard let prefs else { return }
+                var power = prefs.power
+                var rules = power[display: key]
+                rules.battery.pauseOnBattery = val
+                power[display: key] = rules
+                prefs.power = power
+            }
+        ))
+        .toggleStyle(.switch)
+        .controlSize(uiScale.controlSize())
+        .disabled(disabled)
+
+        HStack {
+            Text("Battery is below")
+                .font(uiScale.font(.body))
+            Spacer()
+            if pauseBelowEnabled {
+                Text("\(Int(prefs?.power[display: key].battery.pauseBelowPercent ?? 20))%")
+                    .font(uiScale.font(.callout).monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+            Toggle("", isOn: Binding(
+                get: { prefs?.power[display: key].battery.pauseBelowEnabled ?? false },
+                set: { val in
+                    guard let prefs else { return }
+                    var power = prefs.power
+                    var rules = power[display: key]
+                    rules.battery.pauseBelowEnabled = val
+                    power[display: key] = rules
+                    prefs.power = power
+                }
+            ))
+            .labelsHidden()
+            .toggleStyle(.switch)
+            .controlSize(uiScale.controlSize())
+        }
+        .disabled(disabled || pauseOnBattery)
+
+        if pauseOnBattery {
+            Text("Already paused on battery.")
+                .font(uiScale.font(.caption))
+                .foregroundStyle(.secondary)
+        }
+
+        if pauseBelowEnabled && !pauseOnBattery {
+            LuminaSlider(
+                value: Binding(
+                    get: { prefs?.power[display: key].battery.pauseBelowPercent ?? 20 },
+                    set: { val in
+                        guard let prefs else { return }
+                        var power = prefs.power
+                        var rules = power[display: key]
+                        rules.battery.pauseBelowPercent = val
+                        power[display: key] = rules
+                        prefs.power = power
+                    }
+                ),
+                range: 5...80,
+                step: 5,
+                label: "Battery threshold"
+            )
+            .disabled(disabled)
+        }
+
+        Toggle("A window covers it", isOn: Binding(
+            get: { prefs?.power[display: key].pauseWhenCovered ?? true },
+            set: { val in
+                guard let prefs else { return }
+                var power = prefs.power
+                var rules = power[display: key]
+                rules.pauseWhenCovered = val
+                power[display: key] = rules
+                prefs.power = power
+            }
+        ))
+        .toggleStyle(.switch)
+        .controlSize(uiScale.controlSize())
+        .disabled(disabled)
+
+        Toggle("Low Power Mode is on", isOn: Binding(
+            get: { prefs?.power[display: key].pauseInLowPowerMode ?? true },
+            set: { val in
+                guard let prefs else { return }
+                var power = prefs.power
+                var rules = power[display: key]
+                rules.pauseInLowPowerMode = val
+                power[display: key] = rules
+                prefs.power = power
+            }
+        ))
+        .toggleStyle(.switch)
+        .controlSize(uiScale.controlSize())
+        .disabled(disabled)
     }
 
     // MARK: - Performance / Compression Content
@@ -1272,18 +1640,12 @@ private enum PreviewColumnWidthKey: PreferenceKey {
 }
 
 // MARK: - Settings Group
-// A consistently styled visual container for a logical group of related controls.
-//
-// Design goals:
-// - All cards share the same minHeight so short boxes (Slideshow empty state,
-//   Visual Effects) scale visually with the taller ones (Display, Visual Effects, etc.).
-// - Strong consistent rhythm (header style, padding, internal spacing).
-// - Content stays top-aligned; extra space goes below via Spacer.
-// - No collapse/expand — everything is always visible and scrollable in one container.
 
 private struct SettingsGroup<Content: View>: View {
     let icon: String
     let title: String
+    var caption: String? = nil
+    var flash: Bool = false
 
     @ViewBuilder let content: () -> Content
 
@@ -1292,27 +1654,39 @@ private struct SettingsGroup<Content: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: DisplayScale.points(8)) {
+            HStack(spacing: LuminaSpace.sm) {
                 Image(systemName: icon)
                     .font(.system(size: uiScale.iconSize(.card), weight: .semibold))
                     .foregroundStyle(theme.current.color)
                     .frame(width: DisplayScale.points(20), alignment: .center)
                 Text(title)
-                    .font(uiScale.scaledFont(13, weight: .semibold))
+                    .font(uiScale.font(.bodyStrong))
                     .foregroundStyle(.primary)
+                Spacer(minLength: 0)
+                if let caption {
+                    Text(caption)
+                        .font(uiScale.font(.caption))
+                        .foregroundStyle(.secondary)
+                }
             }
-            .padding(.horizontal, DisplayScale.points(10))
-            .padding(.top, DisplayScale.points(8))
-            .padding(.bottom, DisplayScale.points(4))
+            .padding(.bottom, LuminaSpace.sm)
 
-            VStack(alignment: .leading, spacing: DisplayScale.points(8)) {
+            VStack(alignment: .leading, spacing: LuminaSpace.md) {
                 content()
             }
-            .padding(.horizontal, DisplayScale.points(10))
-            .padding(.bottom, DisplayScale.points(10))
         }
+        .padding(LuminaSpace.cardPadding)
         .frame(maxWidth: .infinity, alignment: .topLeading)
-        .luminaGlassPanel(cornerRadius: 10)
+        .luminaGlassPanel(cornerRadius: LuminaRadius.panel)
+        .overlay(
+            RoundedRectangle(cornerRadius: LuminaRadius.panel, style: .continuous)
+                .strokeBorder(
+                    flash && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+                        ? theme.current.color
+                        : Color.clear,
+                    lineWidth: flash && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 2 : 0
+                )
+        )
     }
 }
 
@@ -1324,6 +1698,16 @@ extension VideoScaling {
         case .fit: return "Fit"
         case .fill: return "Fill (Crop)"
         case .stretch: return "Stretch"
+        }
+    }
+}
+
+private extension LoopMode {
+    var uiDescription: String {
+        switch self {
+        case .loop: return "Starts over."
+        case .once: return "Plays once, then shows black."
+        case .bounce: return "Plays forward, then backward."
         }
     }
 }

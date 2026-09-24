@@ -23,7 +23,6 @@ struct SplashScreenView: View {
     var onFinished: () -> Void
 
     @State private var wordmarkVisible = false
-    @State private var auroraPhase = false
     @State private var cardOpacity: Double = 0
     @State private var cardScale: CGFloat = 0.96
     @State private var isDismissing = false
@@ -32,28 +31,21 @@ struct SplashScreenView: View {
         NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
     }
 
-    // Shared palette — echoes the "living wallpaper" identity.
-    private let inkGradient: [Color] = [
-        Color(red: 0.62, green: 0.87, blue: 1.0),   // ice blue
-        Color(red: 0.72, green: 0.62, blue: 1.0),   // violet
-        Color(red: 1.0,  green: 0.78, blue: 0.55)   // warm amber tail
-    ]
-
     var body: some View {
         ZStack {
-            background
+            LuminaBrand.auroraBackground(animated: !reduceMotion)
 
-            VStack(spacing: 14) {
+            VStack(spacing: LuminaSpace.md) {
                 CursiveLSView(
                     lineWidth: DisplayScale.points(3.0),
                     color: .white,
                     animate: !reduceMotion,
-                    animationDuration: 2.2,
-                    gradientColors: inkGradient,
+                    animationDuration: 1.8,
+                    gradientColors: LuminaBrand.ink,
                     glowRadius: DisplayScale.points(6),
                     onDrawingComplete: { revealWordmarkAndScheduleDismiss() }
                 )
-                .padding(.top, DisplayScale.points(6))
+                .padding(.top, LuminaSpace.tight)
 
                 Text("Lumina Studio")
                     .font(.system(size: DisplayScale.points(20), weight: .semibold, design: .serif))
@@ -62,13 +54,13 @@ struct SplashScreenView: View {
                     .opacity(wordmarkVisible ? 1 : 0)
                     .offset(y: wordmarkVisible ? 0 : 8)
             }
-            .padding(.horizontal, DisplayScale.points(32))
-            .padding(.vertical, DisplayScale.points(28))
+            .padding(.horizontal, LuminaSpace.xxxl)
+            .padding(.vertical, LuminaMetrics.heroPadding)
         }
         .scaledFrame(width: 360, height: 260)
-        .clipShape(RoundedRectangle(cornerRadius: DisplayScale.points(18), style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: LuminaRadius.floating, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: DisplayScale.points(18), style: .continuous)
+            RoundedRectangle(cornerRadius: LuminaRadius.floating, style: .continuous)
                 .strokeBorder(
                     LinearGradient(
                         colors: [.white.opacity(0.22), .white.opacity(0.05)],
@@ -79,48 +71,13 @@ struct SplashScreenView: View {
         )
         .scaleEffect(cardScale)
         .opacity(cardOpacity)
-        .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: LuminaRadius.floating, style: .continuous))
         .onTapGesture { dismiss() }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Lumina is starting")
+        .accessibilityAddTraits(.isStaticText)
+        .accessibilityAction(named: "Dismiss") { dismiss() }
         .onAppear { enter() }
-    }
-
-    // MARK: Background
-
-    private var background: some View {
-        ZStack {
-            // Base: near-black with a hint of indigo so it reads richer than flat black.
-            LinearGradient(
-                colors: [
-                    Color(red: 0.04, green: 0.04, blue: 0.09),
-                    Color(red: 0.02, green: 0.02, blue: 0.04)
-                ],
-                startPoint: .top, endPoint: .bottom
-            )
-
-            // Aurora glows — soft orbs sized for the compact card.
-            auroraOrb(Color(red: 0.25, green: 0.45, blue: 0.95), opacity: 0.38, diameter: 300)
-                .offset(x: auroraPhase ? -90 : -50, y: auroraPhase ? -70 : -100)
-
-            auroraOrb(Color(red: 0.55, green: 0.30, blue: 0.85), opacity: 0.34, diameter: 280)
-                .offset(x: auroraPhase ? 100 : 70, y: auroraPhase ? 80 : 110)
-
-            // Fine vignette to focus the monogram.
-            RadialGradient(
-                colors: [.clear, .black.opacity(0.45)],
-                center: .center, startRadius: 60, endRadius: 220
-            )
-        }
-    }
-
-    /// A soft-edged glow orb: fully colored at the center, fading to clear at the rim.
-    private func auroraOrb(_ color: Color, opacity: Double, diameter: CGFloat) -> some View {
-        RadialGradient(
-            colors: [color.opacity(opacity), color.opacity(opacity * 0.5), .clear],
-            center: .center,
-            startRadius: 0,
-            endRadius: diameter / 2
-        )
-        .frame(width: diameter, height: diameter)
     }
 
     // MARK: Lifecycle
@@ -131,16 +88,13 @@ struct SplashScreenView: View {
             cardScale = 1
             wordmarkVisible = true
             // Static card: shorter hold, then out.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { dismiss() }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { dismiss() }
             return
         }
 
-        withAnimation(.easeOut(duration: 0.45)) {
+        withAnimation(.easeOut(duration: LuminaMotion.splashIn)) {
             cardOpacity = 1
             cardScale = 1
-        }
-        withAnimation(.easeInOut(duration: 6).repeatForever(autoreverses: true)) {
-            auroraPhase = true
         }
     }
 
@@ -149,13 +103,13 @@ struct SplashScreenView: View {
             wordmarkVisible = true
         }
         // Hold long enough to read the wordmark, then leave.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) { dismiss() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { dismiss() }
     }
 
     private func dismiss() {
         guard !isDismissing else { return }
         isDismissing = true
-        withAnimation(.easeIn(duration: 0.45)) {
+        withAnimation(.easeIn(duration: LuminaMotion.splashOut)) {
             cardOpacity = 0
             cardScale = 0.97
         }

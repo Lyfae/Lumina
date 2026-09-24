@@ -1,5 +1,6 @@
 import SwiftUI
 import AVFoundation
+import AppKit
 
 /// Interactive crop editor — drag to reposition, corners to resize, dimmed area outside the crop.
 /// Crop is stored as a normalized `CGRect` (0–1, top-left origin) locked to the monitor aspect.
@@ -22,8 +23,9 @@ struct CropRectangle: View {
     @State private var dragStartRect: CGRect = .zero
     @State private var activeHandle: CropHandle? = nil
     @State private var resolvedSourceAspect: CGFloat = 16.0 / 9.0
+    @FocusState private var isCropFocused: Bool
 
-    private let previewCornerRadius: CGFloat = 10
+    private var previewCornerRadius: CGFloat { LuminaRadius.panel }
     private let minSize: CGFloat = 0.05
     private var handleArm: CGFloat { DisplayScale.points(18) }
     private var handleHit: CGFloat { DisplayScale.points(44) }
@@ -66,7 +68,7 @@ struct CropRectangle: View {
                     )
                     .frame(width: mediaR.width, height: mediaR.height)
                     .position(x: mediaR.midX, y: mediaR.midY)
-                    .clipShape(RoundedRectangle(cornerRadius: previewCornerRadius - 2))
+                    .clipShape(RoundedRectangle(cornerRadius: previewCornerRadius, style: .continuous))
                 } else {
                     Color.black.opacity(0.7)
                         .frame(width: mediaR.width, height: mediaR.height)
@@ -77,11 +79,8 @@ struct CropRectangle: View {
                 CropDimMask(mediaRect: mediaR, cropRect: cropR)
                     .allowsHitTesting(false)
 
-                if isInteracting {
-                    CropGridOverlay(rect: cropR)
-                        .allowsHitTesting(false)
-                        .transition(.opacity)
-                }
+                CropGridOverlay(rect: cropR, opacity: isInteracting ? LuminaMetrics.cropGridOpacity : 0.2)
+                    .allowsHitTesting(false)
 
                 // Crop frame + drag surface
                 Rectangle()
@@ -97,6 +96,49 @@ struct CropRectangle: View {
                     .frame(width: cropR.width, height: cropR.height)
                     .position(x: cropR.midX, y: cropR.midY)
                     .gesture(dragGesture(in: mediaR))
+                    .focusable()
+                    .focused($isCropFocused)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Crop area")
+                    .accessibilityAction(named: "Move left") { nudgeCrop(dx: -0.01, dy: 0) }
+                    .accessibilityAction(named: "Move right") { nudgeCrop(dx: 0.01, dy: 0) }
+                    .accessibilityAction(named: "Move up") { nudgeCrop(dx: 0, dy: -0.01) }
+                    .accessibilityAction(named: "Move down") { nudgeCrop(dx: 0, dy: 0.01) }
+                    .accessibilityAction(named: "Larger") { scaleCrop(by: 1.05) }
+                    .accessibilityAction(named: "Smaller") { scaleCrop(by: 0.95) }
+                    .accessibilityAction(named: "Reset") {
+                        let newR = Self.centeredCrop(normalizedAspect: normalizedLockAspect, scale: 0.88)
+                        cropRect = newR
+                        onChange(newR)
+                    }
+                    .onKeyPress(.leftArrow) {
+                        nudgeCrop(dx: NSEvent.modifierFlags.contains(.shift) ? -0.10 : -0.01, dy: 0)
+                        return .handled
+                    }
+                    .onKeyPress(.rightArrow) {
+                        nudgeCrop(dx: NSEvent.modifierFlags.contains(.shift) ? 0.10 : 0.01, dy: 0)
+                        return .handled
+                    }
+                    .onKeyPress(.upArrow) {
+                        nudgeCrop(dx: 0, dy: NSEvent.modifierFlags.contains(.shift) ? -0.10 : -0.01)
+                        return .handled
+                    }
+                    .onKeyPress(.downArrow) {
+                        nudgeCrop(dx: 0, dy: NSEvent.modifierFlags.contains(.shift) ? 0.10 : 0.01)
+                        return .handled
+                    }
+                    .onKeyPress("=") {
+                        scaleCrop(by: 1.05)
+                        return .handled
+                    }
+                    .onKeyPress("+") {
+                        scaleCrop(by: 1.05)
+                        return .handled
+                    }
+                    .onKeyPress("-") {
+                        scaleCrop(by: 0.95)
+                        return .handled
+                    }
 
                 ForEach(CropHandle.allCases, id: \.self) { handle in
                     CropCornerHandle(alignment: handle.bracketAlignment, armLength: handleArm)
@@ -111,9 +153,9 @@ struct CropRectangle: View {
                 }
             }
         }
-        .clipShape(RoundedRectangle(cornerRadius: previewCornerRadius))
-        .animation(.easeOut(duration: 0.12), value: isDragging)
-        .animation(.easeOut(duration: 0.12), value: activeHandle?.rawValue)
+        .clipShape(RoundedRectangle(cornerRadius: previewCornerRadius, style: .continuous))
+        .animation(LuminaMotion.hover, value: isDragging)
+        .animation(LuminaMotion.hover, value: activeHandle?.rawValue)
         .task(id: assignment?.filePath) {
             if let sourceAspect, sourceAspect > 0 {
                 resolvedSourceAspect = sourceAspect
@@ -138,12 +180,43 @@ struct CropRectangle: View {
     }
 
     private var previewChrome: some View {
-        RoundedRectangle(cornerRadius: previewCornerRadius)
-            .fill(Color.black.opacity(0.85))
+        RoundedRectangle(cornerRadius: previewCornerRadius, style: .continuous)
+            .fill(LuminaBrand.previewBackdrop)
             .overlay(
-                RoundedRectangle(cornerRadius: previewCornerRadius)
+                RoundedRectangle(cornerRadius: previewCornerRadius, style: .continuous)
                     .stroke(Color.luminaBorder, lineWidth: 1)
             )
+    }
+
+    private func nudgeCrop(dx: CGFloat, dy: CGFloat) {
+        var r = cropRect.offsetBy(dx: dx, dy: dy)
+        r = clampedToBounds(r)
+        cropRect = r
+        onChange(r)
+    }
+
+    private func scaleCrop(by factor: CGFloat) {
+        let cx = cropRect.midX
+        let cy = cropRect.midY
+        var w = cropRect.width * factor
+        var h = cropRect.height * factor
+        let aspect = normalizedLockAspect
+        if aspect > 0 {
+            h = w / aspect
+        }
+        w = max(minSize, min(1, w))
+        h = max(minSize, min(1, h))
+        if aspect > 0 {
+            h = w / aspect
+            if h > 1 {
+                h = 1
+                w = h * aspect
+            }
+        }
+        var r = CGRect(x: cx - w / 2, y: cy - h / 2, width: w, height: h)
+        r = clampedToBounds(r)
+        cropRect = r
+        onChange(r)
     }
 
     // MARK: - Public helpers
@@ -395,7 +468,7 @@ private struct CropDimMask: View {
         Canvas { context, _ in
             var path = Path(mediaRect)
             path.addRect(cropRect)
-            context.fill(path, with: .color(.black.opacity(0.62)), style: FillStyle(eoFill: true))
+            context.fill(path, with: .color(Color.luminaScrim), style: FillStyle(eoFill: true))
         }
         .allowsHitTesting(false)
     }
@@ -403,6 +476,7 @@ private struct CropDimMask: View {
 
 private struct CropGridOverlay: View {
     let rect: CGRect
+    var opacity: Double = LuminaMetrics.cropGridOpacity
 
     var body: some View {
         ZStack {
@@ -412,12 +486,12 @@ private struct CropGridOverlay: View {
                     p.move(to: CGPoint(x: rect.minX + rect.width * t, y: rect.minY))
                     p.addLine(to: CGPoint(x: rect.minX + rect.width * t, y: rect.maxY))
                 }
-                .stroke(Color.white.opacity(0.35), lineWidth: 0.5)
+                .stroke(Color.white.opacity(opacity), lineWidth: 0.5)
                 Path { p in
                     p.move(to: CGPoint(x: rect.minX, y: rect.minY + rect.height * t))
                     p.addLine(to: CGPoint(x: rect.maxX, y: rect.minY + rect.height * t))
                 }
-                .stroke(Color.white.opacity(0.35), lineWidth: 0.5)
+                .stroke(Color.white.opacity(opacity), lineWidth: 0.5)
             }
         }
     }

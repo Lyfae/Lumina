@@ -57,10 +57,10 @@ struct WallpaperPreview: View {
         GeometryReader { geometry in
             ZStack {
                 if showsChrome {
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(Color.black.opacity(0.85))
+                    RoundedRectangle(cornerRadius: LuminaRadius.panel, style: .continuous)
+                        .fill(LuminaBrand.previewBackdrop)
                         .overlay(
-                            RoundedRectangle(cornerRadius: 10)
+                            RoundedRectangle(cornerRadius: LuminaRadius.panel, style: .continuous)
                                 .stroke(Color.luminaBorder, lineWidth: 1)
                         )
                 }
@@ -76,16 +76,9 @@ struct WallpaperPreview: View {
                         } else if let thumb = thumbnail {
                             thumbnailView(thumb, assignment: assign, size: geometry.size)
                         } else if isLoading {
-                            ProgressView()
-                                .tint(.white)
+                            LuminaLoadingView(label: "Loading preview…", onMedia: true)
                         } else {
-                            VStack(spacing: 8) {
-                                Image(systemName: "photo")
-                                    .font(.system(size: 32))
-                                Text("Generating preview…")
-                                    .font(.caption)
-                            }
-                            .foregroundStyle(.white.opacity(0.6))
+                            LuminaLoadingView(label: "Loading preview…", onMedia: true)
                         }
                     }
                     // WYSIWYG effect overlays — mirror the per-monitor adjustments so the preview
@@ -96,13 +89,8 @@ struct WallpaperPreview: View {
                     .brightness(brightness)
                     .opacity(previewOpacity)
                 } else {
-                    VStack(spacing: 8) {
-                        Image(systemName: "display")
-                            .font(.system(size: 36))
-                        Text("No wallpaper assigned")
-                            .font(.callout)
-                    }
-                    .foregroundStyle(.white.opacity(0.5))
+                    LuminaEmptyState(icon: "display", title: "No wallpaper yet", compact: true)
+                        .foregroundStyle(.white.opacity(0.85))
                 }
             }
         }
@@ -141,7 +129,6 @@ struct WallpaperPreview: View {
 
     @ViewBuilder
     private func thumbnailView(_ image: NSImage, assignment: MonitorAssignment, size: CGSize) -> some View {
-        let mediaType = assignment.mediaType
         let scaling = effectiveScaling
 
         GeometryReader { geo in
@@ -170,24 +157,13 @@ struct WallpaperPreview: View {
                     }
                 }
             }
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .clipShape(RoundedRectangle(cornerRadius: LuminaRadius.panel, style: .continuous))
         }
-        .overlay(alignment: .bottomTrailing) {
+        .overlay(alignment: .bottomLeading) {
             if showsChrome {
-                HStack(spacing: DisplayScale.points(4)) {
-                    let icon = mediaType == .video ? "play.rectangle.fill" :
-                               mediaType == .animatedImage ? "photo.stack.fill" : "photo.fill"
-                    Image(systemName: icon)
-                        .font(.system(size: DisplayScale.points(10), weight: .semibold))
-                    Text(assignment.displayName)
-                        .font(.system(size: DisplayScale.points(11), weight: .medium))
-                        .lineLimit(1)
-                }
-                .padding(.horizontal, DisplayScale.points(8))
-                .padding(.vertical, DisplayScale.points(4))
-                .background(.ultraThinMaterial, in: Capsule())
-                .padding(6)
-                .foregroundStyle(.white)
+                LuminaOverlayChip(text: assignment.displayName)
+                    .padding(LuminaSpace.sm)
+                    .accessibilityHidden(true)
             }
         }
     }
@@ -202,10 +178,10 @@ struct WallpaperPreview: View {
                     .frame(width: renderSize.width, height: renderSize.height)
                     .clipped()
             }
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .clipShape(RoundedRectangle(cornerRadius: LuminaRadius.panel, style: .continuous))
         } else {
             Color.black.opacity(0.7)
-                .overlay(ProgressView().tint(.white))
+                .overlay(LuminaLoadingView(label: "Loading preview…", onMedia: true))
         }
     }
 
@@ -234,21 +210,12 @@ struct WallpaperPreview: View {
             }
             .frame(width: renderSize.width, height: renderSize.height)
         }
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(alignment: .bottomTrailing) {
+        .clipShape(RoundedRectangle(cornerRadius: LuminaRadius.panel, style: .continuous))
+        .overlay(alignment: .bottomLeading) {
             if showsChrome {
-                HStack(spacing: DisplayScale.points(4)) {
-                    Image(systemName: "film")
-                        .font(.system(size: DisplayScale.points(10), weight: .semibold))
-                    Text(assignment.displayName)
-                        .font(.system(size: DisplayScale.points(11), weight: .medium))
-                        .lineLimit(1)
-                }
-                .padding(.horizontal, DisplayScale.points(8))
-                .padding(.vertical, DisplayScale.points(4))
-                .background(.ultraThinMaterial, in: Capsule())
-                .padding(6)
-                .foregroundStyle(.white)
+                LuminaOverlayChip(text: assignment.displayName)
+                    .padding(LuminaSpace.sm)
+                    .accessibilityHidden(true)
             }
         }
     }

@@ -11,7 +11,8 @@ let package = Package(
     name: "Lumina",
     platforms: [.macOS(.v15)],
     products: [
-        .executable(name: "Lumina", targets: ["Lumina"])
+        .executable(name: "Lumina", targets: ["Lumina"]),
+        .library(name: "LuminaCore", targets: ["LuminaCore"]),
     ],
     dependencies: [
         // Future lightweight dependencies (added as needed):
@@ -19,14 +20,19 @@ let package = Package(
         // .package(url: "https://github.com/sindresorhus/Defaults", from: "8.0.0"),
     ],
     targets: [
+        .target(
+            name: "LuminaCore",
+            path: "Sources/LuminaCore"
+        ),
         .executableTarget(
             name: "Lumina",
             dependencies: [
+                "LuminaCore",
                 // "KeyboardShortcuts",
                 // "Defaults",
             ],
             path: "Sources/Lumina",
-            // SPM automatically discovers all .swift files. 
+            // SPM automatically discovers all .swift files.
             // Resources (custom Grok Imagine icons, future assets) are declared separately.
             resources: [
                 .process("Resources")
@@ -54,6 +60,11 @@ let package = Package(
                 // Strip unreachable code/data from the release binary.
                 .unsafeFlags(["-Xlinker", "-dead_strip"], .when(configuration: .release))
             ]
+        ),
+        .testTarget(
+            name: "LuminaCoreTests",
+            dependencies: ["LuminaCore"],
+            path: "Tests/LuminaCoreTests"
         ),
         .testTarget(
             name: "LuminaTests",

@@ -30,7 +30,8 @@ extension View {
     }
 
     /// Raised panel inside Studio (Settings fields, Adjust groups, search).
-    /// Solid card surface — glass stacking inside the window looked busy.
+    /// `cornerRadius` is a design-baseline value (scaled here). Prefer passing `10`
+    /// (panel) until call sites move to bare `luminaGlassPanel()` / token defaults.
     func luminaGlassPanel(cornerRadius: CGFloat = 10) -> some View {
         let radius = DisplayScale.points(cornerRadius)
         let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
@@ -39,17 +40,32 @@ extension View {
             .overlay(shape.strokeBorder(Color.luminaBorder, lineWidth: 1))
     }
 
-    /// Header / footer strip — system bar material (Tahoe can style this).
+    /// Header / footer strip — glass or solid per `LuminaLook`, always solid under Reduce Transparency.
     func luminaGlassChrome() -> some View {
-        self.background(.bar)
+        modifier(LuminaGlassChromeModifier())
     }
 
-    /// Floating overlay card — solid surface (no Liquid Glass).
-    func luminaFloatingGlass(cornerRadius: CGFloat = 18) -> some View {
+    /// Floating overlay card — solid surface (no Liquid Glass). Default radius = widget (14).
+    func luminaFloatingGlass(cornerRadius: CGFloat = 14) -> some View {
         let radius = DisplayScale.points(cornerRadius)
         let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
         return self
             .background(Color.luminaCard, in: shape)
             .overlay(shape.strokeBorder(Color.luminaBorder, lineWidth: 1))
+    }
+}
+
+@MainActor
+private struct LuminaGlassChromeModifier: ViewModifier {
+    @ObservedObject private var look = LuminaLook.shared
+
+    func body(content: Content) -> some View {
+        let reduce = NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency
+        let solid = reduce || look.material == .solid
+        if solid {
+            content.background(Color.luminaCard)
+        } else {
+            content.background(.bar)
+        }
     }
 }

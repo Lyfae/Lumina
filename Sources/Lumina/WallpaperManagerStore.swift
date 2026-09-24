@@ -2,97 +2,92 @@ import SwiftUI
 import AppKit
 import Combine
 
-/// Observable store for the Wallpaper Manager.
-/// Manages monitor detection and per-monitor video assignments.
-///
-/// This is intentionally a thin presenter / view model layer.
-/// AssignmentStore (owned by LuminaApp) is the single source of truth for
-/// all per-monitor assignments and the global "persist assignments" preference.
+/// Observable store for the Wallpaper Manager (Studio).
+/// Settings bind into PreferencesStore; this type keeps side-effect commands and UI snapshots.
 @MainActor
 final class WallpaperManagerStore: ObservableObject {
-    
+
     @Published var monitors: [MonitorInfo] = []
     @Published var persistAssignments: Bool = true
-    
-    /// The monitor the user has chosen to configure in the main Wallpaper Manager.
-    /// This is the single source of truth for "which display the right panel is editing".
     @Published var selectedMonitorID: String? = nil
-    
-    /// When enabled, all active wallpapers will attempt to start playback at the same time
-    /// (useful for multi-monitor setups so videos don't drift or start at different times).
+    /// Kept for Settings UI; shared sources make continuous sync unnecessary (step 8).
     @Published var syncPlaybackAcrossDisplays: Bool = false
-
-    /// Cached library grid — rebuilt when assignments change (avoids resolving bookmarks every SwiftUI frame).
     @Published private(set) var recentMedia: [RecentMedia] = []
 
     weak var appDelegate: LuminaApp? {
-        didSet { bindAssignmentStoreIfNeeded() }
+        didSet { rebuildRecentMedia(); syncPersistencePreference() }
     }
-
-    private var assignmentCancellable: AnyCancellable?
 
     init() {
         refreshDisplays()
         syncPersistencePreference()
-        loadSyncPlaybackSetting()
     }
 
-    private func bindAssignmentStoreIfNeeded() {
-        assignmentCancellable = nil
-        guard let central = appDelegate?.assignmentStore else { return }
-        assignmentCancellable = central.$assignments
-            .receive(on: RunLoop.main)
-            .sink { [weak self] _ in self?.rebuildRecentMedia() }
-        rebuildRecentMedia()
-    }
-
-    /// Rebuilds the library grid from AssignmentStore. Called on assignment changes only.
     func rebuildRecentMedia() {
+        guard let prefs = appDelegate?.preferencesStore else {
+            recentMedia = []
+            return
+        }
         var seenPaths = Set<String>()
         var result: [RecentMedia] = []
 
-        for (_, assignment) in appDelegate?.assignmentStore.assignments ?? [:] {
-            let url: URL? = assignment.resolvedURL() ?? assignment.filePath.map {
-                URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath)
+        for item in prefs.wallpapers.library {
+            let path = item.media.identity.path
+            if seenPaths.contains(path) { continue }
+            seenPaths.insert(path)
+            let url = URL(fileURLWithPath: path)
+            let mediaType: MediaType
+            switch item.media.kind {
+            case .image: mediaType = .image
+            case .animatedImage: mediaType = .animatedImage
+            case .video: mediaType = .video
             }
-            guard let url else { continue }
-
-            let expandedPath = url.path
-            if seenPaths.contains(expandedPath) { continue }
-            seenPaths.insert(expandedPath)
-
             result.append(RecentMedia(
-                id: expandedPath,
+                id: path,
                 url: url,
-                mediaType: assignment.mediaType,
+                mediaType: mediaType,
                 displayName: url.lastPathComponent
             ))
         }
-
+        for (_, wallpaper) in prefs.wallpapers.byDisplay {
+            if case .media(let ref) = wallpaper.content {
+                let path = ref.identity.path
+                if seenPaths.contains(path) { continue }
+                seenPaths.insert(path)
+                let url = URL(fileURLWithPath: path)
+                let mediaType: MediaType
+                switch ref.kind {
+                case .image: mediaType = .image
+                case .animatedImage: mediaType = .animatedImage
+                case .video: mediaType = .video
+                }
+                result.append(RecentMedia(
+                    id: path,
+                    url: url,
+                    mediaType: mediaType,
+                    displayName: url.lastPathComponent
+                ))
+            }
+        }
         recentMedia = result.sorted {
             $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
         }
     }
 
-    // MARK: - Display Detection (with better identification)
-
     func refreshDisplays() {
         syncPersistencePreference()
-
         let screens = NSScreen.screens
-
         monitors = screens.enumerated().map { index, screen in
             let resolution = "\(Int(screen.frame.width))×\(Int(screen.frame.height))"
             let isPrimary = screen == NSScreen.main
             let id = MonitorInfo.identifier(for: screen, index: index)
-
             var assignedName: String? = nil
-            if persistAssignments,
-               let assignment = self.assignment(for: id),
-               let path = assignment.filePath {
+            if let assignment = assignment(for: id), let path = assignment.filePath {
                 assignedName = URL(fileURLWithPath: path).lastPathComponent
+            } else if case .slideshow(let spec) = appDelegate?.preferencesStore.wallpapers[display: DisplayKey(id)].content,
+                      let first = spec.items.first {
+                assignedName = URL(fileURLWithPath: first.identity.path).lastPathComponent
             }
-
             return MonitorInfo(
                 id: id,
                 name: screen.localizedName.isEmpty ? "Display \(index + 1)" : screen.localizedName,
@@ -101,492 +96,260 @@ final class WallpaperManagerStore: ObservableObject {
                 assignedVideoName: assignedName
             )
         }
+        rebuildRecentMedia()
     }
-    
-    /// Returns layout information for visual monitor arrangement.
-    func getMonitorLayout() -> MonitorLayout {
-        return MonitorLayout()
-    }
-    
-    // MARK: - Video Assignment
-    
+
+    func getMonitorLayout() -> MonitorLayout { MonitorLayout() }
+
     func chooseVideo(for monitor: MonitorInfo) {
         guard let index = monitors.firstIndex(where: { $0.id == monitor.id }) else { return }
-
         guard let url = MediaAccessPolicy.runWallpaperPicker(
             title: "Choose wallpaper for \(monitor.name)",
             message: "This will change the wallpaper on the currently selected display."
         ).first else { return }
-
-        // The app delegate path is the single source of truth for assignment creation,
-        // bookmark handling, persistence (when keepOnStartup is set), and renderer loading.
         appDelegate?.assignVideoToMonitor(monitorID: monitor.id, url: url)
-        
-        // Update only the local UI snapshot. The real data lives in AssignmentStore.
         monitors[index].assignedVideoName = url.lastPathComponent
-        
-        LuminaLog.app.info("Assigned media to \(monitor.id) via central store")
+        rebuildRecentMedia()
     }
-    
+
     func clearAssignment(for monitor: MonitorInfo) {
         guard let index = monitors.firstIndex(where: { $0.id == monitor.id }) else { return }
-
-        // Blank the display and remove the assignment cleanly.
         appDelegate?.clearMonitor(monitorID: monitor.id)
         monitors[index].assignedVideoName = nil
-
-        // Also clear legacy global persistence so it doesn't leak back on next launch.
-        WallpaperPersistence.clearLastVideo()
+        rebuildRecentMedia()
     }
-    
-    /// Convenience for the floating Physical Setup window.
+
     func chooseVideoForMonitorID(monitorID: String, url: URL) {
         appDelegate?.assignVideoToMonitor(monitorID: monitorID, url: url)
-        
         if let index = monitors.firstIndex(where: { $0.id == monitorID }) {
             monitors[index].assignedVideoName = url.lastPathComponent
         }
+        rebuildRecentMedia()
     }
-    
+
     func clearAssignmentForMonitorID(monitorID: String) {
         appDelegate?.clearMonitor(monitorID: monitorID)
-
         if let index = monitors.firstIndex(where: { $0.id == monitorID }) {
             monitors[index].assignedVideoName = nil
         }
-
-        // Nuke legacy global persistence to prevent old paths from leaking on restart
-        WallpaperPersistence.clearLastVideo()
+        rebuildRecentMedia()
     }
-    
-    /// Called from the detail panel when toggling "Keep on startup"
-    func setKeepOnStartup(for monitor: MonitorInfo, enabled: Bool) {
-        // Update the central AssignmentStore
-        if var assignment = appDelegate?.assignmentStore.assignment(for: monitor.id) {
-            assignment.keepOnStartup = enabled
-            appDelegate?.assignmentStore.updateAssignment(assignment)
-        } else {
-            // Create a minimal assignment if none exists yet
-            var newAssignment = MonitorAssignment(monitorIdentifier: monitor.id)
-            newAssignment.keepOnStartup = enabled
-            appDelegate?.assignmentStore.updateAssignment(newAssignment)
-        }
 
-        // When the user explicitly turns the toggle OFF, force a save so the
-        // filtered persistence immediately drops this monitor (prevents stale keep-on-startup entries).
-        if !enabled {
-            appDelegate?.assignmentStore.forceSaveAssignments()
-        }
-        
+    func setKeepOnStartup(for monitor: MonitorInfo, enabled: Bool) {
+        guard let prefs = appDelegate?.preferencesStore else { return }
+        var wallpaper = prefs.wallpapers[display: DisplayKey(monitor.id)]
+        wallpaper.pinned = enabled
+        var next = prefs.wallpapers
+        next[display: DisplayKey(monitor.id)] = wallpaper
+        prefs.wallpapers = next
         LuminaLog.wallpaper.info("Keep on startup for \(monitor.name) set to \(enabled)")
     }
-    
-    /// Helper used by the detail panel to read the current full assignment
+
     func assignment(for monitorID: String) -> MonitorAssignment? {
-        return appDelegate?.assignmentStore.assignment(for: monitorID)
+        appDelegate?.preferencesStore.wallpaperAssignment(for: monitorID)
     }
-    
-    // MARK: - Recent Videos Canvas (for quick re-use across displays)
-    
-    /// Lightweight representation of a previously used wallpaper for the "recent canvas".
-    /// Uses a stable ID based on the file path so SwiftUI ForEach can correctly track
-    /// selection/highlighting when the user clicks different items in the grid.
+
     struct RecentMedia: Identifiable {
-        let id: String   // stable path-based identity
+        let id: String
         let url: URL
         let mediaType: MediaType
         let displayName: String
     }
-    
-    /// Applies an existing media file (from the recent canvas or any known URL) to a specific monitor.
-    /// This is the key action behind "click a previous video to change the screensaver on the selected display".
+
     func applyRecentMedia(to monitorID: String, url: URL) {
-        // Re-use the central assignment path — it handles renderer swap, low-power variants,
-        // bookmark creation, persistence, and live application.
         appDelegate?.assignVideoToMonitor(monitorID: monitorID, url: url)
-        
-        // Refresh the local snapshot so the UI (pills, names) updates immediately
         if let index = monitors.firstIndex(where: { $0.id == monitorID }) {
             monitors[index].assignedVideoName = url.lastPathComponent
         }
-        
-        LuminaLog.wallpaper.info("Applied recent media \(url.lastPathComponent) to \(monitorID)")
+        rebuildRecentMedia()
     }
-    
-    /// Removes a media entry from the library grid by its stable path-based ID.
-    /// Clears the renderer for any monitor that was actively using this file.
+
     func removeFromLibrary(id: String) {
-        guard let central = appDelegate?.assignmentStore else { return }
-
-        // Remove every assignment (library-import or monitor) that references this path
-        let toRemove = central.assignments.filter { (_, assignment) in
-            let path = assignment.filePath.map { ($0 as NSString).expandingTildeInPath }
-                ?? assignment.resolvedURL()?.path
-            return path == id
-        }.map { $0.key }
-
-        for key in toRemove {
-            // If it's a real monitor, black out the renderer first
-            if !key.hasPrefix("library-import-") {
-                appDelegate?.clearRenderer(for: key)
-                if let index = monitors.firstIndex(where: { $0.id == key }) {
+        guard let prefs = appDelegate?.preferencesStore else { return }
+        // Remove library entries matching path, and clear monitors using it.
+        for (key, wallpaper) in prefs.wallpapers.byDisplay {
+            if case .media(let ref) = wallpaper.content, ref.identity.path == id {
+                appDelegate?.clearMonitor(monitorID: key.rawValue)
+                if let index = monitors.firstIndex(where: { $0.id == key.rawValue }) {
                     monitors[index].assignedVideoName = nil
                 }
             }
-            central.removeAssignment(for: key)
         }
-
+        var next = prefs.wallpapers
+        next.library.removeAll { $0.media.identity.path == id || $0.id == id }
+        prefs.wallpapers = next
         refreshDisplays()
     }
 
-    /// Adds a media file to the local library. Validates folder access unless skipped (e.g. compressed output).
     func addMediaToLibrary(url: URL, enforceAccessPolicy: Bool = true) {
         if enforceAccessPolicy {
             guard MediaAccessPolicy.accept(url) else { return }
         } else {
             _ = FileAccess.registerUserSelectedFile(url)
         }
-        // Deduplicate by file path — re-importing the same file used to add another
-        // library-import entry every time, growing the persisted library without bound.
-        if let central = appDelegate?.assignmentStore {
-            let alreadyInLibrary = central.assignments.contains { key, assignment in
-                key.hasPrefix("library-import-")
-                    && assignment.filePath.map { ($0 as NSString).expandingTildeInPath } == url.path
-            }
-            if alreadyInLibrary {
-                LuminaLog.wallpaper.debug("Media already in library: \(url.lastPathComponent)")
-                return
-            }
+        guard let prefs = appDelegate?.preferencesStore else { return }
+        if prefs.wallpapers.library.contains(where: { $0.media.identity.path == url.path }) {
+            return
         }
-
-        // We create a minimal record in the central store so it shows up in recentMedia.
-        let tempMonitorID = "library-import-\(UUID().uuidString)"
-
-        var assignment = MonitorAssignment(monitorIdentifier: tempMonitorID)
-        assignment.filePath = url.path
-        assignment.keepOnStartup = false
-        assignment.mediaType = MediaType.from(url: url)
-        assignment.updateBookmark(from: url)
-        
-        // Store it under a library key so recentMedia can pick it up.
-        // For simplicity we reuse the normal assignment path but mark it clearly.
-        // A cleaner long-term solution would be a dedicated library array.
-        appDelegate?.assignmentStore.updateAssignment(assignment)
-        
-        // Force a refresh so the left grid updates immediately
+        let ref = prefs.mediaReference(from: url)
+        var next = prefs.wallpapers
+        next.library.append(LibraryItem(id: "library-import-\(UUID().uuidString)", media: ref))
+        prefs.wallpapers = next
         rebuildRecentMedia()
         refreshDisplays()
-        
-        LuminaLog.wallpaper.info("Imported media to library: \(url.lastPathComponent)")
     }
 
-    // MARK: - Live Settings (scaling, speed) — wired to central store + engine
+    // MARK: - Live settings → prefs (engine replans)
+
+    private func mutateWallpaper(for monitor: MonitorInfo, _ body: (inout DisplayWallpaper) -> Void) {
+        guard let prefs = appDelegate?.preferencesStore else { return }
+        var wallpaper = prefs.wallpapers[display: DisplayKey(monitor.id)]
+        body(&wallpaper)
+        var next = prefs.wallpapers
+        next[display: DisplayKey(monitor.id)] = wallpaper
+        prefs.wallpapers = next
+    }
 
     func setScaling(for monitor: MonitorInfo, scaling: VideoScaling) {
-        guard let central = appDelegate?.assignmentStore else { return }
-
-        if var assignment = central.assignment(for: monitor.id) {
-            assignment.scaling = scaling
-            central.updateAssignment(assignment)
-        } else {
-            var newAssignment = MonitorAssignment(monitorIdentifier: monitor.id)
-            newAssignment.scaling = scaling
-            // Do not persist by default — user must explicitly enable "Keep this wallpaper on startup"
-            newAssignment.keepOnStartup = false
-            central.updateAssignment(newAssignment)
-        }
-
-        // Tell the engine to apply the change live on the desktop wallpaper
-        appDelegate?.applyScalingToMonitor(monitorID: monitor.id, scaling: scaling)
-
-        LuminaLog.wallpaper.info("Scaling for \(monitor.name) set to \(scaling)")
+        mutateWallpaper(for: monitor) { $0.look.scaling = scaling }
     }
 
     func setPlaybackSpeed(for monitor: MonitorInfo, speed: Double) {
-        guard let central = appDelegate?.assignmentStore else { return }
-
-        if var assignment = central.assignment(for: monitor.id) {
-            assignment.playbackSpeed = speed
-            central.updateAssignment(assignment)
-        } else {
-            var newAssignment = MonitorAssignment(monitorIdentifier: monitor.id)
-            newAssignment.playbackSpeed = speed
-            // Do not persist by default — user must explicitly enable "Keep this wallpaper on startup"
-            newAssignment.keepOnStartup = false
-            central.updateAssignment(newAssignment)
-        }
-
-        // Live apply to the running renderer
-        appDelegate?.applyPlaybackSpeedToMonitor(monitorID: monitor.id, speed: speed)
-
-        LuminaLog.wallpaper.info("Playback speed for \(monitor.name) set to \(speed)x")
+        mutateWallpaper(for: monitor) { $0.timing.speed = speed }
     }
 
-    func setLoopMode(for monitor: MonitorInfo, mode: MonitorAssignment.LoopMode) {
-        guard let central = appDelegate?.assignmentStore else { return }
-
-        if var assignment = central.assignment(for: monitor.id) {
-            assignment.loopMode = mode
-            central.updateAssignment(assignment)
-        } else {
-            var newAssignment = MonitorAssignment(monitorIdentifier: monitor.id)
-            newAssignment.loopMode = mode
-            central.updateAssignment(newAssignment)
-        }
-
-        // Live apply to the running renderer (will reconfigure looping strategy)
-        appDelegate?.applyLoopModeToMonitor(monitorID: monitor.id, mode: mode)
-
-        LuminaLog.wallpaper.info("Loop mode for \(monitor.name) set to \(mode)")
+    func setLoopMode(for monitor: MonitorInfo, mode: LoopMode) {
+        mutateWallpaper(for: monitor) { $0.timing.loopMode = mode }
     }
 
     func setLoopFade(for monitor: MonitorInfo, enabled: Bool, duration: Double,
-                     easing: MonitorAssignment.FadeEasing = .easeInOut) {
-        guard let central = appDelegate?.assignmentStore else { return }
-
-        if var assignment = central.assignment(for: monitor.id) {
-            assignment.loopFadeEnabled = enabled
-            assignment.loopFadeDuration = duration
-            assignment.loopFadeEasing = easing
-            central.updateAssignment(assignment)
-        } else {
-            var newAssignment = MonitorAssignment(monitorIdentifier: monitor.id)
-            newAssignment.loopFadeEnabled = enabled
-            newAssignment.loopFadeDuration = duration
-            newAssignment.loopFadeEasing = easing
-            central.updateAssignment(newAssignment)
+                     easing: FadeEasing = .easeInOut) {
+        mutateWallpaper(for: monitor) {
+            $0.look.loopFade.enabled = enabled
+            $0.look.loopFade.duration = duration
+            $0.look.loopFade.easing = easing
         }
-
-        appDelegate?.applyLoopFadeToMonitor(monitorID: monitor.id, enabled: enabled, duration: duration, easing: easing)
     }
 
     func setBrightness(for monitor: MonitorInfo, brightness: Double) {
-        guard let central = appDelegate?.assignmentStore else { return }
-
-        if var assignment = central.assignment(for: monitor.id) {
-            assignment.brightness = brightness
-            central.updateAssignment(assignment)
-        } else {
-            var newAssignment = MonitorAssignment(monitorIdentifier: monitor.id)
-            newAssignment.brightness = brightness
-            central.updateAssignment(newAssignment)
-        }
-
-        appDelegate?.applyBrightnessToMonitor(monitorID: monitor.id, brightness: brightness)
+        mutateWallpaper(for: monitor) { $0.look.brightness = brightness }
     }
 
     func setSlideshowItems(for monitor: MonitorInfo, items: [String]) {
-        guard let central = appDelegate?.assignmentStore else { return }
-
-        var assignment = central.assignment(for: monitor.id) ?? MonitorAssignment(monitorIdentifier: monitor.id)
-        assignment.slideshowItems = items
-        // One mode per monitor: a non-empty slideshow means this display is a *still-image
-        // slideshow*, so drop any single video/image reference (the renderer also frees the
-        // video player) — no mp4 is kept loaded or restored.
-        if !items.isEmpty {
-            assignment.filePath = nil
-            assignment.bookmarkData = nil
-            assignment.mediaType = .image
+        mutateWallpaper(for: monitor) { wallpaper in
+            if items.isEmpty {
+                if case .slideshow = wallpaper.content { wallpaper.content = .none }
+            } else {
+                let refs = items.map { path -> MediaReference in
+                    MediaReference(
+                        identity: MediaIdentity(normalizing: path),
+                        displayPath: path,
+                        bookmark: nil,
+                        kind: .image
+                    )
+                }
+                let interval: Double
+                let transition: SlideshowTransition
+                let kenBurns: Bool
+                if case .slideshow(let existing) = wallpaper.content {
+                    interval = existing.interval
+                    transition = existing.transition
+                    kenBurns = existing.kenBurns
+                } else {
+                    interval = 10
+                    transition = .fade
+                    kenBurns = true
+                }
+                wallpaper.content = .slideshow(SlideshowSpec(
+                    items: refs, interval: interval, transition: transition, kenBurns: kenBurns
+                ))
+            }
         }
-        central.updateAssignment(assignment)
-        appDelegate?.applySlideshowToMonitor(monitorID: monitor.id)
     }
 
     func setSlideshowInterval(for monitor: MonitorInfo, interval: Double) {
-        guard let central = appDelegate?.assignmentStore else { return }
-
-        if var assignment = central.assignment(for: monitor.id) {
-            assignment.slideshowInterval = interval
-            central.updateAssignment(assignment)
-        } else {
-            var newAssignment = MonitorAssignment(monitorIdentifier: monitor.id)
-            newAssignment.slideshowInterval = interval
-            central.updateAssignment(newAssignment)
+        mutateWallpaper(for: monitor) { wallpaper in
+            if case .slideshow(var spec) = wallpaper.content {
+                spec.interval = interval
+                wallpaper.content = .slideshow(spec)
+            }
         }
-        appDelegate?.applySlideshowToMonitor(monitorID: monitor.id)
     }
 
-    func setSlideshowTransition(for monitor: MonitorInfo, transition: MonitorAssignment.SlideshowTransition) {
-        guard let central = appDelegate?.assignmentStore else { return }
-
-        if var assignment = central.assignment(for: monitor.id) {
-            assignment.slideshowTransition = transition
-            central.updateAssignment(assignment)
-        } else {
-            var newAssignment = MonitorAssignment(monitorIdentifier: monitor.id)
-            newAssignment.slideshowTransition = transition
-            central.updateAssignment(newAssignment)
+    func setSlideshowTransition(for monitor: MonitorInfo, transition: SlideshowTransition) {
+        mutateWallpaper(for: monitor) { wallpaper in
+            if case .slideshow(var spec) = wallpaper.content {
+                spec.transition = transition
+                wallpaper.content = .slideshow(spec)
+            }
         }
-        appDelegate?.applySlideshowToMonitor(monitorID: monitor.id)
     }
 
     func setSlideshowKenBurns(for monitor: MonitorInfo, enabled: Bool) {
-        guard let central = appDelegate?.assignmentStore else { return }
-
-        if var assignment = central.assignment(for: monitor.id) {
-            assignment.slideshowKenBurnsEnabled = enabled
-            central.updateAssignment(assignment)
-        } else {
-            var newAssignment = MonitorAssignment(monitorIdentifier: monitor.id)
-            newAssignment.slideshowKenBurnsEnabled = enabled
-            central.updateAssignment(newAssignment)
+        mutateWallpaper(for: monitor) { wallpaper in
+            if case .slideshow(var spec) = wallpaper.content {
+                spec.kenBurns = enabled
+                wallpaper.content = .slideshow(spec)
+            }
         }
-        appDelegate?.applySlideshowKenBurnsToMonitor(monitorID: monitor.id, enabled: enabled)
     }
 
     func setOpacity(for monitor: MonitorInfo, opacity: Double) {
-        guard let central = appDelegate?.assignmentStore else { return }
-
-        if var assignment = central.assignment(for: monitor.id) {
-            assignment.opacity = opacity
-            central.updateAssignment(assignment)
-        } else {
-            var newAssignment = MonitorAssignment(monitorIdentifier: monitor.id)
-            newAssignment.opacity = opacity
-            central.updateAssignment(newAssignment)
-        }
-
-        appDelegate?.applyOpacityToMonitor(monitorID: monitor.id, opacity: opacity)
+        mutateWallpaper(for: monitor) { $0.look.opacity = opacity }
     }
 
     func setColorCorrection(for monitor: MonitorInfo, saturation: Double, hue: Double, grayscale: Bool) {
-        guard let central = appDelegate?.assignmentStore else { return }
-
-        if var assignment = central.assignment(for: monitor.id) {
-            assignment.saturation = saturation
-            assignment.hue = hue
-            assignment.grayscale = grayscale
-            central.updateAssignment(assignment)
-        } else {
-            var newAssignment = MonitorAssignment(monitorIdentifier: monitor.id)
-            newAssignment.saturation = saturation
-            newAssignment.hue = hue
-            newAssignment.grayscale = grayscale
-            central.updateAssignment(newAssignment)
+        mutateWallpaper(for: monitor) {
+            $0.look.saturation = saturation
+            $0.look.hue = hue
+            $0.look.grayscale = grayscale
         }
-
-        appDelegate?.applyColorCorrectionToMonitor(monitorID: monitor.id, saturation: saturation, hue: hue, grayscale: grayscale)
     }
 
     func setVolume(for monitor: MonitorInfo, volume: Double) {
-        guard let central = appDelegate?.assignmentStore else { return }
-
-        if var assignment = central.assignment(for: monitor.id) {
-            assignment.audioVolume = volume
-            central.updateAssignment(assignment)
-        } else {
-            var newAssignment = MonitorAssignment(monitorIdentifier: monitor.id)
-            newAssignment.audioVolume = volume
-            central.updateAssignment(newAssignment)
+        mutateWallpaper(for: monitor) {
+            $0.audio.volume = volume
+            $0.audio.muted = volume <= 0.001
         }
-
-        appDelegate?.applyVolumeToMonitor(monitorID: monitor.id, volume: volume)
     }
 
     func setCropRect(for monitor: MonitorInfo, cropRect: CGRect) {
-        guard let central = appDelegate?.assignmentStore else { return }
-
-        if var assignment = central.assignment(for: monitor.id) {
-            assignment.cropRect = cropRect
-            central.updateAssignment(assignment)
-        } else {
-            var newAssignment = MonitorAssignment(monitorIdentifier: monitor.id)
-            newAssignment.cropRect = cropRect
-            // Do not persist by default — user must explicitly enable "Keep this wallpaper on startup"
-            newAssignment.keepOnStartup = false
-            central.updateAssignment(newAssignment)
+        mutateWallpaper(for: monitor) {
+            $0.look.crop = NormalizedRect(
+                x: cropRect.origin.x, y: cropRect.origin.y,
+                width: cropRect.size.width, height: cropRect.size.height
+            ) ?? .full
         }
-
-        // Live apply to desktop wallpaper
-        appDelegate?.applyCropRectToMonitor(monitorID: monitor.id, cropRect: cropRect)
-
-        LuminaLog.wallpaper.info("Crop rect updated for \(monitor.name)")
     }
 
     func setVideoFrameTime(for monitor: MonitorInfo, time: Double?, useStatic: Bool = false) {
-        guard let central = appDelegate?.assignmentStore else { return }
-
-        if var assignment = central.assignment(for: monitor.id) {
-            assignment.videoFrameTime = time
-            assignment.useStaticVideoFrame = useStatic
-            central.updateAssignment(assignment)
-        } else {
-            var newAssignment = MonitorAssignment(monitorIdentifier: monitor.id)
-            newAssignment.videoFrameTime = time
-            newAssignment.useStaticVideoFrame = useStatic
-            central.updateAssignment(newAssignment)
+        mutateWallpaper(for: monitor) {
+            $0.timing.startFrame = time
+            $0.timing.freezeAtStartFrame = useStatic
         }
-
-        // Live apply to desktop wallpaper immediately.
-        appDelegate?.applyVideoFrameToMonitor(
-            monitorID: monitor.id,
-            normalizedTime: time,
-            useStatic: useStatic
-        )
-        LuminaLog.wallpaper.info("Video frame updated for \(monitor.name): \(time ?? 0) (static: \(useStatic))")
     }
-    
-    // MARK: - Persistence Preference (delegated to central AssignmentStore)
 
-    /// Syncs the local published flag from the authoritative central store.
-    /// Call this on init and after any refresh so the Toggle binding stays correct.
     private func syncPersistencePreference() {
-        if let central = appDelegate?.assignmentStore {
-            persistAssignments = central.persistAssignments
+        if let prefs = appDelegate?.preferencesStore {
+            persistAssignments = prefs.startup.restoreAtLaunch
         }
-        // If no delegate yet (early init), the default true is fine.
     }
 
-    /// Called from the manager view when the user toggles "Remember these assignments".
-    /// This is the single path that should mutate the preference.
     func savePersistencePreference(_ enabled: Bool) {
-        // Route through the central store (it owns the UD key and the @Published value).
-        appDelegate?.assignmentStore.setPersistenceEnabled(enabled)
-        
-        // Keep our local published value in sync for the Toggle binding.
+        guard let prefs = appDelegate?.preferencesStore else { return }
+        prefs.startup.restoreAtLaunch = enabled
         persistAssignments = enabled
-        
-        // Refresh the displayed assigned names (they depend on this flag).
         refreshDisplays()
     }
-    
-    /// Shows About & Status (welcome copy, live status, full changelog).
-    func showAboutStatus() {
-        appDelegate?.showAboutStatus()
-    }
 
-    /// Checks GitHub for a newer Lumina release.
-    func checkForUpdates() {
-        appDelegate?.checkForUpdates(silent: false)
-    }
+    func showAboutStatus() { appDelegate?.showAboutStatus() }
+    func checkForUpdates() { appDelegate?.checkForUpdates(silent: false) }
+    func reapplyPowerPolicy() { appDelegate?.reapplyPowerPolicy() }
+    func restartDisplaysInSync() { appDelegate?.restartDisplaysInSync() }
 
-    /// Re-applies the power policy to all renderers after a power preference changes,
-    /// so Settings toggles/profile take effect on the live wallpaper immediately.
-    func reapplyPowerPolicy() {
-        appDelegate?.reapplyPowerPolicy()
-    }
-
-    /// One-shot "Sync Displays": restart all matching video/GIF wallpapers together so they
-    /// play in lockstep. Used by the header button — the simple, on-demand alignment.
-    func restartDisplaysInSync() {
-        appDelegate?.restartDisplaysInSync()
-    }
-
-    // MARK: - Playback Sync Setting
-
-    private let syncPlaybackKey = "Lumina.SyncPlaybackAcrossDisplays"
-    
-    private func loadSyncPlaybackSetting() {
-        syncPlaybackAcrossDisplays = UserDefaults.standard.bool(forKey: syncPlaybackKey)
-    }
-    
-    /// Called from the UI when the user toggles "Sync playback across displays".
     func setSyncPlayback(_ enabled: Bool) {
+        // Shared sources make continuous sync a no-op; keep the preference key for downgrade.
         syncPlaybackAcrossDisplays = enabled
-        UserDefaults.standard.set(enabled, forKey: syncPlaybackKey)
-
-        // Drive the engine: an immediate hard sync plus the continuous drift watcher when on,
-        // or tear the watcher down when off.
-        appDelegate?.setPlaybackSyncEnabled(enabled)
+        UserDefaults.standard.set(enabled, forKey: "Lumina.SyncPlaybackAcrossDisplays")
     }
 }

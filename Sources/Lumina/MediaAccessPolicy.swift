@@ -29,12 +29,12 @@ enum MediaAccessLocation: String, CaseIterable, Identifiable, Codable, Hashable 
 
     var subtitle: String {
         switch self {
-        case .pictures: return "Photos and still wallpapers"
-        case .movies: return "Video wallpapers and screen recordings"
-        case .documents: return "Files you keep in Documents"
-        case .downloads: return "Browser and app downloads"
-        case .desktop: return "Files saved on your Desktop"
-        case .music: return "Audio files (ambient music in Studio)"
+        case .pictures: return "Photos and images"
+        case .movies: return "Videos"
+        case .documents: return "Files in Documents"
+        case .downloads: return "Files you’ve downloaded"
+        case .desktop: return "Files on your desktop"
+        case .music: return "Songs for the music player"
         }
     }
 
@@ -97,18 +97,23 @@ enum MediaAccessLocation: String, CaseIterable, Identifiable, Codable, Hashable 
 final class MediaAccessSettings: ObservableObject {
     static let shared = MediaAccessSettings()
 
-    private static let locationsKey = "Lumina.EnabledMediaLocations"
-    private static let configuredKey = "Lumina.HasConfiguredMediaAccess"
-    private static let legacyDocumentsKey = "Lumina.AllowDocumentsAndDownloads"
-
     @Published private(set) var enabledLocations: Set<MediaAccessLocation> = []
 
+    private weak var preferences: PreferencesStore?
+
     var hasConfiguredPrivacy: Bool {
-        UserDefaults.standard.bool(forKey: Self.configuredKey)
+        preferences?.mediaAccess.hasConfigured ?? false
     }
 
-    private init() {
-        enabledLocations = Self.loadLocations()
+    private init() {}
+
+    func attach(preferences: PreferencesStore) {
+        self.preferences = preferences
+        enabledLocations = Self.locations(from: preferences.mediaAccess)
+        if enabledLocations.isEmpty && !preferences.mediaAccess.hasConfigured {
+            enabledLocations = Set(MediaAccessLocation.allCases.filter(\.isOnByDefault))
+        }
+        trackChanges()
     }
 
     func isEnabled(_ location: MediaAccessLocation) -> Bool {
@@ -116,8 +121,6 @@ final class MediaAccessSettings: ObservableObject {
     }
 
     func setEnabled(_ location: MediaAccessLocation, _ enabled: Bool) {
-        // Preference only — never open a folder-access panel here. macOS TCC / sandbox
-        // grants happen when the user picks a file via NSOpenPanel.
         var next = enabledLocations
         if enabled {
             next.insert(location)
@@ -153,26 +156,39 @@ final class MediaAccessSettings: ObservableObject {
 
     private func apply(_ locations: Set<MediaAccessLocation>, markConfigured: Bool) {
         enabledLocations = locations
-        let raw = locations.map(\.rawValue)
-        UserDefaults.standard.set(raw, forKey: Self.locationsKey)
-        if markConfigured {
-            UserDefaults.standard.set(true, forKey: Self.configuredKey)
+        guard let preferences else {
+            objectWillChange.send()
+            return
         }
+        var access = preferences.mediaAccess
+        access.enabledLocations = locations.map(\.rawValue)
+        if markConfigured { access.hasConfigured = true }
+        preferences.mediaAccess = access
         objectWillChange.send()
     }
 
-    private static func loadLocations() -> Set<MediaAccessLocation> {
-        if let saved = UserDefaults.standard.stringArray(forKey: Self.locationsKey) {
-            let parsed = Set(saved.compactMap(MediaAccessLocation.init(rawValue:)))
-            if !parsed.isEmpty { return parsed }
-        }
+    private static func locations(from prefs: MediaAccessPreferences) -> Set<MediaAccessLocation> {
+        let parsed = Set(prefs.enabledLocations.compactMap(MediaAccessLocation.init(rawValue:)))
+        return parsed
+    }
 
-        // Migrate the old single toggle.
-        if UserDefaults.standard.bool(forKey: Self.legacyDocumentsKey) {
-            return [.pictures, .movies, .documents, .downloads]
+    private func trackChanges() {
+        withObservationTracking {
+            _ = preferences?.mediaAccess
+        } onChange: { [weak self] in
+            Task { @MainActor in
+                if let prefs = self?.preferences?.mediaAccess {
+                    let locs = Self.locations(from: prefs)
+                    if !locs.isEmpty || prefs.hasConfigured {
+                        self?.enabledLocations = locs.isEmpty
+                            ? Set(MediaAccessLocation.allCases.filter(\.isOnByDefault))
+                            : locs
+                    }
+                }
+                self?.objectWillChange.send()
+                self?.trackChanges()
+            }
         }
-
-        return Set(MediaAccessLocation.allCases.filter(\.isOnByDefault))
     }
 }
 
@@ -226,13 +242,13 @@ enum MediaAccessPolicy {
     static func restrictionHint() -> String {
         let names = enabledLocations.sorted { $0.label < $1.label }.map(\.label)
         guard !names.isEmpty else {
-            return "Choose at least one folder in Settings → Privacy before picking wallpapers."
+            return "Pick a folder in Settings → Privacy first."
         }
         if names.count == 1 {
-            return "You can choose files from your \(names[0]) folder."
+            return "You can pick files from your \(names[0]) folder."
         }
         let joined = names.dropLast().joined(separator: ", ")
-        return "You can choose files from \(joined), or \(names.last!)."
+        return "You can pick files from \(joined), or \(names.last!)."
     }
 
     /// Presents a wallpaper/media open panel; access is enforced when files are accepted.

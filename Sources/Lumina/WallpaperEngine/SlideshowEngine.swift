@@ -8,8 +8,9 @@ import AVFoundation
 final class SlideshowEngine {
     private var imagePaths: [String] = []
     private var interval: Double = 10
-    private var transition: MonitorAssignment.SlideshowTransition = .fade
+    private var transition: SlideshowTransition = .fade
     private var kenBurnsEnabled: Bool = true
+    private var preferredMaxFPS: Int?
     private var currentIndex: Int = 0
     private var timer: Timer?
     private weak var hostLayer: CALayer?
@@ -36,7 +37,7 @@ final class SlideshowEngine {
     /// Direct configuration used by the renderer (no MonitorAssignment needed).
     func configure(items: [String],
                    interval: Double,
-                   transition: MonitorAssignment.SlideshowTransition,
+                   transition: SlideshowTransition,
                    kenBurnsEnabled: Bool = true,
                    hostLayer: CALayer) {
         self.imagePaths   = items
@@ -124,6 +125,27 @@ final class SlideshowEngine {
         // the regular repeating cadence — otherwise every pause/resume extends the slide
         // by a full interval.
         scheduleAdvanceTimer(firstDelay: max(0.1, interval - currentSlideElapsed()))
+    }
+
+    /// Caps Ken Burns / slide presentation rate via preferredFrameRateRange.
+    func setPreferredFrameRate(_ fps: Int?) {
+        preferredMaxFPS = fps
+        guard let layer = currentImageLayer,
+              let existing = layer.animation(forKey: "kenBurns") as? CABasicAnimation
+        else { return }
+        applyFrameRateRange(to: existing)
+        // Re-add so the range takes effect.
+        layer.add(existing, forKey: "kenBurns")
+    }
+
+    private func applyFrameRateRange(to animation: CAAnimation) {
+        guard let fps = preferredMaxFPS, fps > 0 else { return }
+        let f = Float(fps)
+        animation.preferredFrameRateRange = CAFrameRateRange(
+            minimum: max(1, f / 2),
+            maximum: f,
+            preferred: f
+        )
     }
 
     /// Live toggle — updates Ken Burns on the current slide without a full slideshow restart.
@@ -397,6 +419,7 @@ final class SlideshowEngine {
         anim.fromValue = from
         anim.toValue   = to
         anim.duration  = duration
+        applyFrameRateRange(to: anim)
         anim.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
         anim.fillMode = .forwards
         anim.isRemovedOnCompletion = false

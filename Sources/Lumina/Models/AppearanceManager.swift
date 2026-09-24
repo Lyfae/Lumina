@@ -26,7 +26,6 @@ enum AppAppearance: String, CaseIterable, Identifiable {
         }
     }
 
-    /// The AppKit appearance to apply, or nil to follow the system.
     var nsAppearance: NSAppearance? {
         switch self {
         case .system: return nil
@@ -34,31 +33,62 @@ enum AppAppearance: String, CaseIterable, Identifiable {
         case .dark:   return NSAppearance(named: .darkAqua)
         }
     }
+
+    init(_ appearance: StudioLookPreferences.Appearance) {
+        self = AppAppearance(rawValue: appearance.rawValue) ?? .system
+    }
+
+    var studioAppearance: StudioLookPreferences.Appearance {
+        StudioLookPreferences.Appearance(rawValue: rawValue) ?? .system
+    }
 }
 
 @MainActor
 final class AppearanceManager: ObservableObject {
     static let shared = AppearanceManager()
-    private let key = "Lumina.Appearance"
 
     @Published var current: AppAppearance = .system {
-        didSet { apply() }
+        didSet { AppChrome.apply(appearance: current.studioAppearance) }
     }
 
-    private init() {
-        let saved = UserDefaults.standard.string(forKey: key) ?? ""
-        current = AppAppearance(rawValue: saved) ?? .system
+    private weak var preferences: PreferencesStore?
+
+    private init() {}
+
+    func attach(preferences: PreferencesStore) {
+        self.preferences = preferences
+        current = AppAppearance(preferences.studio.appearance)
+        AppChrome.apply(appearance: preferences.studio.appearance)
+        trackChanges()
     }
 
     func set(_ appearance: AppAppearance) {
         guard appearance != current else { return }
         current = appearance
-        UserDefaults.standard.set(appearance.rawValue, forKey: key)
+        guard let preferences else { return }
+        var studio = preferences.studio
+        studio.appearance = appearance.studioAppearance
+        preferences.studio = studio
     }
 
-    /// Applies the current preference to the whole application. Setting
-    /// `NSApp.appearance` to nil restores the system-driven appearance.
+    /// Applies the current preference to the whole application.
     func apply() {
-        NSApp.appearance = current.nsAppearance
+        AppChrome.apply(appearance: current.studioAppearance)
+    }
+
+    private func trackChanges() {
+        withObservationTracking {
+            _ = preferences?.studio.appearance
+        } onChange: { [weak self] in
+            Task { @MainActor in
+                if let appearance = self?.preferences?.studio.appearance {
+                    let mapped = AppAppearance(appearance)
+                    if self?.current != mapped {
+                        self?.current = mapped
+                    }
+                }
+                self?.trackChanges()
+            }
+        }
     }
 }

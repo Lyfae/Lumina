@@ -160,6 +160,210 @@ enum SelfTest {
         check("semver strips v prefix",
               UpdateChecker.normalizeVersion("v0.2.0") == "0.2.0")
 
+        // LuminaCore preference / migration checks (each fixture is one self-test line)
+        for (name, ok) in CoreSelfTest.runDetailed() {
+            check(name, ok)
+        }
+
+        // PreferencesStore round-trip (InMemoryBackend)
+        do {
+            let legacy = LegacyDefaults(values: [
+                .pauseLowPower: .bool(false),
+                .accentTheme: .string("teal"),
+                .audioVolume: .double(0.3),
+            ])
+            let backend = InMemoryBackend(legacy: legacy)
+            let store = PreferencesStore(backend: backend)
+            check("store migrates pauseLowPower", store.power.defaults.pauseInLowPowerMode == false)
+            check("store migrates accent", store.studio.accent == .teal)
+            check("store migrates audio volume", abs(store.audio.volume - 0.3) < 0.0001)
+
+            store.power.defaults.pauseWhenCovered = false
+            store.flush()
+            check("store wrote power section", backend.writeLog.contains(.power))
+
+            let store2 = PreferencesStore(backend: backend)
+            check("store round-trip pauseWhenCovered", store2.power.defaults.pauseWhenCovered == false)
+            check("keepsPlayingWhenLocked default via store", store2.audio.keepsPlayingWhenLocked == true)
+        }
+
+        // Hotkey binding persistence (step 12)
+        do {
+            let backend = InMemoryBackend()
+            let store = PreferencesStore(backend: backend)
+            var shortcuts = store.shortcuts
+            let combo = KeyCombo(keyCode: 15, modifiers: [.command, .option]) // ⌥⌘R
+            let conflict = shortcuts.bind(combo, to: .restartInSync, scope: .global)
+            check("hotkey bind restartInSync no conflict", conflict == nil)
+            store.shortcuts = shortcuts
+            store.flush()
+            let store2 = PreferencesStore(backend: backend)
+            check("hotkey binding persists keyCode", store2.shortcuts[.restartInSync].combo?.keyCode == 15)
+            check("hotkey binding persists scope global", store2.shortcuts[.restartInSync].scope == .global)
+            check("hotkey default togglePause still ⌥⌘P",
+                  store2.shortcuts[.togglePause].combo?.keyCode == 35)
+        }
+
+        // SourceKey excludes quality + max-demand decode (engine contract)
+        do {
+            let identity = MediaIdentity(normalizing: "/tmp/share-q.mov")
+            let ref = MediaReference(identity: identity, displayPath: "/tmp/share-q.mov", bookmark: nil, kind: .video)
+            var wallpapers = WallpaperPreferences()
+            for id in ["D0", "D1"] {
+                var wp = DisplayWallpaper()
+                wp.content = .media(ref)
+                wp.pinned = true
+                wallpapers[display: DisplayKey(id)] = wp
+            }
+            var prefs = PlanningPreferences(
+                power: PowerPreferences(),
+                playback: PlaybackPreferences(),
+                wallpapers: wallpapers,
+                startup: StartupPreferences()
+            )
+            prefs.startup.restoreAtLaunch = true
+            prefs.playback[display: DisplayKey("D0")] = .efficient
+            prefs.playback[display: DisplayKey("D1")] = .original
+            var media = MediaInventory()
+            media.facts[identity] = MediaFacts(
+                availability: .available,
+                pixels: PixelSize(width: 3840, height: 2160),
+                nominalFPS: 60
+            )
+            var session = SessionState()
+            session.isLaunching = false
+            let displays = [0, 1].map { i in
+                DisplaySnapshot(
+                    key: DisplayKey("D\(i)"),
+                    runtimeID: UInt32(i),
+                    name: "D\(i)",
+                    frame: CGRect(x: i * 100, y: 0, width: 100, height: 100),
+                    backingPixels: PixelSize(width: 2560, height: 1440)!,
+                    maxRefreshHz: 60,
+                    isBuiltIn: i == 0
+                )
+            }
+            let plan = Planner.plan(PlanInputs(
+                preferences: prefs, displays: displays, system: SystemSnapshot(), session: session, media: media
+            ))
+            check("SourceKey excludes quality (engine self-test)", plan.sources.count == 1)
+            check("max-demand decode across shared consumers",
+                  (plan.sources.values.first?.decodeTarget?.height ?? 0) >= 1440)
+        }
+
+        // Wallpaper dual-write v1 (step 5)
+        do {
+            let backend = InMemoryBackend()
+            let store = PreferencesStore(backend: backend)
+            var wp = DisplayWallpaper()
+            wp.pinned = true
+            wp.content = .media(MediaReference(
+                identity: MediaIdentity(normalizing: "/tmp/wall.mov"),
+                displayPath: "/tmp/wall.mov",
+                bookmark: nil,
+                kind: .video
+            ))
+            var walls = store.wallpapers
+            walls[display: DisplayKey("D0")] = wp
+            store.wallpapers = walls
+            store.flush()
+            check("wallpapers dual-write v1 assignments", backend.v1Assignments != nil)
+            check("wallpapers section in write log", backend.writeLog.contains(.wallpapers))
+            let store2 = PreferencesStore(backend: backend)
+            check("v1 round-trip pinned restore", store2.wallpapers[display: DisplayKey("D0")].pinned == true)
+            if case .media(let ref) = store2.wallpapers[display: DisplayKey("D0")].content {
+                check("v1 round-trip media path", ref.identity.path.hasSuffix("/tmp/wall.mov") || ref.identity.path == "/tmp/wall.mov")
+            } else {
+                check("v1 round-trip media path", false)
+            }
+        }
+
+        // Reconciler smoke: shared source key → one decoder in plan
+        do {
+            let identity = MediaIdentity(normalizing: "/tmp/share.mov")
+            let ref = MediaReference(identity: identity, displayPath: "/tmp/share.mov", bookmark: nil, kind: .video)
+            var wallpapers = WallpaperPreferences()
+            for id in ["D0", "D1"] {
+                var wp = DisplayWallpaper()
+                wp.content = .media(ref)
+                wp.pinned = true
+                wallpapers[display: DisplayKey(id)] = wp
+            }
+            var prefs = PlanningPreferences(
+                power: PowerPreferences(),
+                playback: PlaybackPreferences(),
+                wallpapers: wallpapers,
+                startup: StartupPreferences()
+            )
+            prefs.startup.restoreAtLaunch = true
+            var media = MediaInventory()
+            media.facts[identity] = MediaFacts(availability: .available, pixels: PixelSize(width: 1920, height: 1080), nominalFPS: 30)
+            var session = SessionState()
+            session.isLaunching = false
+            let displays = [0, 1].map { i in
+                DisplaySnapshot(
+                    key: DisplayKey("D\(i)"),
+                    runtimeID: UInt32(i),
+                    name: "D\(i)",
+                    frame: CGRect(x: i * 100, y: 0, width: 100, height: 100),
+                    backingPixels: PixelSize(width: 1920, height: 1080)!,
+                    maxRefreshHz: 60,
+                    isBuiltIn: i == 0
+                )
+            }
+            let plan = Planner.plan(PlanInputs(
+                preferences: prefs, displays: displays, system: SystemSnapshot(), session: session, media: media
+            ))
+            check("reconciler smoke: shared plan has 1 source", plan.sources.count == 1)
+            check("reconciler smoke: 2 desktop surfaces", plan.surfaces.count == 2)
+            let ops = PlanDiff.ops(from: .empty, to: plan)
+            let creates = ops.filter { if case .createSource = $0 { return true }; return false }.count
+            let binds = ops.filter { if case .bind = $0 { return true }; return false }.count
+            check("reconciler smoke: 1 createSource", creates == 1)
+            check("reconciler smoke: 2 binds", binds == 2)
+        }
+
+        // Design tokens / accent contrast (Batch 1 polish foundation)
+        do {
+            check("LuminaSpace.sm is 8×scale",
+                  abs(LuminaSpace.sm - DisplayScale.points(8)) < 0.01)
+            check("LuminaRadius.panel is 10×scale",
+                  abs(LuminaRadius.panel - DisplayScale.points(10)) < 0.01)
+            check("LuminaLook density default regular", LuminaLook.shared.density == .regular)
+            check("LuminaLook material default glass", LuminaLook.shared.material == .glass)
+            check("DecodeCapChoice maps efficient → fhd", DecodeCapChoice(.efficient) == .fhd)
+            check("DecodeCapChoice fhd writes fhd1080", DecodeCapChoice.fhd.qualityPreset == .fhd1080)
+            check("Gold onAccent is dark (contrast)", {
+                let c = NSColor(AccentTheme.yellow.onAccent)
+                var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+                c.usingColorSpace(.sRGB)?.getRed(&r, green: &g, blue: &b, alpha: &a)
+                return r < 0.2 && g < 0.2 && b < 0.2
+            }())
+            check("Ocean onAccent is white", {
+                let c = NSColor(AccentTheme.blue.onAccent)
+                var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+                c.usingColorSpace(.sRGB)?.getRed(&r, green: &g, blue: &b, alpha: &a)
+                return r > 0.95 && g > 0.95 && b > 0.95
+            }())
+            check("Gold text(in: light) is darkened", {
+                let c = NSColor(AccentTheme.yellow.text(in: .light))
+                var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+                c.usingColorSpace(.sRGB)?.getRed(&r, green: &g, blue: &b, alpha: &a)
+                return r < 0.7
+            }())
+            check("SettingsSection order starts Appearance",
+                  SettingsSection.allCases.first == .appearance)
+            check("musicWidgetSize regular matches property",
+                  DisplayScale.musicWidgetSize == DisplayScale.musicWidgetSize(for: .regular))
+            check("iconSize inline is 12×scale",
+                  abs(UIScaleManager.shared.iconSize(.inline) - DisplayScale.points(12)) < 0.01)
+            let emptyPlan = PlaybackPlan.empty
+            check("headline empty plan → No wallpapers set",
+                  LuminaPlaybackHeadline.text(plan: emptyPlan, displays: []) == "No wallpapers set")
+            check("isManuallyPaused empty is false",
+                  !LuminaPlaybackHeadline.isManuallyPaused(plan: emptyPlan))
+        }
+
         print("─────────────────────────────────────────")
         print("Self-test: \(passed) passed, \(failed) failed")
         return failed == 0 ? 0 : 1

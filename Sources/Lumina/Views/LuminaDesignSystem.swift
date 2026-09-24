@@ -1,6 +1,7 @@
 import SwiftUI
+import AppKit
 
-// MARK: - Design tokens
+// MARK: - Design tokens (layout shims)
 
 @MainActor
 enum LuminaLayout {
@@ -11,8 +12,8 @@ enum LuminaLayout {
     }
     static var thumbnailWidth: CGFloat { DisplayScale.points(180) }
     static var thumbnailHeight: CGFloat { DisplayScale.points(101) }
-    static var contentPadding: CGFloat { DisplayScale.points(20) }
-    static var sectionSpacing: CGFloat { DisplayScale.points(16) }
+    static var contentPadding: CGFloat { LuminaSpace.xl }
+    static var sectionSpacing: CGFloat { LuminaSpace.gridGap }
 }
 
 // MARK: - Brand mark (splash / menu bar LS monogram)
@@ -23,26 +24,20 @@ struct LuminaBrandMark: View {
 
     @Environment(\.colorScheme) private var colorScheme
 
-    private let inkGradient: [Color] = [
-        Color(red: 0.62, green: 0.87, blue: 1.0),
-        Color(red: 0.72, green: 0.62, blue: 1.0),
-        Color(red: 1.0, green: 0.78, blue: 0.55)
-    ]
-
     var body: some View {
         let markSize = CGSize(width: side * 0.72, height: side * 0.44)
         ZStack {
             tileBackground
             LuminaMenuIcon.fittedLSPath(in: markSize)
                 .stroke(
-                    LinearGradient(colors: inkGradient, startPoint: .leading, endPoint: .trailing),
+                    LinearGradient(colors: LuminaBrand.ink, startPoint: .leading, endPoint: .trailing),
                     style: StrokeStyle(
                         lineWidth: max(1.1, side * 0.055),
                         lineCap: .round,
                         lineJoin: .round
                     )
                 )
-                .shadow(color: inkGradient[0].opacity(colorScheme == .light ? 0.25 : 0.45), radius: side * 0.07)
+                .shadow(color: LuminaBrand.ink[0].opacity(colorScheme == .light ? 0.25 : 0.45), radius: side * 0.07)
                 .frame(width: markSize.width, height: markSize.height)
         }
         .frame(width: side, height: side)
@@ -58,19 +53,13 @@ struct LuminaBrandMark: View {
     private var tileBackground: some View {
         if colorScheme == .light {
             LinearGradient(
-                colors: [
-                    Color(red: 0.96, green: 0.97, blue: 1.0),
-                    Color(red: 0.90, green: 0.92, blue: 0.99)
-                ],
+                colors: LuminaBrand.heroLight,
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
         } else {
             LinearGradient(
-                colors: [
-                    Color(red: 0.16, green: 0.14, blue: 0.24),
-                    Color(red: 0.10, green: 0.09, blue: 0.16)
-                ],
+                colors: LuminaBrand.tileDark,
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
@@ -84,7 +73,7 @@ struct LuminaBrandMark: View {
     }
 }
 
-// MARK: - Scaled slider (larger thumb + accent tint; light-mode track chrome)
+// MARK: - Scaled slider
 
 struct LuminaSlider: View {
     @Binding var value: Double
@@ -92,6 +81,7 @@ struct LuminaSlider: View {
     var step: Double? = nil
     /// Use in compact toolbars (e.g. audio footer) — tighter padding.
     var compact: Bool = false
+    var label: String = ""
 
     @StateObject private var theme = ThemeManager.shared
     @StateObject private var uiScale = UIScaleManager.shared
@@ -106,7 +96,16 @@ struct LuminaSlider: View {
         }
         .controlSize(uiScale.controlSize())
         .tint(theme.current.color)
-        .frame(minHeight: DisplayScale.points(compact ? 18 : 24))
+        .frame(minHeight: compact ? LuminaMetrics.sliderHeightCompact : LuminaMetrics.sliderHeight)
+        .accessibilityLabel(label.isEmpty ? "Slider" : label)
+        .accessibilityValue(valueText)
+    }
+
+    private var valueText: String {
+        if range.upperBound <= 1.01 {
+            return "\(Int((value * 100).rounded()))%"
+        }
+        return String(format: "%.0f", value)
     }
 }
 
@@ -120,12 +119,12 @@ struct LuminaSliderLabel: View {
     var body: some View {
         HStack {
             Text(title)
-                .font(uiScale.scaledFont(13, weight: .medium))
+                .font(uiScale.font(.bodyStrong))
                 .foregroundStyle(.primary)
             Spacer()
             if let value {
                 Text(value)
-                    .font(uiScale.scaledFont(12).monospacedDigit())
+                    .font(uiScale.font(.callout).monospacedDigit())
                     .foregroundStyle(.secondary)
             }
         }
@@ -135,22 +134,76 @@ struct LuminaSliderLabel: View {
 // MARK: - Press feedback
 
 /// Shared press motion so custom buttons feel tactile (scale + brief dim).
+@MainActor
 enum LuminaButtonPress {
-    static let scale: CGFloat = 0.96
-    static let animation = Animation.easeOut(duration: 0.1)
+    static var scale: CGFloat { LuminaMotion.pressScale }
+    static var animation: Animation { LuminaMotion.press ?? .easeOut(duration: 0.10) }
+}
+
+private struct LuminaHoverPlateKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    var luminaHoverPlate: Bool {
+        get { self[LuminaHoverPlateKey.self] }
+        set { self[LuminaHoverPlateKey.self] = newValue }
+    }
+}
+
+extension View {
+    /// Opt the pressable label into a hover fill plate.
+    func luminaHoverPlate(_ enabled: Bool = true) -> some View {
+        environment(\.luminaHoverPlate, enabled)
+    }
 }
 
 /// For buttons that already draw their own chrome (toolbar, chips, icon buttons).
 struct LuminaPressableButtonStyle: ButtonStyle {
+    @Environment(\.luminaHoverPlate) private var wantsHoverPlate
+    @Environment(\.isEnabled) private var isEnabled
+
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .scaleEffect(configuration.isPressed ? LuminaButtonPress.scale : 1)
-            .opacity(configuration.isPressed ? 0.7 : 1)
-            .animation(LuminaButtonPress.animation, value: configuration.isPressed)
+        LuminaPressableBody(
+            configuration: configuration,
+            wantsHoverPlate: wantsHoverPlate,
+            isEnabled: isEnabled
+        )
     }
 }
 
-// MARK: - Toolbar icon button (44pt min hit target)
+private struct LuminaPressableBody: View {
+    let configuration: ButtonStyleConfiguration
+    let wantsHoverPlate: Bool
+    let isEnabled: Bool
+    @State private var isHovered = false
+    @Environment(\.isFocused) private var isFocused
+    @StateObject private var theme = ThemeManager.shared
+
+    var body: some View {
+        configuration.label
+            .background {
+                if wantsHoverPlate && isHovered && isEnabled {
+                    RoundedRectangle(cornerRadius: LuminaRadius.control, style: .continuous)
+                        .fill(Color.luminaFillHover)
+                }
+            }
+            .overlay {
+                if isFocused {
+                    RoundedRectangle(cornerRadius: LuminaRadius.control + 3, style: .continuous)
+                        .strokeBorder(theme.current.color.opacity(0.9), lineWidth: 2)
+                        .padding(-3)
+                }
+            }
+            .scaleEffect(configuration.isPressed && isEnabled ? LuminaButtonPress.scale : 1)
+            .opacity(configuration.isPressed && isEnabled ? 0.7 : 1)
+            .animation(LuminaButtonPress.animation, value: configuration.isPressed)
+            .onHover { isHovered = $0 }
+            .focusEffectDisabled()
+    }
+}
+
+// MARK: - Toolbar icon button
 
 struct LuminaToolbarButton: View {
     let title: String
@@ -162,17 +215,16 @@ struct LuminaToolbarButton: View {
 
     var body: some View {
         Button(action: action) {
-            VStack(spacing: DisplayScale.points(4)) {
+            VStack(spacing: LuminaSpace.xs) {
                 Image(systemName: icon)
                     .font(.system(size: uiScale.iconSize(.toolbar), weight: .semibold))
                 Text(title)
-                    .font(.system(size: DisplayScale.points(10), weight: .medium))
+                    .font(uiScale.font(.micro))
                     .lineLimit(1)
                     .fixedSize(horizontal: true, vertical: false)
             }
             .foregroundStyle(.primary)
-            // Hit area at least touchTarget, but never clip the title (e.g. "Settings").
-            .padding(.horizontal, DisplayScale.points(4))
+            .padding(.horizontal, LuminaSpace.xs)
             .frame(minWidth: uiScale.touchTarget(), minHeight: uiScale.touchTarget())
             .contentShape(Rectangle())
         }
@@ -184,24 +236,213 @@ struct LuminaToolbarButton: View {
     }
 }
 
-/// Toolbar: pressed state gets a clear inset plate + scale so it reads as a real click.
 private struct LuminaToolbarButtonStyle: ButtonStyle {
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.isEnabled) private var isEnabled
 
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .background(
-                RoundedRectangle(cornerRadius: DisplayScale.points(8), style: .continuous)
-                    .fill(Color.primary.opacity(configuration.isPressed
-                                               ? (colorScheme == .light ? 0.12 : 0.18)
-                                               : 0))
-            )
-            .scaleEffect(configuration.isPressed ? LuminaButtonPress.scale : 1)
-            .animation(LuminaButtonPress.animation, value: configuration.isPressed)
+        LuminaToolbarButtonBody(configuration: configuration, isEnabled: isEnabled)
     }
 }
 
-// MARK: - Filter chip (library tabs)
+private struct LuminaToolbarButtonBody: View {
+    let configuration: ButtonStyleConfiguration
+    let isEnabled: Bool
+    @State private var isHovered = false
+    @Environment(\.isFocused) private var isFocused
+    @StateObject private var theme = ThemeManager.shared
+
+    var body: some View {
+        configuration.label
+            .opacity(isEnabled ? 1 : 0.4)
+            .background(
+                RoundedRectangle(cornerRadius: LuminaRadius.control, style: .continuous)
+                    .fill(plateFill)
+            )
+            .overlay {
+                if isFocused && isEnabled {
+                    RoundedRectangle(cornerRadius: LuminaRadius.control + 3, style: .continuous)
+                        .strokeBorder(theme.current.color.opacity(0.9), lineWidth: 2)
+                        .padding(-3)
+                }
+            }
+            .scaleEffect(configuration.isPressed && isEnabled ? LuminaButtonPress.scale : 1)
+            .animation(LuminaButtonPress.animation, value: configuration.isPressed)
+            .onHover { isHovered = $0 }
+            .focusEffectDisabled()
+    }
+
+    private var plateFill: Color {
+        if !isEnabled { return .clear }
+        if configuration.isPressed { return Color.luminaFillPressed }
+        if isHovered { return Color.luminaFillHover }
+        return .clear
+    }
+}
+
+// MARK: - Icon button
+
+struct LuminaIconButtonStyle: ButtonStyle {
+    enum Size { case regular, compact }
+
+    var active: Bool = false
+    var size: Size = .regular
+
+    func makeBody(configuration: Configuration) -> some View {
+        LuminaIconButtonBody(configuration: configuration, active: active, size: size)
+    }
+}
+
+private struct LuminaIconButtonBody: View {
+    let configuration: ButtonStyleConfiguration
+    let active: Bool
+    let size: LuminaIconButtonStyle.Size
+
+    @Environment(\.isEnabled) private var isEnabled
+    @State private var isHovered = false
+    @Environment(\.isFocused) private var isFocused
+    @StateObject private var theme = ThemeManager.shared
+    @StateObject private var uiScale = UIScaleManager.shared
+
+    var body: some View {
+        let hit: CGFloat = size == .regular ? uiScale.touchTarget() : DisplayScale.points(26)
+        let plate: CGFloat = size == .regular ? DisplayScale.points(28) : DisplayScale.points(24)
+        let glyph: CGFloat = size == .regular ? uiScale.iconSize(.transport) : DisplayScale.points(11)
+
+        configuration.label
+            .font(.system(size: glyph, weight: size == .regular ? .medium : .semibold))
+            .foregroundStyle(active ? theme.current.color : Color.secondary)
+            .frame(width: plate, height: plate)
+            .background(
+                RoundedRectangle(cornerRadius: LuminaRadius.control, style: .continuous)
+                    .fill(plateFill)
+            )
+            .frame(width: hit, height: hit)
+            .contentShape(Rectangle())
+            .opacity(isEnabled ? 1 : 0.4)
+            .overlay {
+                if isFocused && isEnabled {
+                    RoundedRectangle(cornerRadius: LuminaRadius.control + 3, style: .continuous)
+                        .strokeBorder(theme.current.color.opacity(0.9), lineWidth: 2)
+                        .padding(-3)
+                }
+            }
+            .scaleEffect(configuration.isPressed && isEnabled ? LuminaButtonPress.scale : 1)
+            .animation(LuminaButtonPress.animation, value: configuration.isPressed)
+            .onHover { isHovered = $0 }
+            .focusEffectDisabled()
+            .accessibilityValue(active ? "On" : "Off")
+    }
+
+    private var plateFill: Color {
+        if !isEnabled { return .clear }
+        if configuration.isPressed { return Color.luminaFillPressed }
+        if isHovered { return Color.luminaFillHover }
+        return .clear
+    }
+}
+
+// MARK: - Close button
+
+struct LuminaCloseButton: View {
+    var action: () -> Void
+
+    @StateObject private var uiScale = UIScaleManager.shared
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "xmark")
+                .font(.system(size: DisplayScale.points(10), weight: .bold))
+                .foregroundStyle(.secondary)
+                .frame(width: DisplayScale.points(24), height: DisplayScale.points(24))
+                .background(
+                    Circle().fill(isHovered ? Color.luminaFillHover : Color.luminaFill)
+                )
+                .frame(width: uiScale.touchTarget(), height: uiScale.touchTarget())
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(LuminaPressableButtonStyle())
+        .keyboardShortcut(.cancelAction)
+        .help("Close")
+        .accessibilityLabel("Close")
+        .onHover { isHovered = $0 }
+    }
+}
+
+// MARK: - Sheet header
+
+struct LuminaSheetHeader<Trailing: View>: View {
+    let icon: String
+    let title: String
+    var subtitle: String? = nil
+    var onClose: (() -> Void)? = nil
+    @ViewBuilder var trailing: () -> Trailing
+
+    @StateObject private var theme = ThemeManager.shared
+    @StateObject private var uiScale = UIScaleManager.shared
+    @Environment(\.colorScheme) private var colorScheme
+
+    init(
+        icon: String,
+        title: String,
+        subtitle: String? = nil,
+        onClose: (() -> Void)? = nil,
+        @ViewBuilder trailing: @escaping () -> Trailing
+    ) {
+        self.icon = icon
+        self.title = title
+        self.subtitle = subtitle
+        self.onClose = onClose
+        self.trailing = trailing
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: LuminaSpace.sm) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: LuminaRadius.control, style: .continuous)
+                        .fill(theme.current.color.opacity(0.14))
+                    Image(systemName: icon)
+                        .font(.system(size: uiScale.iconSize(.inline) + 2, weight: .semibold))
+                        .foregroundStyle(theme.current.text(in: colorScheme))
+                }
+                .frame(width: DisplayScale.points(28), height: DisplayScale.points(28))
+
+                VStack(alignment: .leading, spacing: LuminaSpace.hair) {
+                    Text(title)
+                        .font(uiScale.font(.headline))
+                    if let subtitle {
+                        Text(subtitle)
+                            .font(uiScale.font(.caption))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Spacer(minLength: 0)
+
+                trailing()
+
+                if let onClose {
+                    LuminaCloseButton(action: onClose)
+                }
+            }
+            .padding(.horizontal, LuminaSpace.xl)
+            .padding(.vertical, LuminaSpace.barPaddingV + DisplayScale.points(2))
+            .frame(minHeight: LuminaSpace.rowHeight + DisplayScale.points(16))
+
+            LuminaDivider()
+        }
+        .luminaGlassChrome()
+    }
+}
+
+extension LuminaSheetHeader where Trailing == EmptyView {
+    init(icon: String, title: String, subtitle: String? = nil, onClose: (() -> Void)? = nil) {
+        self.init(icon: icon, title: title, subtitle: subtitle, onClose: onClose) { EmptyView() }
+    }
+}
+
+// MARK: - Filter chip
 
 struct LuminaFilterChip: View {
     let label: String
@@ -212,32 +453,41 @@ struct LuminaFilterChip: View {
 
     @StateObject private var theme = ThemeManager.shared
     @StateObject private var uiScale = UIScaleManager.shared
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var isHovered = false
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: DisplayScale.points(6)) {
+            HStack(spacing: LuminaSpace.tight) {
                 Image(systemName: icon)
                     .font(.system(size: uiScale.iconSize(.filter), weight: .semibold))
                 Text(label)
-                    .font(.system(size: DisplayScale.points(12), weight: .semibold))
+                    .font(uiScale.font(.callout).weight(.semibold))
             }
-            .padding(.horizontal, DisplayScale.points(10))
-            .padding(.vertical, DisplayScale.points(7))
-            .foregroundStyle(isSelected ? theme.current.color : .secondary)
+            .padding(.horizontal, LuminaSpace.chipPaddingH)
+            .padding(.vertical, LuminaSpace.chipPaddingV)
+            .foregroundStyle(isSelected ? theme.current.text(in: colorScheme) : .secondary)
             .background(
-                RoundedRectangle(cornerRadius: DisplayScale.points(10), style: .continuous)
-                    .fill(isSelected ? theme.current.color.opacity(0.14) : Color.primary.opacity(0.04))
+                RoundedRectangle(cornerRadius: LuminaRadius.panel, style: .continuous)
+                    .fill(fill)
             )
             .overlay(
-                RoundedRectangle(cornerRadius: DisplayScale.points(10), style: .continuous)
+                RoundedRectangle(cornerRadius: LuminaRadius.panel, style: .continuous)
                     .strokeBorder(isSelected ? theme.current.color.opacity(0.45) : Color.clear, lineWidth: 1.5)
             )
-            .contentShape(RoundedRectangle(cornerRadius: DisplayScale.points(10), style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: LuminaRadius.panel, style: .continuous))
         }
         .buttonStyle(LuminaPressableButtonStyle())
         .help(help)
         .accessibilityLabel(label)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .onHover { isHovered = $0 }
+    }
+
+    private var fill: Color {
+        if isSelected { return theme.current.color.opacity(0.14) }
+        if isHovered { return Color.luminaFillHover }
+        return Color.luminaFill
     }
 }
 
@@ -311,49 +561,51 @@ struct LuminaSectionHeader: View {
     var subtitle: String? = nil
     var trailing: String? = nil
 
+    @StateObject private var uiScale = UIScaleManager.shared
+
     var body: some View {
         HStack(alignment: .firstTextBaseline) {
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: LuminaSpace.hair) {
                 Text(title)
-                    .font(.system(size: DisplayScale.points(15), weight: .bold))
+                    .font(uiScale.font(.headline))
                 if let subtitle {
                     Text(subtitle)
-                        .font(.system(size: DisplayScale.points(11)))
+                        .font(uiScale.font(.caption))
                         .foregroundStyle(.secondary)
                 }
             }
             Spacer()
             if let trailing {
                 Text(trailing)
-                    .font(.system(size: DisplayScale.points(11), weight: .medium))
-                    .foregroundStyle(.tertiary)
-                    .padding(.horizontal, DisplayScale.points(8))
-                    .padding(.vertical, DisplayScale.points(4))
-                    .background(Color.primary.opacity(0.06), in: Capsule())
+                    .font(uiScale.font(.caption).weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, LuminaSpace.sm)
+                    .padding(.vertical, LuminaSpace.xs)
+                    .background(Color.luminaFill, in: Capsule())
             }
         }
     }
 }
 
-// MARK: - Hint bubble (inline guidance)
+// MARK: - Hint bubble
 
 struct LuminaHintBubble: View {
     enum Style {
         case info, success, tip
 
-        var iconColor: Color {
+        func iconColor(accent: Color) -> Color {
             switch self {
-            case .info: return Color.accentColor
-            case .success: return .green
-            case .tip: return .yellow
+            case .info: return accent
+            case .success: return LuminaStatusColor.playing
+            case .tip: return LuminaStatusColor.paused
             }
         }
 
-        var borderColor: Color {
+        func borderColor(accent: Color) -> Color {
             switch self {
-            case .info: return Color.accentColor.opacity(0.35)
-            case .success: return Color.green.opacity(0.4)
-            case .tip: return Color.yellow.opacity(0.45)
+            case .info: return accent.opacity(0.35)
+            case .success: return LuminaStatusColor.playing.opacity(0.4)
+            case .tip: return LuminaStatusColor.paused.opacity(0.45)
             }
         }
     }
@@ -363,130 +615,441 @@ struct LuminaHintBubble: View {
     var style: Style = .info
     var onDismiss: (() -> Void)? = nil
 
+    @StateObject private var theme = ThemeManager.shared
     @StateObject private var uiScale = UIScaleManager.shared
 
     var body: some View {
-        HStack(alignment: .top, spacing: DisplayScale.points(10)) {
+        HStack(alignment: .top, spacing: LuminaSpace.sm) {
             Image(systemName: icon)
-                .font(uiScale.scaledFont(12, weight: .semibold))
-                .foregroundStyle(style.iconColor)
-                .frame(width: DisplayScale.points(16), alignment: .center)
+                .font(uiScale.font(.callout).weight(.semibold))
+                .foregroundStyle(style.iconColor(accent: theme.current.color))
+                .frame(width: LuminaMetrics.iconColumn, alignment: .center)
                 .padding(.top, 1)
 
             Text(message)
-                .font(uiScale.scaledFont(12))
+                .font(uiScale.font(.callout))
                 .foregroundStyle(.primary)
                 .fixedSize(horizontal: false, vertical: true)
 
             if let onDismiss {
                 Button(action: onDismiss) {
                     Image(systemName: "xmark")
-                        .font(uiScale.scaledFont(10, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                        .frame(width: uiScale.touchTarget(), height: uiScale.touchTarget())
-                        .contentShape(Rectangle())
                 }
-                .buttonStyle(LuminaPressableButtonStyle())
+                .buttonStyle(LuminaIconButtonStyle(size: .compact))
                 .help("Dismiss")
                 .accessibilityLabel("Dismiss")
             }
         }
-        .padding(DisplayScale.points(10))
+        .padding(LuminaSpace.md)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.luminaCard.opacity(0.95), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .background(
+            Color.luminaCard.opacity(0.95),
+            in: RoundedRectangle(cornerRadius: LuminaRadius.panel, style: .continuous)
+        )
         .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(style.borderColor, lineWidth: 1)
+            RoundedRectangle(cornerRadius: LuminaRadius.panel, style: .continuous)
+                .strokeBorder(style.borderColor(accent: theme.current.color), lineWidth: 1)
         )
     }
 }
 
-// MARK: - Secondary button (readable on light backgrounds — not washed-out green text)
+// MARK: - Accent swatch
 
-/// Matched chrome for secondary (and optional filled primary) actions so paired
-/// buttons like Done / Reset share the same height and padding.
-struct LuminaSecondaryButtonStyle: ButtonStyle {
-    @Environment(\.colorScheme) private var colorScheme
+struct LuminaAccentSwatch: View {
+    let theme: AccentTheme
+    let selected: Bool
+    var action: () -> Void
+
+    @StateObject private var uiScale = UIScaleManager.shared
+
+    var body: some View {
+        Button(action: action) {
+            ZStack {
+                Circle()
+                    .fill(theme.color)
+                    .frame(width: DisplayScale.points(20), height: DisplayScale.points(20))
+                if selected {
+                    Circle()
+                        .strokeBorder(theme.color, lineWidth: 2)
+                        .frame(width: DisplayScale.points(26), height: DisplayScale.points(26))
+                    Image(systemName: "checkmark")
+                        .font(.system(size: DisplayScale.points(9), weight: .bold))
+                        .foregroundStyle(theme.onAccent)
+                }
+            }
+            .frame(width: uiScale.touchTarget(), height: uiScale.touchTarget())
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(LuminaPressableButtonStyle())
+        .accessibilityLabel(theme.label)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+}
+
+// MARK: - Empty / loading / error
+
+struct LuminaEmptyState<Actions: View>: View {
+    let icon: String
+    let title: String
+    var message: String? = nil
+    var compact: Bool = false
+    var prominent: Bool = false
+    @ViewBuilder var actions: () -> Actions
+
     @StateObject private var theme = ThemeManager.shared
+    @StateObject private var uiScale = UIScaleManager.shared
 
+    var body: some View {
+        VStack(spacing: LuminaSpace.md) {
+            Image(systemName: icon)
+                .font(.system(size: compact ? DisplayScale.points(28) : uiScale.iconSize(.hero)))
+                .foregroundStyle(theme.current.color.opacity(0.4))
+                .symbolRenderingMode(.hierarchical)
+
+            Text(title)
+                .font(compact
+                      ? uiScale.font(.bodyStrong)
+                      : (prominent ? uiScale.font(.title).weight(.semibold) : uiScale.font(.headline)))
+                .multilineTextAlignment(.center)
+
+            if let message {
+                Text(message)
+                    .font(compact ? uiScale.font(.caption) : uiScale.font(.callout))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: LuminaMetrics.emptyStateTextWidth)
+            }
+
+            if !compact {
+                HStack(spacing: LuminaSpace.sm) {
+                    actions()
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+}
+
+extension LuminaEmptyState where Actions == EmptyView {
+    init(icon: String, title: String, message: String? = nil, compact: Bool = false, prominent: Bool = false) {
+        self.init(icon: icon, title: title, message: message, compact: compact, prominent: prominent) { EmptyView() }
+    }
+}
+
+struct LuminaLoadingView: View {
+    var label: String
+    var onMedia: Bool = false
+
+    @StateObject private var uiScale = UIScaleManager.shared
+
+    var body: some View {
+        HStack(spacing: LuminaSpace.sm) {
+            ProgressView()
+                .controlSize(.small)
+                .tint(onMedia ? .white : nil)
+            Text(label)
+                .font(uiScale.font(.caption))
+                .foregroundStyle(onMedia ? Color.white.opacity(0.7) : Color.secondary)
+        }
+    }
+}
+
+struct LuminaErrorState<Actions: View>: View {
+    let title: String
+    var detail: String? = nil
+    @ViewBuilder var actions: () -> Actions
+
+    @StateObject private var uiScale = UIScaleManager.shared
+
+    var body: some View {
+        VStack(spacing: LuminaSpace.sm) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(LuminaStatusColor.paused)
+            Text(title)
+                .font(uiScale.font(.bodyStrong))
+            if let detail {
+                Text(detail)
+                    .font(uiScale.font(.caption))
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
+            HStack(spacing: LuminaSpace.sm) {
+                actions()
+            }
+            .controlSize(.small)
+        }
+    }
+}
+
+extension LuminaErrorState where Actions == EmptyView {
+    init(title: String, detail: String? = nil) {
+        self.init(title: title, detail: detail) { EmptyView() }
+    }
+}
+
+// MARK: - Overlay chip
+
+struct LuminaOverlayChip: View {
+    let text: String
+
+    @StateObject private var uiScale = UIScaleManager.shared
+
+    var body: some View {
+        Text(text)
+            .font(uiScale.font(.callout).weight(.semibold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, LuminaSpace.overlayChipPaddingH)
+            .padding(.vertical, LuminaSpace.overlayChipPaddingV)
+            .background(Color.luminaOverlay, in: Capsule(style: .continuous))
+            .overlay(
+                Capsule(style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.18), lineWidth: 1)
+            )
+    }
+}
+
+struct LuminaOverlayChipStyle: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .font(UIScaleManager.shared.font(.callout).weight(.semibold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, LuminaSpace.overlayChipPaddingH)
+            .padding(.vertical, LuminaSpace.overlayChipPaddingV)
+            .background(Color.luminaOverlay, in: Capsule(style: .continuous))
+            .overlay(
+                Capsule(style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.18), lineWidth: 1)
+            )
+    }
+}
+
+extension View {
+    func luminaOverlayChipStyle() -> some View {
+        modifier(LuminaOverlayChipStyle())
+    }
+}
+
+// MARK: - Corner picker
+
+struct LuminaCornerPicker: View {
+    @Binding var corner: MusicWidgetPreferences.Corner
+
+    @StateObject private var theme = ThemeManager.shared
+    @State private var hovered: MusicWidgetPreferences.Corner?
+
+    private let corners: [MusicWidgetPreferences.Corner] = [
+        .topLeading, .topTrailing, .bottomLeading, .bottomTrailing
+    ]
+
+    var body: some View {
+        let screen = LuminaMetrics.cornerPickerScreen
+        let hit = LuminaMetrics.cornerPickerHit
+
+        ZStack {
+            RoundedRectangle(cornerRadius: LuminaRadius.small, style: .continuous)
+                .fill(Color.luminaFill)
+            RoundedRectangle(cornerRadius: LuminaRadius.small, style: .continuous)
+                .strokeBorder(Color.luminaBorder, lineWidth: 1)
+
+            ForEach(corners, id: \.self) { c in
+                cornerButton(c, hit: hit)
+            }
+        }
+        .frame(width: screen.width, height: screen.height)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Widget corner")
+    }
+
+    private func cornerButton(_ c: MusicWidgetPreferences.Corner, hit: CGSize) -> some View {
+        let selected = corner == c
+        let hovering = hovered == c
+        return Button {
+            corner = c
+        } label: {
+            RoundedRectangle(cornerRadius: DisplayScale.points(3), style: .continuous)
+                .fill(selected ? theme.current.color : (hovering ? Color.luminaFillHover : Color.luminaFillPressed))
+                .frame(width: hit.width, height: hit.height)
+        }
+        .buttonStyle(.plain)
+        .padding(DisplayScale.points(4))
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: alignment(for: c))
+        .onHover { hovering in
+            hovered = hovering ? c : (hovered == c ? nil : hovered)
+        }
+        .accessibilityLabel(label(for: c))
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
+    private func alignment(for c: MusicWidgetPreferences.Corner) -> Alignment {
+        switch c {
+        case .topLeading: return .topLeading
+        case .topTrailing: return .topTrailing
+        case .bottomLeading: return .bottomLeading
+        case .bottomTrailing: return .bottomTrailing
+        }
+    }
+
+    private func label(for c: MusicWidgetPreferences.Corner) -> String {
+        switch c {
+        case .topLeading: return "Top left"
+        case .topTrailing: return "Top right"
+        case .bottomLeading: return "Bottom left"
+        case .bottomTrailing: return "Bottom right"
+        }
+    }
+}
+
+// MARK: - Secondary / prominent buttons
+
+private struct ButtonMetrics {
+    let height: CGFloat
+    let paddingH: CGFloat
+    let font: Font
+
+    @MainActor
+    static func resolve(controlSize: ControlSize, uiScale: UIScaleManager) -> ButtonMetrics {
+        switch controlSize {
+        case .mini, .small:
+            return ButtonMetrics(
+                height: DisplayScale.points(24),
+                paddingH: DisplayScale.points(10),
+                font: uiScale.font(.callout).weight(.semibold)
+            )
+        case .large, .extraLarge:
+            return ButtonMetrics(
+                height: DisplayScale.points(36),
+                paddingH: DisplayScale.points(18),
+                font: uiScale.font(.bodyStrong)
+            )
+        default:
+            return ButtonMetrics(
+                height: DisplayScale.points(28),
+                paddingH: DisplayScale.points(14),
+                font: uiScale.font(.bodyStrong)
+            )
+        }
+    }
+}
+
+struct LuminaSecondaryButtonStyle: ButtonStyle {
     var destructive: Bool = false
     /// Filled accent style — same metrics as secondary so pairs align.
     var prominent: Bool = false
 
     func makeBody(configuration: Configuration) -> some View {
-        let pressed = configuration.isPressed
-        return configuration.label
-            .font(.system(size: DisplayScale.points(13), weight: .semibold))
-            .padding(.horizontal, DisplayScale.points(14))
-            .padding(.vertical, DisplayScale.points(7))
-            .frame(minHeight: DisplayScale.points(28))
-            .foregroundStyle(foreground.opacity(pressed && !prominent ? 0.85 : 1))
+        LuminaSecondaryButtonBody(
+            configuration: configuration,
+            destructive: destructive,
+            prominent: prominent
+        )
+    }
+}
+
+private struct LuminaSecondaryButtonBody: View {
+    let configuration: ButtonStyleConfiguration
+    let destructive: Bool
+    let prominent: Bool
+
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.controlSize) private var controlSize
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.isFocused) private var isFocused
+    @StateObject private var theme = ThemeManager.shared
+    @StateObject private var uiScale = UIScaleManager.shared
+    @State private var isHovered = false
+
+    var body: some View {
+        let metrics = ButtonMetrics.resolve(controlSize: controlSize, uiScale: uiScale)
+        let pressed = configuration.isPressed && isEnabled
+
+        configuration.label
+            .font(metrics.font)
+            .padding(.horizontal, metrics.paddingH)
+            .frame(minHeight: metrics.height)
+            .foregroundStyle(foreground)
             .background(
-                RoundedRectangle(cornerRadius: DisplayScale.points(8), style: .continuous)
+                RoundedRectangle(cornerRadius: LuminaRadius.control, style: .continuous)
                     .fill(fill(pressed: pressed))
             )
             .overlay(
-                RoundedRectangle(cornerRadius: DisplayScale.points(8), style: .continuous)
+                RoundedRectangle(cornerRadius: LuminaRadius.control, style: .continuous)
                     .strokeBorder(border(pressed: pressed), lineWidth: prominent ? 0 : 1)
             )
             .overlay {
+                if prominent && isHovered && isEnabled && !pressed {
+                    RoundedRectangle(cornerRadius: LuminaRadius.control, style: .continuous)
+                        .fill(Color.white.opacity(0.08))
+                }
+            }
+            .overlay {
                 if pressed {
-                    RoundedRectangle(cornerRadius: DisplayScale.points(8), style: .continuous)
-                        .fill(Color.black.opacity(prominent ? 0.18 : (colorScheme == .light ? 0.06 : 0.12)))
+                    RoundedRectangle(cornerRadius: LuminaRadius.control, style: .continuous)
+                        .fill(Color.black.opacity(prominent ? 0.18 : 0))
+                }
+            }
+            .overlay {
+                if isFocused && isEnabled {
+                    RoundedRectangle(cornerRadius: LuminaRadius.control + 3, style: .continuous)
+                        .strokeBorder(theme.current.color.opacity(0.9), lineWidth: 2)
+                        .padding(-3)
                 }
             }
             .scaleEffect(pressed ? LuminaButtonPress.scale : 1)
             .animation(LuminaButtonPress.animation, value: pressed)
+            .onHover { isHovered = $0 }
+            .focusEffectDisabled()
     }
 
     private var foreground: Color {
-        if prominent { return .white }
+        if !isEnabled {
+            if prominent { return theme.current.onAccent.opacity(0.7) }
+            return Color(nsColor: .tertiaryLabelColor)
+        }
+        if prominent { return theme.current.onAccent }
         if destructive { return .red }
         return .primary
     }
 
     private func fill(pressed: Bool) -> Color {
-        if prominent { return theme.current.color }
-        if colorScheme == .light {
-            return Color.primary.opacity(pressed ? 0.14 : 0.06)
+        if prominent {
+            return theme.current.color.opacity(isEnabled ? 1 : 0.45)
         }
-        return Color.primary.opacity(pressed ? 0.22 : 0.12)
+        if !isEnabled {
+            return Color.luminaFill
+        }
+        if pressed { return Color.luminaFillPressed }
+        if isHovered {
+            // rest fill +0.04
+            return colorScheme == .light
+                ? Color.primary.opacity(0.10)
+                : Color.primary.opacity(0.16)
+        }
+        // rest: keep today's 0.12 dark / 0.06 light
+        return colorScheme == .light
+            ? Color.primary.opacity(0.06)
+            : Color.primary.opacity(0.12)
     }
 
     private func border(pressed: Bool) -> Color {
         if prominent { return .clear }
+        let base: Color
         if destructive {
-            return Color.red.opacity(colorScheme == .light ? (pressed ? 0.5 : 0.35) : (pressed ? 0.6 : 0.45))
+            base = Color.red.opacity(colorScheme == .light ? (pressed ? 0.5 : 0.35) : (pressed ? 0.6 : 0.45))
+        } else {
+            base = Color.primary.opacity(colorScheme == .light ? (pressed ? 0.28 : 0.16) : (pressed ? 0.34 : 0.22))
         }
-        return Color.primary.opacity(colorScheme == .light ? (pressed ? 0.28 : 0.16) : (pressed ? 0.34 : 0.22))
+        return isEnabled ? base : base.opacity(0.5)
     }
 }
 
 /// Primary filled action (Apply, etc.) with the same press language as secondary buttons.
 struct LuminaProminentButtonStyle: ButtonStyle {
-    @Environment(\.isEnabled) private var isEnabled
-    @StateObject private var theme = ThemeManager.shared
-
     func makeBody(configuration: Configuration) -> some View {
-        let pressed = configuration.isPressed
-        return configuration.label
-            .font(.system(size: DisplayScale.points(13), weight: .semibold))
-            .padding(.horizontal, DisplayScale.points(14))
-            .padding(.vertical, DisplayScale.points(7))
-            .frame(minHeight: DisplayScale.points(28))
-            .foregroundStyle(.white.opacity(isEnabled ? 1 : 0.7))
-            .background(
-                RoundedRectangle(cornerRadius: DisplayScale.points(8), style: .continuous)
-                    .fill(theme.current.color.opacity(isEnabled ? 1 : 0.45))
-            )
-            .overlay {
-                if pressed && isEnabled {
-                    RoundedRectangle(cornerRadius: DisplayScale.points(8), style: .continuous)
-                        .fill(Color.black.opacity(0.2))
-                }
-            }
-            .scaleEffect(pressed && isEnabled ? LuminaButtonPress.scale : 1)
-            .animation(LuminaButtonPress.animation, value: pressed)
+        LuminaSecondaryButtonBody(
+            configuration: configuration,
+            destructive: false,
+            prominent: true
+        )
     }
 }
 

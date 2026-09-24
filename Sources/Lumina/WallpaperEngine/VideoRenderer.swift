@@ -16,6 +16,21 @@
 import AppKit
 import AVFoundation
 
+public enum WallpaperPlaybackPolicy: Equatable, Sendable {
+    case normal
+    case throttled(fps: Int)
+    case paused(reason: PauseReason)
+
+    public enum PauseReason: String, Sendable, Equatable {
+        case lowPowerMode
+        case thermalState
+        case fullscreenApp
+        case userPaused
+        case manual
+        case displayInactive
+    }
+}
+
 /// Unified protocol for all wallpaper renderers (video, images, GIFs, future scenes).
 /// This is the foundation for production-grade per-monitor media support.
 public protocol MediaRenderer: AnyObject {
@@ -70,6 +85,9 @@ public final class AVVideoRenderer: @unchecked Sendable {
     private var player: AVQueuePlayer?
     private var looper: AVPlayerLooper?
     private var playerLayer: AVPlayerLayer?
+
+    /// Shared-source cutover: secondary surfaces attach AVPlayerLayers to this player.
+    func exposePlayer() -> AVQueuePlayer? { player }
 
     // MARK: - Image / GIF support
     // AVPlayer cannot render static images or animate GIFs, so those formats use a
@@ -161,7 +179,7 @@ public final class AVVideoRenderer: @unchecked Sendable {
     private var lastLoopFadeSampleTime: TimeInterval = 0
 
     // MARK: - Loop Mode (loop / once / bounce)
-    private var loopMode: MonitorAssignment.LoopMode = .loop
+    private var loopMode: LoopMode = .loop
     private var endTimeObserver: NSObjectProtocol?
     private var reverseBoundaryObserver: Any?
 
@@ -304,24 +322,36 @@ public final class AVVideoRenderer: @unchecked Sendable {
     private var userPlaybackSpeed: Double = 1.0
 
     /// Sets the user's desired playback speed (0.25x – 4.0x).
-    /// This is applied on top of the current PowerManager policy.
     /// Safe to call even when no video is loaded (value is stored for next load).
     public func setPlaybackSpeed(_ speed: Double) {
         userPlaybackSpeed = max(0.25, min(4.0, speed))
 
         guard let player else { return }
 
-        // Respect current policy: if paused, stay paused.
+        // Respect current policy: if paused, stay paused. Rate is never derived from an fps cap.
         if case .paused = currentPolicy {
             return
         }
+        player.rate = Float(userPlaybackSpeed)
+    }
 
-        // When in normal policy, use the user's speed directly.
-        // When throttled, we let applyPolicy re-evaluate (it will use its own reduced rate).
-        // For a quick live response from the manager, we apply the user speed now
-        // and let the next policy change correct it if needed.
-        if case .normal = currentPolicy {
-            player.rate = Float(userPlaybackSpeed)
+    /// Presentation-rate ceiling for GIF / Ken Burns (preferredFrameRateRange + decimation).
+    /// Video frame caps use variants / optional FramePump — never AVPlayer.rate.
+    private var presentationMaxFPS: Int?
+
+    public func setPresentationMaxFPS(_ fps: Int?) {
+        guard presentationMaxFPS != fps else { return }
+        presentationMaxFPS = fps
+        if mediaKind == .animatedImage, let layer = imageLayer, let url = currentURL {
+            applyGIFAnimation(url: url, to: layer, autoPlay: {
+                if case .paused = currentPolicy { return false }
+                return true
+            }())
+        }
+        if let slideshow {
+            MainActor.assumeIsolated {
+                slideshow.setPreferredFrameRate(fps)
+            }
         }
     }
 
@@ -588,18 +618,9 @@ public final class AVVideoRenderer: @unchecked Sendable {
         guard let player else { return }
 
         switch policy {
-        case .normal:
-            // Respect the user's chosen speed when in normal playback
+        case .normal, .throttled:
+            // Frame caps are budgets (variants / FramePump / preferredFrameRateRange) — never AVPlayer.rate.
             player.rate = Float(userPlaybackSpeed)
-            if player.timeControlStatus != .playing {
-                player.play()
-            }
-
-        case .throttled(let fps):
-            // Throttling takes precedence over user speed for power reasons.
-            // We use a reduced rate; user speed can be re-applied when policy returns to normal.
-            let rate = max(0.25, min(1.0, Double(fps) / 60.0))
-            player.rate = Float(rate)
             if player.timeControlStatus != .playing {
                 player.play()
             }
@@ -611,7 +632,7 @@ public final class AVVideoRenderer: @unchecked Sendable {
 
     // MARK: - Loop Crossfade
 
-    private var currentFadeEasing: MonitorAssignment.FadeEasing = .easeInOut
+    private var currentFadeEasing: FadeEasing = .easeInOut
 
     // KVO observer token for item readiness
     private var itemStatusObserver: NSKeyValueObservation?
@@ -624,7 +645,7 @@ public final class AVVideoRenderer: @unchecked Sendable {
     public var onLoadFailure: ((URL, Error?) -> Void)?
 
     /// Configures loop-point crossfade behavior. Call after load().
-    public func setLoopFade(enabled: Bool, duration: Double, easing: MonitorAssignment.FadeEasing = .easeInOut) {
+    public func setLoopFade(enabled: Bool, duration: Double, easing: FadeEasing = .easeInOut) {
         loopFadeEnabled = enabled
         loopFadeDuration = duration
         currentFadeEasing = easing
@@ -641,7 +662,7 @@ public final class AVVideoRenderer: @unchecked Sendable {
     /// .loop   → seamless AVPlayerLooper (current default)
     /// .once   → play to end, then visually go black (no looping)
     /// .bounce → forward then reverse (ping-pong) using rate reversal
-    public func setLoopMode(_ mode: MonitorAssignment.LoopMode) {
+    public func setLoopMode(_ mode: LoopMode) {
         guard mode != loopMode else { return }
         loopMode = mode
 
@@ -1044,7 +1065,7 @@ public final class AVVideoRenderer: @unchecked Sendable {
         }
     }
 
-    private func attachEndOfItemHandler(for item: AVPlayerItem, player: AVQueuePlayer, mode: MonitorAssignment.LoopMode) {
+    private func attachEndOfItemHandler(for item: AVPlayerItem, player: AVQueuePlayer, mode: LoopMode) {
         // Clean previous
         if let obs = endTimeObserver {
             NotificationCenter.default.removeObserver(obs)
@@ -1123,7 +1144,7 @@ public final class AVVideoRenderer: @unchecked Sendable {
 
     public func loadSlideshow(items: [String],
                             interval: Double,
-                            transition: MonitorAssignment.SlideshowTransition,
+                            transition: SlideshowTransition,
                             kenBurnsEnabled: Bool = true) {
         cleanup()
         guard let host = hostLayer ?? playerLayer?.superlayer else {
@@ -1248,6 +1269,7 @@ public final class AVVideoRenderer: @unchecked Sendable {
 
         let maxPixel = targetMaxPixelSize()
         let playbackSpeed = userPlaybackSpeed
+        let maxFPSCap = presentationMaxFPS
 
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return }
         let count = CGImageSourceGetCount(source)
@@ -1278,15 +1300,28 @@ public final class AVVideoRenderer: @unchecked Sendable {
             }
             guard !frames.isEmpty, total > 0 else { return }
 
+            let decimated = FrameDecimation.decimate(delays: delays, maxFPS: maxFPSCap)
+            var keptFrames: [CGImage] = []
+            var keptDelays: [Double] = []
+            var keptTotal = 0.0
+            for entry in decimated {
+                guard entry.index < frames.count else { continue }
+                keptFrames.append(frames[entry.index])
+                keptDelays.append(entry.delay)
+                keptTotal += entry.delay
+            }
+            guard !keptFrames.isEmpty, keptTotal > 0 else { return }
+
             var keyTimes: [NSNumber] = []
             var acc = 0.0
-            for delay in delays {
-                keyTimes.append(NSNumber(value: acc / total))
+            for delay in keptDelays {
+                keyTimes.append(NSNumber(value: acc / keptTotal))
                 acc += delay
             }
             let finalKeyTimes = keyTimes
-            let finalTotal = total
-            let finalFrames = frames
+            let finalTotal = keptTotal
+            let finalFrames = keptFrames
+            let frameRateCap = maxFPSCap
 
             await MainActor.run { [weak self] in
                 guard let self,
@@ -1303,6 +1338,14 @@ public final class AVVideoRenderer: @unchecked Sendable {
                 animation.repeatCount = .infinity
                 animation.calculationMode = .discrete
                 animation.isRemovedOnCompletion = false
+                if let frameRateCap, frameRateCap > 0 {
+                    let fps = Float(frameRateCap)
+                    animation.preferredFrameRateRange = CAFrameRateRange(
+                        minimum: max(1, fps / 2),
+                        maximum: fps,
+                        preferred: fps
+                    )
+                }
                 layer.contents = finalFrames.last
                 layer.add(animation, forKey: "gif")
                 self.gifAnimation = animation   // retained so the displays can be restarted in sync
@@ -1354,14 +1397,11 @@ public final class AVVideoRenderer: @unchecked Sendable {
         }
     }
 
+    /// Playback rate from user speed only. Never derived from an fps cap.
     private func effectiveRateForCurrentPolicy() -> Float? {
         switch currentPolicy {
-        case .normal:
-            // Use the user's chosen speed (default 1.0) when policy allows full playback
+        case .normal, .throttled:
             return Float(userPlaybackSpeed)
-        case .throttled(let fps):
-            // Policy throttling takes priority over user speed for power saving
-            return Float(max(0.25, min(1.0, Double(fps) / 60.0)))
         case .paused:
             return nil
         }

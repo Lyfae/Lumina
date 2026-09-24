@@ -11,24 +11,24 @@ struct MediaAccessLocationChecklist: View {
     private var selectionIsEmpty: Bool { settings.enabledLocations.isEmpty }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: DisplayScale.points(12)) {
+        VStack(alignment: .leading, spacing: LuminaSpace.md) {
             if showsHeader {
-                VStack(alignment: .leading, spacing: DisplayScale.points(4)) {
+                VStack(alignment: .leading, spacing: LuminaSpace.xs) {
                     Text("Allowed folders")
-                        .font(uiScale.scaledFont(13, weight: .semibold))
+                        .font(LuminaFont.font(.bodyStrong))
                     Text(headerCopy)
-                        .font(uiScale.scaledFont(11))
+                        .font(LuminaFont.font(.caption))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             } else {
                 Text(headerCopy)
-                    .font(uiScale.scaledFont(11))
+                    .font(LuminaFont.font(.caption))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            VStack(spacing: DisplayScale.points(6)) {
+            VStack(spacing: LuminaSpace.sm) {
                 ForEach(MediaAccessLocation.allCases) { location in
                     locationRow(location)
                 }
@@ -36,20 +36,23 @@ struct MediaAccessLocationChecklist: View {
             .frame(maxWidth: .infinity, alignment: .leading)
 
             if selectionIsEmpty {
-                HStack(alignment: .top, spacing: DisplayScale.points(8)) {
+                HStack(alignment: .top, spacing: LuminaSpace.sm) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
-                    Text("Select at least one folder so Lumina can find wallpapers.")
-                        .font(uiScale.scaledFont(11))
+                        .foregroundStyle(LuminaStatusColor.paused)
+                    Text("Pick at least one folder.")
+                        .font(LuminaFont.font(.caption))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                .padding(DisplayScale.points(10))
+                .padding(LuminaSpace.md)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .background(
+                    LuminaStatusColor.paused.opacity(0.10),
+                    in: RoundedRectangle(cornerRadius: LuminaRadius.panel, style: .continuous)
+                )
             } else {
                 Text(MediaAccessPolicy.restrictionHint())
-                    .font(uiScale.scaledFont(11))
+                    .font(LuminaFont.font(.caption))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -58,7 +61,7 @@ struct MediaAccessLocationChecklist: View {
     }
 
     private var headerCopy: String {
-        "Choose which folders Lumina may use. Checking a box only sets your preference — macOS may still ask once the first time you open a file from Documents, Desktop, or Downloads."
+        "Lumina only opens wallpapers from these folders. macOS may ask once for Documents, Desktop, or Downloads."
     }
 
     private func locationRow(_ location: MediaAccessLocation) -> some View {
@@ -67,20 +70,20 @@ struct MediaAccessLocationChecklist: View {
         return Button {
             settings.setEnabled(location, !enabled)
         } label: {
-            HStack(alignment: .center, spacing: DisplayScale.points(12)) {
+            HStack(alignment: .center, spacing: LuminaSpace.md) {
                 checkmarkBox(enabled: enabled)
 
                 Image(systemName: location.icon)
-                    .font(.system(size: DisplayScale.points(14), weight: .semibold))
+                    .font(.system(size: uiScale.iconSize(.card), weight: .semibold))
                     .foregroundStyle(enabled ? theme.current.color : .secondary)
-                    .frame(width: DisplayScale.points(22), height: DisplayScale.points(22))
+                    .frame(width: DisplayScale.points(24), height: DisplayScale.points(24))
 
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: LuminaSpace.hair) {
                     Text(location.label)
-                        .font(uiScale.scaledFont(13, weight: .semibold))
+                        .font(LuminaFont.font(.bodyStrong))
                         .foregroundStyle(.primary)
                     Text(location.subtitle)
-                        .font(uiScale.scaledFont(11))
+                        .font(LuminaFont.font(.caption))
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
@@ -88,45 +91,49 @@ struct MediaAccessLocationChecklist: View {
 
                 Spacer(minLength: 0)
             }
-            .padding(.horizontal, DisplayScale.points(12))
-            .padding(.vertical, DisplayScale.points(10))
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, LuminaSpace.md)
+            .padding(.vertical, LuminaSpace.sm)
+            .frame(maxWidth: .infinity, minHeight: LuminaSpace.rowHeight + 8, alignment: .leading)
             .contentShape(Rectangle())
             .background(
-                RoundedRectangle(cornerRadius: DisplayScale.points(10), style: .continuous)
-                    .fill(enabled ? theme.current.color.opacity(0.08) : Color.primary.opacity(0.03))
+                RoundedRectangle(cornerRadius: LuminaRadius.panel, style: .continuous)
+                    .fill(enabled ? theme.current.color.opacity(0.10) : Color.luminaFill)
             )
             .overlay(
-                RoundedRectangle(cornerRadius: DisplayScale.points(10), style: .continuous)
+                RoundedRectangle(cornerRadius: LuminaRadius.panel, style: .continuous)
                     .strokeBorder(
-                        enabled ? theme.current.color.opacity(0.28) : Color.luminaBorder,
+                        enabled ? theme.current.color.opacity(0.35) : Color.luminaBorder,
                         lineWidth: 1
                     )
             )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(LuminaPressableButtonStyle())
         .accessibilityLabel(location.label)
         .accessibilityValue(enabled ? "Allowed" : "Not allowed")
         .accessibilityAddTraits(.isButton)
     }
 
     private func checkmarkBox(enabled: Bool) -> some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 5, style: .continuous)
+        let size = DisplayScale.points(18)
+        let radius = LuminaRadius.badge + 1
+        let glyph = uiScale.iconSize(.inline) - 2
+
+        return ZStack {
+            RoundedRectangle(cornerRadius: radius, style: .continuous)
                 .fill(enabled ? theme.current.color : Color.clear)
-                .frame(width: 18, height: 18)
-            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                .frame(width: size, height: size)
+            RoundedRectangle(cornerRadius: radius, style: .continuous)
                 .strokeBorder(
                     enabled ? theme.current.color : Color.secondary.opacity(0.45),
                     lineWidth: 1.5
                 )
-                .frame(width: 18, height: 18)
+                .frame(width: size, height: size)
             if enabled {
                 Image(systemName: "checkmark")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(.white)
+                    .font(.system(size: glyph, weight: .bold))
+                    .foregroundStyle(theme.current.onAccent)
             }
         }
-        .frame(width: 18, height: 18)
+        .frame(width: size, height: size)
     }
 }

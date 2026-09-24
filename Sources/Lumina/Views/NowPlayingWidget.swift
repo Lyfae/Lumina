@@ -1,44 +1,63 @@
 import SwiftUI
 import AppKit
+import LuminaCore
 
 /// Floating always-on-top mini-player for Lumina ambient audio.
-/// Open from the Studio footer, or automatically when Studio is minimized
-/// (if "Show music widget when minimized" is on).
 @MainActor
-final class NowPlayingWidgetController: NSObject, ObservableObject {
+final class NowPlayingWidgetController: NSObject, ObservableObject, NSWindowDelegate {
     static let shared = NowPlayingWidgetController()
 
     @Published private(set) var isVisible: Bool = false
 
     private var panel: NSPanel?
     private var currentSize: NSSize = DisplayScale.musicWidgetSize
+    /// User closed the widget during this playback session — blocks auto-show until stop.
+    private var userDismissedThisSession = false
+    private var wasPlaying = false
+    private var playingObservation: NSKeyValueObservation?
+    private var prefsObservationTask: Task<Void, Never>?
 
     private override init() {
         super.init()
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(audioPlayingChanged),
+            name: .init("Lumina.AmbientAudio.PlayingDidChange"),
+            object: nil
+        )
+    }
+
+    private var preferences: PreferencesStore? {
+        (NSApp.delegate as? LuminaApp)?.preferencesStore
     }
 
     func show() {
         let isNew = panel == nil
+        let sizePref = preferences?.widget.size ?? .regular
         if isNew {
+            currentSize = DisplayScale.musicWidgetSize(for: sizePref)
             panel = makePanel()
-            currentSize = DisplayScale.musicWidgetSize
         }
         guard let panel else { return }
-        // Don't collapse an already-open queue — only seed size for a fresh panel.
         if isNew {
             syncPanelSize(panel, size: currentSize)
         }
         if !panel.isVisible {
-            positionInTopRight(panel)
+            position(panel, placement: preferences?.widget.placement ?? .init())
         }
         panel.orderFrontRegardless()
         isVisible = true
-        AmbientAudioManager.shared.setVisualizerActive(true)
+        userDismissedThisSession = false
+        updateVisualizer()
+        observePreferences()
     }
 
-    func hide() {
+    func hide(userInitiated: Bool = true) {
         panel?.orderOut(nil)
         isVisible = false
+        if userInitiated {
+            userDismissedThisSession = true
+        }
         AmbientAudioManager.shared.setVisualizerActive(false)
     }
 
@@ -55,6 +74,26 @@ final class NowPlayingWidgetController: NSObject, ObservableObject {
         syncPanelSize(panel, size: size)
     }
 
+    func applySizePreference(_ size: MusicWidgetPreferences.Size) {
+        guard var widget = preferences?.widget else { return }
+        widget.size = size
+        preferences?.widget = widget
+        currentSize = DisplayScale.musicWidgetSize(for: size)
+        if let panel {
+            syncPanelSize(panel, size: currentSize)
+            refreshHostingView()
+        }
+    }
+
+    func snapToCorner() {
+        guard var widget = preferences?.widget else { return }
+        widget.placement.customOrigin = nil
+        preferences?.widget = widget
+        if let panel {
+            position(panel, placement: widget.placement)
+        }
+    }
+
     private func makePanel() -> NSPanel {
         let size = currentSize
         let panel = NSPanel(
@@ -65,12 +104,12 @@ final class NowPlayingWidgetController: NSObject, ObservableObject {
         )
         panel.isOpaque = false
         panel.backgroundColor = .clear
-        panel.hasShadow = false
+        panel.hasShadow = true
         panel.level = .floating
-        // Dragging is handled by an explicit gesture so it can't steal from the scrubber.
         panel.isMovableByWindowBackground = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        panel.title = "Lumina Music"
+        panel.title = "Music Widget"
+        panel.delegate = self
         self.panel = panel
         refreshHostingView()
         return panel
@@ -79,18 +118,25 @@ final class NowPlayingWidgetController: NSObject, ObservableObject {
     private func refreshHostingView() {
         guard let panel else { return }
         let size = currentSize
-        let host = NSHostingView(rootView: NowPlayingWidgetView(
+        let root = NowPlayingWidgetView(
             onClose: { [weak self] in self?.hide() },
             onSizeChange: { [weak self] size in
                 self?.setContentSize(width: size.width, height: size.height)
-            }
-        ))
+            },
+            onSnapToCorner: { [weak self] in self?.snapToCorner() },
+            onSelectSize: { [weak self] size in self?.applySizePreference(size) }
+        )
+        let host: NSHostingView<AnyView>
+        if let preferences {
+            host = NSHostingView(rootView: AnyView(root.environment(preferences)))
+        } else {
+            host = NSHostingView(rootView: AnyView(root))
+        }
         host.frame = NSRect(origin: .zero, size: size)
         host.autoresizingMask = [.width, .height]
         panel.contentView = host
     }
 
-    /// Resize with the top edge locked (macOS origin is bottom-left).
     private func syncPanelSize(_ panel: NSPanel, size: NSSize) {
         guard abs(panel.frame.width - size.width) > 0.5
                 || abs(panel.frame.height - size.height) > 0.5 else { return }
@@ -102,59 +148,209 @@ final class NowPlayingWidgetController: NSObject, ObservableObject {
         panel.setFrame(frame, display: true)
     }
 
-    private func positionInTopRight(_ panel: NSPanel) {
-        guard let visible = NSScreen.main?.visibleFrame else { return }
+    private func position(_ panel: NSPanel, placement: MusicWidgetPreferences.Placement) {
         let size = panel.frame.size
-        panel.setFrameOrigin(NSPoint(
-            x: visible.maxX - size.width - DisplayScale.points(20),
-            y: visible.maxY - size.height - DisplayScale.points(20)
-        ))
+        if let custom = placement.customOrigin {
+            let origin = clampOrigin(NSPoint(x: custom.x, y: custom.y), size: size)
+            panel.setFrameOrigin(origin)
+            return
+        }
+
+        let screen = screen(for: placement.display) ?? NSScreen.main
+        guard let visible = screen?.visibleFrame else { return }
+        let inset = DisplayScale.points(placement.inset)
+        let origin: NSPoint
+        switch placement.corner {
+        case .topLeading:
+            origin = NSPoint(x: visible.minX + inset, y: visible.maxY - size.height - inset)
+        case .topTrailing:
+            origin = NSPoint(x: visible.maxX - size.width - inset, y: visible.maxY - size.height - inset)
+        case .bottomLeading:
+            origin = NSPoint(x: visible.minX + inset, y: visible.minY + inset)
+        case .bottomTrailing:
+            origin = NSPoint(x: visible.maxX - size.width - inset, y: visible.minY + inset)
+        }
+        panel.setFrameOrigin(origin)
+    }
+
+    private func screen(for key: DisplayKey?) -> NSScreen? {
+        guard let key else { return NSScreen.main }
+        return NSScreen.screens.enumerated().first { index, screen in
+            DisplayKey(MonitorInfo.identifier(for: screen, index: index)) == key
+        }?.element
+    }
+
+    private func clampOrigin(_ origin: NSPoint, size: NSSize) -> NSPoint {
+        let screens = NSScreen.screens
+        guard !screens.isEmpty else { return origin }
+        var best = origin
+        var bestArea: CGFloat = -1
+        let proposed = NSRect(origin: origin, size: size)
+        for screen in screens {
+            let visible = screen.visibleFrame
+            let intersection = proposed.intersection(visible)
+            let area = intersection.width * intersection.height
+            if area > bestArea {
+                bestArea = area
+                best = NSPoint(
+                    x: min(max(origin.x, visible.minX), visible.maxX - size.width),
+                    y: min(max(origin.y, visible.minY), visible.maxY - size.height)
+                )
+            }
+        }
+        return best
+    }
+
+    func windowDidMove(_ notification: Notification) {
+        guard let panel, panel.isVisible, var widget = preferences?.widget else { return }
+        let origin = panel.frame.origin
+        widget.placement.customOrigin = CodablePoint(x: origin.x, y: origin.y)
+        preferences?.widget = widget
+    }
+
+    @objc private func audioPlayingChanged() {
+        handlePlaybackTransition()
+    }
+
+    private func handlePlaybackTransition() {
+        let playing = AmbientAudioManager.shared.isPlaying
+        defer { wasPlaying = playing }
+        guard playing, !wasPlaying else {
+            if !playing { userDismissedThisSession = false }
+            return
+        }
+        let autoShow = preferences?.widget.autoShow.whenPlaybackStarts ?? false
+        if autoShow, !userDismissedThisSession, !isVisible {
+            show()
+        }
+    }
+
+    private func updateVisualizer() {
+        let showsWave = preferences?.widget.showsWaveform ?? true
+        AmbientAudioManager.shared.setVisualizerActive(isVisible && showsWave)
+    }
+
+    private func observePreferences() {
+        prefsObservationTask?.cancel()
+        prefsObservationTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                guard let self, let prefs = self.preferences else {
+                    try? await Task.sleep(nanoseconds: 500_000_000)
+                    continue
+                }
+                withObservationTracking {
+                    _ = prefs.widget.size
+                    _ = prefs.widget.showsWaveform
+                    _ = prefs.widget.placement
+                } onChange: {
+                    Task { @MainActor [weak self] in
+                        self?.handlePrefsChange()
+                    }
+                }
+                try? await Task.sleep(nanoseconds: 60_000_000_000)
+            }
+        }
+        // Also poll playing state since AmbientAudioManager may not post the custom notification.
+        Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                self?.handlePlaybackTransition()
+                self?.updateVisualizer()
+                try? await Task.sleep(nanoseconds: 400_000_000)
+            }
+        }
+    }
+
+    private func handlePrefsChange() {
+        guard let prefs = preferences else { return }
+        let desired = DisplayScale.musicWidgetSize(for: prefs.widget.size)
+        if abs(desired.width - currentSize.width) > 0.5 {
+            currentSize = desired
+            if let panel {
+                syncPanelSize(panel, size: currentSize)
+                refreshHostingView()
+            }
+        }
+        updateVisualizer()
+    }
+}
+
+// MARK: - Metrics
+
+@MainActor
+private struct WidgetMetrics {
+    let width: CGFloat
+    let baseHeight: CGFloat
+    let sidePad: CGFloat
+    let art: CGFloat
+    let waveBand: CGFloat
+    let controlsBand: CGFloat
+    let play: CGFloat
+    let volume: CGFloat
+    let titleFont: LuminaTextStyle
+
+    init(size: MusicWidgetPreferences.Size) {
+        switch size {
+        case .compact:
+            width = DisplayScale.points(248)
+            baseHeight = DisplayScale.points(112)
+            sidePad = DisplayScale.points(10)
+            art = DisplayScale.points(40)
+            waveBand = DisplayScale.points(22)
+            controlsBand = DisplayScale.points(24)
+            play = DisplayScale.points(28)
+            volume = DisplayScale.points(44)
+            titleFont = .callout
+        case .regular:
+            width = DisplayScale.points(288)
+            baseHeight = DisplayScale.points(140)
+            sidePad = DisplayScale.points(12)
+            art = DisplayScale.points(56)
+            waveBand = DisplayScale.points(30)
+            controlsBand = DisplayScale.points(24)
+            play = DisplayScale.points(34)
+            volume = DisplayScale.points(56)
+            titleFont = .bodyStrong
+        case .expanded:
+            width = DisplayScale.points(336)
+            baseHeight = DisplayScale.points(168)
+            sidePad = DisplayScale.points(14)
+            art = DisplayScale.points(72)
+            waveBand = DisplayScale.points(36)
+            controlsBand = DisplayScale.points(28)
+            play = DisplayScale.points(40)
+            volume = DisplayScale.points(72)
+            titleFont = .headline
+        }
     }
 }
 
 // MARK: - Widget View
 
-/// Fixed-size compact bar. Art tile and live waveform carry the visual weight;
-/// transport, volume and queue fade in on hover so idle chrome stays minimal.
 struct NowPlayingWidgetView: View {
     var onClose: () -> Void = {}
     var onSizeChange: (CGSize) -> Void = { _ in }
+    var onSnapToCorner: () -> Void = {}
+    var onSelectSize: (MusicWidgetPreferences.Size) -> Void = { _ in }
 
+    @Environment(PreferencesStore.self) private var prefs: PreferencesStore?
     @ObservedObject private var audio = AmbientAudioManager.shared
     @ObservedObject private var theme = ThemeManager.shared
+    @StateObject private var uiScale = UIScaleManager.shared
     @State private var isHovering: Bool = false
     @State private var showQueue: Bool = false
-    /// Non-nil while the edge scrubber is being dragged — drives the elapsed readout.
     @State private var scrubPreview: Double? = nil
+    @State private var isPanelKey: Bool = false
 
     private var accent: Color { theme.current.color }
     private var hasTrack: Bool { audio.trackURL != nil }
-
-    private var contentWidth: CGFloat { DisplayScale.points(288) }
-    private var contentHeight: CGFloat { DisplayScale.points(140) }
-    private var sidePad: CGFloat { DisplayScale.points(12) }
-    private var artSide: CGFloat { DisplayScale.points(56) }
-    /// Waveform scrubber band — always visible, always the seek target.
-    private var waveHeight: CGFloat { DisplayScale.points(30) }
-    /// Reserved band for hover controls, so revealing them never resizes the card.
-    private var controlsHeight: CGFloat { DisplayScale.points(24) }
-    private var queueRowHeight: CGFloat { DisplayScale.points(24) }
-
-    /// Header label + rows + the padding the list sits in.
-    private var queueHeight: CGFloat {
-        guard showQueue, !upcomingTracks.isEmpty else { return 0 }
-        let gap = DisplayScale.points(2)
-        let label = DisplayScale.points(12)
-        let rows = CGFloat(upcomingTracks.count) * queueRowHeight
-        let gaps = CGFloat(upcomingTracks.count) * gap // label→first + between rows
-        return label + gaps + rows + DisplayScale.points(8)
+    private var metrics: WidgetMetrics {
+        WidgetMetrics(size: prefs?.widget.size ?? .regular)
     }
 
-    private var cardHeight: CGFloat { contentHeight + queueHeight }
-
-    private static let hoverAnimation = Animation.easeOut(duration: 0.16)
+    private var queueRowHeight: CGFloat { DisplayScale.points(24) }
 
     private var upcomingTracks: [AmbientAudioManager.AudioTrack] {
+        guard prefs?.widget.showsUpNext != false else { return [] }
         guard !audio.library.isEmpty else { return [] }
         guard let current = audio.trackURL,
               let idx = audio.library.firstIndex(where: { $0.url == current }) else {
@@ -168,69 +364,154 @@ struct NowPlayingWidgetView: View {
         return result
     }
 
+    private var queueHeight: CGFloat {
+        guard showQueue, !upcomingTracks.isEmpty, prefs?.widget.showsUpNext != false else { return 0 }
+        let gap = LuminaSpace.hair
+        let label = LuminaMetrics.upNextLabel
+        let rows = CGFloat(upcomingTracks.count) * queueRowHeight
+        let gaps = CGFloat(upcomingTracks.count) * gap
+        return label + gaps + rows + LuminaSpace.sm
+    }
+
+    private var cardHeight: CGFloat { metrics.baseHeight + queueHeight }
+
+    private var chromeVisible: Bool {
+        isHovering
+            || isPanelKey
+            || NSWorkspace.shared.isVoiceOverEnabled
+            || NSApp.isFullKeyboardAccessEnabled
+            || !hasTrack
+    }
+
     var body: some View {
-        let cardShape = RoundedRectangle(cornerRadius: DisplayScale.points(14), style: .continuous)
+        let cardShape = RoundedRectangle(cornerRadius: LuminaRadius.widget, style: .continuous)
+        let m = metrics
 
         VStack(spacing: 0) {
-            headerRow
-                .padding(.horizontal, sidePad)
-                .padding(.top, DisplayScale.points(12))
+            headerRow(m)
+                .padding(.horizontal, m.sidePad)
+                .padding(.top, LuminaSpace.md)
 
-            Spacer(minLength: DisplayScale.points(6))
+            Spacer(minLength: LuminaSpace.xs)
 
-            waveformRow
-                .frame(height: waveHeight)
-                .padding(.horizontal, sidePad)
+            waveformRow(m)
+                .frame(height: m.waveBand)
+                .padding(.horizontal, m.sidePad)
 
             if showQueue, !upcomingTracks.isEmpty {
                 upNextList
-                    .padding(.horizontal, sidePad)
-                    .padding(.top, DisplayScale.points(6))
+                    .padding(.horizontal, m.sidePad)
+                    .padding(.top, LuminaSpace.tight)
                     .transition(.opacity)
             }
 
-            controlsRow
-                .frame(height: controlsHeight)
-                .padding(.horizontal, sidePad)
-                .padding(.bottom, DisplayScale.points(10))
-                .opacity(isHovering ? 1 : 0)
-                .allowsHitTesting(isHovering)
+            controlsRow(m)
+                .frame(height: m.controlsBand)
+                .padding(.horizontal, m.sidePad)
+                .padding(.bottom, LuminaSpace.barPaddingV)
+                .opacity(chromeVisible ? 1 : 0)
+                .allowsHitTesting(chromeVisible)
         }
-        .frame(width: contentWidth, height: cardHeight, alignment: .top)
+        .frame(width: m.width, height: cardHeight, alignment: .top)
         .background(Color.luminaCard, in: cardShape)
-        .overlay(cardShape.strokeBorder(Color.luminaBorder.opacity(0.9), lineWidth: 1))
+        .overlay(cardShape.strokeBorder(Color.luminaBorder, lineWidth: 1))
         .clipShape(cardShape)
+        .contextMenu { widgetContextMenu }
         .onHover { hovering in
-            withAnimation(Self.hoverAnimation) {
+            LuminaMotion.animate(LuminaMotion.hover) {
                 isHovering = hovering
-                // Leaving the card closes the queue so the panel can't be left oversized.
                 if !hovering { showQueue = false }
             }
         }
         .onAppear {
-            onSizeChange(CGSize(width: contentWidth, height: cardHeight))
+            onSizeChange(CGSize(width: m.width, height: cardHeight))
+            syncPanelKey()
         }
         .onChange(of: cardHeight) { _, height in
-            onSizeChange(CGSize(width: contentWidth, height: height))
+            onSizeChange(CGSize(width: m.width, height: height))
+        }
+        .onChange(of: prefs?.widget.size) { _, _ in
+            onSizeChange(CGSize(width: metrics.width, height: cardHeight))
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
+            syncPanelKey()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResignKeyNotification)) { _ in
+            syncPanelKey()
+        }
+        .focusable()
+        .onKeyPress(.space) {
+            guard hasTrack else { return .ignored }
+            audio.toggle()
+            return .handled
+        }
+        .onKeyPress(.escape) {
+            onClose()
+            return .handled
+        }
+        .onKeyPress(.leftArrow) {
+            guard hasTrack, audio.duration > 0 else { return .ignored }
+            audio.seekToTime(max(0, audio.currentTime - 5))
+            return .handled
+        }
+        .onKeyPress(.rightArrow) {
+            guard hasTrack, audio.duration > 0 else { return .ignored }
+            audio.seekToTime(min(audio.duration, audio.currentTime + 5))
+            return .handled
         }
     }
 
-    // MARK: Header — art, title, play
+    @ViewBuilder
+    private var widgetContextMenu: some View {
+        Button("Snap to Corner") { onSnapToCorner() }
+            .disabled(prefs?.widget.placement.customOrigin == nil)
 
-    private var headerRow: some View {
-        HStack(spacing: DisplayScale.points(12)) {
-            albumArt
+        Menu("Size") {
+            ForEach([MusicWidgetPreferences.Size.compact, .regular, .expanded], id: \.self) { size in
+                Button {
+                    onSelectSize(size)
+                } label: {
+                    if prefs?.widget.size == size {
+                        Label(sizeMenuLabel(size), systemImage: "checkmark")
+                    } else {
+                        Text(sizeMenuLabel(size))
+                    }
+                }
+            }
+        }
+
+        Divider()
+        Button("Close", action: onClose)
+    }
+
+    private func sizeMenuLabel(_ size: MusicWidgetPreferences.Size) -> String {
+        switch size {
+        case .compact: return "Compact"
+        case .regular: return "Regular"
+        case .expanded: return "Large"
+        }
+    }
+
+    private func syncPanelKey() {
+        isPanelKey = NSApp.keyWindow?.title == "Music Widget"
+    }
+
+    // MARK: Header
+
+    private func headerRow(_ m: WidgetMetrics) -> some View {
+        HStack(spacing: LuminaSpace.md) {
+            albumArt(m)
                 .allowsHitTesting(false)
 
-            VStack(alignment: .leading, spacing: DisplayScale.points(3)) {
-                Text(hasTrack ? audio.trackTitle : "Nothing playing")
-                    .font(.system(size: DisplayScale.points(14), weight: .semibold))
+            VStack(alignment: .leading, spacing: LuminaSpace.hair) {
+                Text(hasTrack ? audio.trackTitle : "No music")
+                    .font(uiScale.font(m.titleFont).weight(.semibold))
                     .foregroundStyle(.primary)
                     .lineLimit(1)
                     .truncationMode(.middle)
 
                 Text(subtitleLine)
-                    .font(.system(size: DisplayScale.points(11)))
+                    .font(uiScale.font(.caption))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -238,39 +519,39 @@ struct NowPlayingWidgetView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .allowsHitTesting(false)
 
-            playButton
+            if hasTrack {
+                playButton(m)
+            }
         }
-        // The art + title block doubles as the drag handle for the whole panel.
         .background(
             Color.clear
                 .contentShape(Rectangle())
                 .gesture(WindowDragGesture())
                 .help("Drag to move")
         )
-        .frame(height: artSide)
+        .frame(height: m.art)
     }
 
-    private var playButton: some View {
+    private func playButton(_ m: WidgetMetrics) -> some View {
         Button {
             audio.toggle()
         } label: {
             ZStack {
-                Circle().fill(accent.opacity(hasTrack ? 0.16 : 0.08))
+                Circle().fill(accent.opacity(0.16))
                 Image(systemName: audio.isPlaying ? "pause.fill" : "play.fill")
-                    .font(.system(size: DisplayScale.points(13), weight: .bold))
-                    .foregroundStyle(hasTrack ? accent : Color.primary.opacity(0.3))
+                    .font(.system(size: uiScale.iconSize(.inline) + 1, weight: .bold))
+                    .foregroundStyle(accent)
             }
-            .frame(width: DisplayScale.points(34), height: DisplayScale.points(34))
+            .frame(width: m.play, height: m.play)
             .contentShape(Circle())
         }
         .buttonStyle(LuminaPressableButtonStyle())
-        .disabled(!hasTrack)
         .help(audio.isPlaying ? "Pause" : "Play")
         .accessibilityLabel(audio.isPlaying ? "Pause" : "Play")
     }
 
-    private var albumArt: some View {
-        let shape = RoundedRectangle(cornerRadius: DisplayScale.points(10), style: .continuous)
+    private func albumArt(_ m: WidgetMetrics) -> some View {
+        let shape = RoundedRectangle(cornerRadius: LuminaRadius.panel, style: .continuous)
         return ZStack {
             shape.fill(
                 LinearGradient(
@@ -285,141 +566,158 @@ struct NowPlayingWidgetView: View {
                     .aspectRatio(contentMode: .fill)
             } else {
                 Image(systemName: "music.note")
-                    .font(.system(size: DisplayScale.points(20), weight: .medium))
-                    .foregroundStyle(.white.opacity(0.85))
+                    .font(.system(size: uiScale.iconSize(.card) + 4, weight: .medium))
+                    .foregroundStyle(theme.current.onAccent)
             }
         }
-        .frame(width: artSide, height: artSide)
+        .frame(width: m.art, height: m.art)
         .clipShape(shape)
-        .overlay(shape.strokeBorder(Color.black.opacity(0.08), lineWidth: 1))
-        .accessibilityLabel(audio.trackArtwork == nil ? "No artwork" : "Album artwork")
+        .overlay(shape.strokeBorder(Color.luminaBorder.opacity(0.5), lineWidth: 1))
+        .accessibilityHidden(true)
     }
 
-    // MARK: Waveform — doubles as the timeline
+    // MARK: Waveform
 
-    private var waveformRow: some View {
-        HStack(spacing: DisplayScale.points(8)) {
+    private func waveformRow(_ m: WidgetMetrics) -> some View {
+        let seed = audio.trackURL?.absoluteString.hashValue ?? 0
+        let showsWave = prefs?.widget.showsWaveform ?? true
+        return HStack(spacing: LuminaSpace.sm) {
             Text(formatTime(scrubPreview ?? audio.currentTime))
-                .font(.system(size: DisplayScale.points(10), weight: .medium).monospacedDigit())
+                .font(uiScale.font(.micro).monospacedDigit())
                 .foregroundStyle(scrubPreview == nil ? Color.secondary : accent)
 
-            WaveformScrubber(
+            LuminaWaveformScrubber(
                 currentTime: audio.currentTime,
                 duration: max(audio.duration, 0),
-                accent: accent,
                 isPlaying: audio.isPlaying,
+                style: .widget,
+                source: showsWave ? .live : .staticSeed(seed),
                 preview: $scrubPreview,
                 onSeek: { audio.seekToTime($0) }
             )
+            .frame(height: m.waveBand)
 
             Text(formatTime(audio.duration))
-                .font(.system(size: DisplayScale.points(10), weight: .medium).monospacedDigit())
+                .font(uiScale.font(.micro).monospacedDigit())
                 .foregroundStyle(.secondary)
         }
     }
 
-    private var controlsRow: some View {
-        HStack(spacing: DisplayScale.points(2)) {
-            quietButton(
-                "shuffle",
-                help: audio.shuffle ? "Shuffle on" : "Shuffle off",
-                active: audio.shuffle,
-                disabled: audio.library.count < 2
-            ) {
-                audio.setShuffle(!audio.shuffle)
+    private func controlsRow(_ m: WidgetMetrics) -> some View {
+        HStack(spacing: LuminaSpace.hair) {
+            if hasTrack {
+                iconButton(
+                    "shuffle",
+                    label: "Shuffle",
+                    value: audio.shuffle ? "On" : "Off",
+                    active: audio.shuffle,
+                    disabled: audio.library.count < 2
+                ) {
+                    audio.setShuffle(!audio.shuffle)
+                }
+
+                iconButton("backward.end.fill", label: "Previous", disabled: audio.library.count < 2) {
+                    audio.previousTrack()
+                }
+
+                iconButton("forward.end.fill", label: "Next", disabled: audio.library.count < 2) {
+                    audio.nextTrack()
+                }
+
+                iconButton(
+                    "repeat",
+                    label: "Repeat",
+                    value: audio.loops ? "On" : "Off",
+                    active: audio.loops
+                ) {
+                    audio.setLoops(!audio.loops)
+                }
+
+                Image(systemName: audio.volume < 0.01 ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                    .font(uiScale.font(.micro).weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.leading, LuminaSpace.hair)
+                    .accessibilityHidden(true)
+
+                Slider(
+                    value: Binding(get: { audio.volume }, set: { audio.setVolume($0) }),
+                    in: 0...1
+                )
+                .controlSize(.mini)
+                .tint(accent)
+                .frame(width: m.volume)
+                .accessibilityLabel("Volume")
+
+                if prefs?.widget.showsUpNext != false {
+                    iconButton(
+                        "list.bullet",
+                        label: "Up Next",
+                        value: showQueue ? "Shown" : "Hidden",
+                        active: showQueue,
+                        disabled: upcomingTracks.isEmpty
+                    ) {
+                        LuminaMotion.animate(LuminaMotion.hover) { showQueue.toggle() }
+                    }
+                }
             }
 
-            quietButton("backward.end.fill", help: "Previous", disabled: audio.library.count < 2) {
-                audio.previousTrack()
-            }
-
-            quietButton("forward.end.fill", help: "Next", disabled: audio.library.count < 2) {
-                audio.nextTrack()
-            }
-
-            quietButton("repeat", help: audio.loops ? "Loop on" : "Loop off", active: audio.loops) {
-                audio.setLoops(!audio.loops)
-            }
-
-            Image(systemName: audio.volume < 0.01 ? "speaker.slash.fill" : "speaker.wave.2.fill")
-                .font(.system(size: DisplayScale.points(9), weight: .semibold))
-                .foregroundStyle(.secondary)
-                .padding(.leading, DisplayScale.points(2))
-
-            Slider(
-                value: Binding(get: { audio.volume }, set: { audio.setVolume($0) }),
-                in: 0...1
-            )
-            .controlSize(.mini)
-            .tint(accent)
-            .frame(width: DisplayScale.points(56))
-            .help("Volume")
-
-            quietButton(
-                "list.bullet",
-                help: showQueue ? "Hide Up Next" : "Show Up Next",
-                active: showQueue,
-                disabled: upcomingTracks.isEmpty
-            ) {
-                withAnimation(Self.hoverAnimation) { showQueue.toggle() }
-            }
-
-            quietButton("plus", help: "Add Track") {
+            iconButton("plus", label: "Add Music…") {
                 audio.chooseTrack()
             }
 
-            quietButton("xmark", help: "Hide widget", action: onClose)
+            iconButton("xmark", label: "Close", action: onClose)
         }
     }
 
-    /// Rendered inside the card — the panel grows by `queueHeight` while it's open.
     private var upNextList: some View {
-        VStack(alignment: .leading, spacing: DisplayScale.points(2)) {
+        VStack(alignment: .leading, spacing: LuminaSpace.hair) {
             Text("Up Next")
-                .font(.system(size: DisplayScale.points(9), weight: .semibold))
+                .font(uiScale.font(.micro).weight(.semibold))
                 .foregroundStyle(.secondary)
                 .textCase(.uppercase)
-                .tracking(0.3)
+                .tracking(0.4)
 
             ForEach(Array(upcomingTracks.enumerated()), id: \.element.id) { index, track in
                 Button {
                     let wasPlaying = audio.isPlaying
                     audio.selectTrack(track)
                     if wasPlaying { audio.play() }
-                    withAnimation(Self.hoverAnimation) { showQueue = false }
+                    LuminaMotion.animate(LuminaMotion.hover) { showQueue = false }
                 } label: {
-                    HStack(spacing: DisplayScale.points(6)) {
+                    HStack(spacing: LuminaSpace.xs) {
                         Text("\(index + 1)")
-                            .font(.system(size: DisplayScale.points(9), weight: .medium).monospacedDigit())
-                            .foregroundStyle(.tertiary)
-                            .frame(width: DisplayScale.points(10), alignment: .trailing)
+                            .font(uiScale.font(.micro).weight(.medium).monospacedDigit())
+                            .foregroundStyle(.secondary)
+                            .frame(width: DisplayScale.points(12), alignment: .trailing)
                         Text(track.title)
-                            .font(.system(size: DisplayScale.points(11), weight: .medium))
+                            .font(uiScale.font(.caption).weight(.medium))
                             .foregroundStyle(.primary)
                             .lineLimit(1)
                             .truncationMode(.middle)
                         Spacer(minLength: 0)
                     }
-                    .padding(.horizontal, DisplayScale.points(6))
+                    .padding(.horizontal, LuminaSpace.tight)
                     .frame(height: queueRowHeight)
                     .background(
-                        RoundedRectangle(cornerRadius: DisplayScale.points(6), style: .continuous)
-                            .fill(Color.primary.opacity(0.05))
+                        RoundedRectangle(cornerRadius: LuminaRadius.small, style: .continuous)
+                            .fill(Color.luminaFill)
                     )
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(LuminaPressableButtonStyle())
+                .luminaHoverPlate()
                 .help("Play \(track.title)")
+                .accessibilityLabel("Play \(track.title)")
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var subtitleLine: String {
-        if !hasTrack { return "Lumina Ambient" }
+        if !hasTrack { return "Add a song to start" }
         if !audio.trackArtist.isEmpty { return audio.trackArtist }
         if !audio.trackAlbum.isEmpty { return audio.trackAlbum }
-        return "Lumina Ambient"
+        return "Ambient music"
     }
 
     private func formatTime(_ seconds: Double) -> String {
@@ -428,143 +726,21 @@ struct NowPlayingWidgetView: View {
         return String(format: "%d:%02d", s / 60, s % 60)
     }
 
-    private func quietButton(
+    private func iconButton(
         _ symbol: String,
-        help: String,
+        label: String,
+        value: String? = nil,
         active: Bool = false,
         disabled: Bool = false,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: DisplayScale.points(10), weight: .semibold))
-                .foregroundStyle(active ? accent : Color.primary.opacity(0.5))
-                .frame(width: DisplayScale.points(22), height: DisplayScale.points(24))
-                .contentShape(Rectangle())
         }
-        .buttonStyle(LuminaPressableButtonStyle())
+        .buttonStyle(LuminaIconButtonStyle(active: active, size: .compact))
         .disabled(disabled)
-        .opacity(disabled ? 0.28 : 1)
-        .help(help)
-        .accessibilityLabel(help)
-    }
-}
-
-// MARK: - Waveform scrubber
-
-/// Live meter bars that double as the track timeline: bars left of the playhead
-/// are filled, the rest are dimmed. Hovering reveals a draggable thumb.
-private struct WaveformScrubber: View {
-    @ObservedObject private var meter = AudioMeterModel.shared
-    let currentTime: Double
-    let duration: Double
-    let accent: Color
-    let isPlaying: Bool
-    @Binding var preview: Double?
-    var onSeek: (Double) -> Void
-
-    @State private var isHovered = false
-
-    private var barCount: Int { 32 }
-    private var displayTime: Double { preview ?? currentTime }
-    private var showThumb: Bool { isHovered || preview != nil }
-    private var levels: [CGFloat] { meter.levels }
-
-    private var fraction: CGFloat {
-        guard duration > 0, duration.isFinite, displayTime.isFinite else { return 0 }
-        return CGFloat(min(1, max(0, displayTime / duration)))
-    }
-
-    private var displayLevels: [CGFloat] {
-        guard !levels.isEmpty else { return Array(repeating: 0.12, count: barCount) }
-        if levels.count == barCount { return levels }
-        return (0..<barCount).map { i in
-            let src = Int(Double(i) / Double(max(barCount - 1, 1)) * Double(levels.count - 1))
-            return levels[min(levels.count - 1, max(0, src))]
-        }
-    }
-
-    var body: some View {
-        GeometryReader { geo in
-            let width = max(geo.size.width, 1)
-            let height = geo.size.height
-            let playhead = width * fraction
-            let thumb = DisplayScale.points(12)
-
-            ZStack(alignment: .leading) {
-                bars(height: height, playedWidth: playhead, totalWidth: width)
-
-                if showThumb {
-                    Circle()
-                        .fill(Color.luminaCard)
-                        .overlay(Circle().strokeBorder(accent, lineWidth: 1.5))
-                        .shadow(color: .black.opacity(0.2), radius: 1.5, y: 0.5)
-                        .frame(width: thumb, height: thumb)
-                        .offset(x: max(0, min(width - thumb, playhead - thumb / 2)))
-                        .transition(.scale.combined(with: .opacity))
-                }
-            }
-            .frame(width: width, height: height)
-            .contentShape(Rectangle())
-            .onHover { hovering in
-                withAnimation(.easeOut(duration: 0.12)) { isHovered = hovering }
-            }
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { value in
-                        guard duration > 0 else { return }
-                        preview = time(at: value.location.x, width: width)
-                    }
-                    .onEnded { value in
-                        defer { preview = nil }
-                        guard duration > 0 else { return }
-                        onSeek(time(at: value.location.x, width: width))
-                    }
-            )
-            .help(duration > 0 ? "Click or drag to scrub" : "No track loaded")
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Track position")
-        .accessibilityAdjustableAction { direction in
-            guard duration > 0 else { return }
-            let step = max(1, duration * 0.05)
-            switch direction {
-            case .increment: onSeek(min(duration, currentTime + step))
-            case .decrement: onSeek(max(0, currentTime - step))
-            @unknown default: break
-            }
-        }
-    }
-
-    /// Bars are drawn once and masked twice so played/unplayed share exact geometry.
-    private func bars(height: CGFloat, playedWidth: CGFloat, totalWidth: CGFloat) -> some View {
-        let shape = barStack(height: height)
-        return ZStack(alignment: .leading) {
-            shape
-                .foregroundStyle(accent.opacity(0.22))
-
-            shape
-                .foregroundStyle(accent.opacity(isPlaying ? 0.95 : 0.6))
-                .mask(alignment: .leading) {
-                    Rectangle().frame(width: playedWidth)
-                }
-        }
-        .frame(width: totalWidth, height: height)
-        .animation(.easeOut(duration: 0.07), value: displayLevels)
-    }
-
-    private func barStack(height: CGFloat) -> some View {
-        HStack(alignment: .center, spacing: DisplayScale.points(2)) {
-            ForEach(Array(displayLevels.enumerated()), id: \.offset) { _, level in
-                Capsule(style: .continuous)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: max(DisplayScale.points(2), level * height))
-            }
-        }
-        .frame(height: height)
-    }
-
-    private func time(at x: CGFloat, width: CGFloat) -> Double {
-        Double(min(1, max(0, x / max(width, 1)))) * duration
+        .help(label)
+        .accessibilityLabel(label)
+        .accessibilityValue(value ?? "")
     }
 }

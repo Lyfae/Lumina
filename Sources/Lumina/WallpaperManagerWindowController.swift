@@ -50,7 +50,9 @@ final class WallpaperManagerWindowController: NSWindowController {
             get: { [weak self] in self?.selectedMonitorID },
             set: { [weak self] in self?.selectedMonitorID = $0 }
         ))
-        
+        .environment(appDelegate.preferencesStore)
+        .environment(appDelegate.playbackEngine)
+
         let hostingView = NSHostingView(rootView: rootView)
         window.contentView = hostingView
         LuminaGlass.configureWindow(window)
@@ -121,15 +123,12 @@ final class WallpaperManagerWindowController: NSWindowController {
     }
 
     @objc private func windowDidBecomeKey() {
-        appDelegate?.powerManager?.setManagerWindowsActive(true)
-        // Aggressively resume normal playback when user is in the manager
-        appDelegate?.applyPolicyToRenderers(.normal)
+        appDelegate?.playbackEngine?.setStudioVisible(true)
     }
     
     @objc private func windowDidResignKey() {
-        // Only turn off if the physical setup window is also not key
         if physicalSetupWindow?.window?.isKeyWindow != true {
-            appDelegate?.powerManager?.setManagerWindowsActive(false)
+            appDelegate?.playbackEngine?.setStudioVisible(false)
         }
     }
     

@@ -5,8 +5,12 @@ import SwiftUI
 @MainActor
 enum LuminaMenuIcon {
     /// Renders a template image sized for `NSStatusItem` (macOS tints it for light/dark menu bars).
-    static func make(size: NSSize = NSSize(width: 22, height: 16), lineWidth: CGFloat = 1.5) -> NSImage {
-        let renderer = ImageRenderer(content: Glyph(size: size, lineWidth: lineWidth))
+    static func make(
+        size: NSSize = NSSize(width: 22, height: 16),
+        lineWidth: CGFloat = 1.5,
+        dimmed: Bool = false
+    ) -> NSImage {
+        let renderer = ImageRenderer(content: Glyph(size: size, lineWidth: lineWidth, dimmed: dimmed))
         renderer.scale = 2
         guard let cgImage = renderer.cgImage else {
             return NSImage(systemSymbolName: "sparkles", accessibilityDescription: "Lumina")
@@ -32,11 +36,12 @@ enum LuminaMenuIcon {
     private struct Glyph: View {
         let size: NSSize
         let lineWidth: CGFloat
+        let dimmed: Bool
 
         var body: some View {
             LuminaMenuIcon.fittedLSPath(in: CGSize(width: size.width, height: size.height))
                 .stroke(
-                    Color.black,
+                    Color.black.opacity(dimmed ? 0.5 : 1),
                     style: StrokeStyle(lineWidth: lineWidth, lineCap: .round, lineJoin: .round)
                 )
                 .frame(width: size.width, height: size.height)

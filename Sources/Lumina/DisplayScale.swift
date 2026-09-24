@@ -40,7 +40,15 @@ enum DisplayScale {
     static var physicalSetupWindowSize: NSSize { nsSize(width: 620, height: 420) }
     static var splashWindowSize: NSSize { nsSize(width: 360, height: 260) }
     /// Music widget is a fixed-size compact bar: art tile, waveform timeline, hover controls.
-    static var musicWidgetSize: NSSize { nsSize(width: 288, height: 140) }
+    static var musicWidgetSize: NSSize { musicWidgetSize(for: .regular) }
+
+    static func musicWidgetSize(for size: MusicWidgetPreferences.Size) -> NSSize {
+        switch size {
+        case .compact: return nsSize(width: 248, height: 112)
+        case .regular: return nsSize(width: 288, height: 140)
+        case .expanded: return nsSize(width: 336, height: 168)
+        }
+    }
 
     // MARK: - Icons
 

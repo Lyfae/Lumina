@@ -18,18 +18,18 @@ enum LuminaChangelog {
     static let welcomeEntries: [ChangelogEntry] = [
         ChangelogEntry(
             icon: "battery.100.bolt",
-            title: "Designed for Battery Life",
-            description: "Hardware-accelerated playback with smart power management. Lumina pauses or throttles on battery, in Low Power Mode, or under thermal pressure."
+            title: "Easy on battery",
+            description: "Lumina pauses or slows down on battery, in Low Power Mode, or when your Mac is hot. Set the rules in Settings → Power."
         ),
         ChangelogEntry(
             icon: "slider.horizontal.3",
-            title: "You Stay in Control",
-            description: "Adjust performance profiles, per-display crop, speed, scaling, and effects. Preview changes live, then Apply to Wallpaper when ready."
+            title: "Preview first",
+            description: "Crop, speed, and color changes show in the preview. Your desktop changes when you click Apply."
         ),
         ChangelogEntry(
             icon: "info.circle",
-            title: "Getting Started",
-            description: "Menu bar icon → Lumina Studio (⌘M). Add media to your library, pick a display, tune settings in the preview, then Apply. Slideshows, crop, and sync are all supported."
+            title: "Getting started",
+            description: "Click the menu bar icon and choose Open Lumina Studio (⌘M). Add a wallpaper, pick a display, adjust it, then click Apply."
         ),
     ]
 

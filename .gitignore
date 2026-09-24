@@ -38,3 +38,4 @@ Tests/
 /dist/**/*.mov
 /dist/**/*.mp4
 /UserMedia/
+.superdesign/tmp/

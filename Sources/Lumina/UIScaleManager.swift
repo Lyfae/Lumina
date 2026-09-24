@@ -5,8 +5,6 @@ import SwiftUI
 final class UIScaleManager: ObservableObject {
     static let shared = UIScaleManager()
 
-    private let key = "Lumina.UIScalePreset"
-
     enum Preset: String, CaseIterable, Identifiable {
         case compact
         case standard
@@ -26,10 +24,10 @@ final class UIScaleManager: ObservableObject {
 
         var subtitle: String {
             switch self {
-            case .compact: return "Smaller icons and tighter spacing"
-            case .standard: return "Balanced default layout"
-            case .comfortable: return "Slightly larger type and controls"
-            case .large: return "Maximum size for accessibility"
+            case .compact: return "Fits the most on screen."
+            case .standard: return "A little smaller than default."
+            case .comfortable: return "The default size."
+            case .large: return "Biggest text and buttons."
             }
         }
 
@@ -50,37 +48,55 @@ final class UIScaleManager: ObservableObject {
             case .large: return 22
             }
         }
+
+        init(_ scale: StudioLookPreferences.Scale) {
+            self = Preset(rawValue: scale.rawValue) ?? .comfortable
+        }
+
+        var studioScale: StudioLookPreferences.Scale {
+            StudioLookPreferences.Scale(rawValue: rawValue) ?? .comfortable
+        }
     }
 
     @Published private(set) var preset: Preset = .comfortable
 
     var multiplier: CGFloat { preset.multiplier }
 
-    private init() {
-        let saved = UserDefaults.standard.string(forKey: key) ?? ""
-        preset = Preset(rawValue: saved) ?? .comfortable
+    private weak var preferences: PreferencesStore?
+
+    private init() {}
+
+    func attach(preferences: PreferencesStore) {
+        self.preferences = preferences
+        preset = Preset(preferences.studio.scale)
+        trackChanges()
     }
 
     func set(_ newPreset: Preset) {
         preset = newPreset
-        UserDefaults.standard.set(newPreset.rawValue, forKey: key)
+        if let preferences {
+            var studio = preferences.studio
+            studio.scale = newPreset.studioScale
+            preferences.studio = studio
+        }
         NotificationCenter.default.post(name: .luminaUIScaleDidChange, object: nil)
     }
 
     // MARK: - Semantic icon sizes (design baseline × display × user scale)
 
     enum IconRole {
-        case toolbar, filter, transport, card, hero
+        case toolbar, filter, transport, card, hero, inline
     }
 
     func iconSize(_ role: IconRole) -> CGFloat {
         let base: CGFloat
         switch role {
-        case .toolbar: base = 18
-        case .filter: base = 18
-        case .transport: base = 18
-        case .card: base = 16
-        case .hero: base = 44
+        case .toolbar: base = 17
+        case .filter: base = 13
+        case .transport: base = 15
+        case .card: base = 15
+        case .hero: base = 40
+        case .inline: base = 12
         }
         return DisplayScale.points(base)
     }
@@ -97,6 +113,36 @@ final class UIScaleManager: ObservableObject {
 
     func scaledFont(_ base: CGFloat, weight: Font.Weight = .regular) -> Font {
         .system(size: DisplayScale.points(base), weight: weight)
+    }
+
+    func font(_ style: LuminaTextStyle) -> Font {
+        switch style {
+        case .micro: return scaledFont(10, weight: .medium)
+        case .caption: return scaledFont(11, weight: .regular)
+        case .callout: return scaledFont(12, weight: .regular)
+        case .body: return scaledFont(13, weight: .regular)
+        case .bodyStrong: return scaledFont(13, weight: .semibold)
+        case .headline: return scaledFont(15, weight: .semibold)
+        case .title: return scaledFont(17, weight: .bold)
+        case .largeTitle: return scaledFont(22, weight: .bold)
+        }
+    }
+
+    private func trackChanges() {
+        withObservationTracking {
+            _ = preferences?.studio.scale
+        } onChange: { [weak self] in
+            Task { @MainActor in
+                if let scale = self?.preferences?.studio.scale {
+                    let mapped = Preset(scale)
+                    if self?.preset != mapped {
+                        self?.preset = mapped
+                        NotificationCenter.default.post(name: .luminaUIScaleDidChange, object: nil)
+                    }
+                }
+                self?.trackChanges()
+            }
+        }
     }
 }
 

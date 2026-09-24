@@ -47,7 +47,9 @@ final class PhysicalSetupWindowController: NSWindowController {
                 self?.window?.close()
             }
         )
-        
+        .environment(store.appDelegate?.preferencesStore)
+        .environment(store.appDelegate?.playbackEngine)
+
         let hostingView = NSHostingView(rootView: chooseDisplayView)
         window.contentView = hostingView
         
@@ -76,17 +78,14 @@ final class PhysicalSetupWindowController: NSWindowController {
     
     @objc private func windowDidBecomeKey() {
         Task { @MainActor in
-            store.appDelegate?.powerManager?.setManagerWindowsActive(true)
-            store.appDelegate?.applyPolicyToRenderers(.normal)
+            store.appDelegate?.playbackEngine?.setStudioVisible(true)
         }
     }
     
     @objc private func windowDidResignKey() {
         Task { @MainActor in
-            // Only deactivate if Lumina Studio isn't still focused — otherwise unfocusing
-            // this floating panel would let Max Battery throttling kick in mid-configuration.
             if self.managerWindow?.isKeyWindow != true {
-                store.appDelegate?.powerManager?.setManagerWindowsActive(false)
+                store.appDelegate?.playbackEngine?.setStudioVisible(false)
             }
         }
     }
@@ -109,83 +108,5 @@ final class PhysicalSetupWindowController: NSWindowController {
     private func removeWallpaperForMonitor(monitorID: String) {
         store.clearAssignmentForMonitorID(monitorID: monitorID)
         // Keep selection so user can immediately assign something else
-    }
-}
-
-/// The actual SwiftUI content for the floating physical setup window.
-private struct PhysicalSetupWindowView: View {
-    @ObservedObject var store: WallpaperManagerStore
-    @Binding var selectedMonitorID: String?
-    
-    var onSelectWallpaper: (String) -> Void
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("Your Physical Setup")
-                    .font(.title2.bold())
-                
-                Spacer()
-                
-                Button("Refresh") {
-                    store.refreshDisplays()
-                }
-                .buttonStyle(.bordered)
-            }
-            .padding(.horizontal)
-            .padding(.top, 12)
-            
-            Divider()
-            
-            // The actual spatial layout
-            let layout = store.getMonitorLayout()
-            
-            if layout.monitors.isEmpty {
-                ContentUnavailableView("No Displays Detected", systemImage: "display")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                MonitorLayoutView(
-                    layout: layout,
-                    selectedMonitorID: $selectedMonitorID,
-                    assignments: Dictionary(uniqueKeysWithValues: store.monitors.compactMap { info in
-                        if let assignment = store.assignment(for: info.id) {
-                            return (info.id, assignment)
-                        }
-                        return nil
-                    })
-                )
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding()
-            }
-            
-            Divider()
-            
-            // Bottom action bar - clear selection + assign flow
-            HStack(spacing: 12) {
-                Text("Select a monitor above, then assign a wallpaper. The selection will sync back to the main manager for live configuration.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                
-                Button("Done") {
-                    // Close this floating tool window
-                    NSApp.keyWindow?.close()
-                }
-                .buttonStyle(.bordered)
-                
-                Button("Assign Wallpaper") {
-                    if let id = selectedMonitorID {
-                        onSelectWallpaper(id)
-                    } else if let first = store.monitors.first {
-                        onSelectWallpaper(first.id)
-                    }
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(store.monitors.isEmpty)
-            }
-            .padding(.horizontal)
-            .padding(.bottom, 12)
-        }
-        .scaledMinFrame(width: 520, height: 380)
     }
 }
