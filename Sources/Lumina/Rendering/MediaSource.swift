@@ -321,28 +321,38 @@ final class StillImageSource: MediaSource {
 final class AnimatedImageSource: MediaSource {
     private(set) var key: SourceKey
     private let renderer = AVVideoRenderer()
+    private var mediaPath: String
+    private var didLoad = false
     var onLoopBoundaryApproaching: ((Double) -> Void)?
     var onFailure: ((String) -> Void)?
     var sharedPlayer: AVQueuePlayer? { nil }
 
     init(spec: SourcePlan) {
         self.key = spec.key
-        renderer.load(url: URL(fileURLWithPath: spec.variant.path), autoPlay: false)
+        self.mediaPath = spec.variant.path
         retune(spec)
     }
 
     func installPrimary(into view: NSView) {
         view.wantsLayer = true
         renderer.install(into: view)
+        if !didLoad {
+            didLoad = true
+            renderer.load(url: URL(fileURLWithPath: mediaPath), autoPlay: false)
+        }
     }
 
     func makeLayer() -> CALayer { CALayer() }
     func releaseLayer(_ layer: CALayer) { layer.removeFromSuperlayer() }
     func retune(_ spec: SourcePlan) {
+        mediaPath = spec.variant.path
         if case let .animated(_, speed) = spec.key {
             renderer.setPlaybackSpeed(speed)
         }
         renderer.setPresentationMaxFPS(spec.budget.maxFPS)
+        if didLoad, renderer.loadedURL?.path != mediaPath {
+            renderer.load(url: URL(fileURLWithPath: mediaPath), autoPlay: false)
+        }
     }
     func retime(to newKey: SourceKey, plan: SourcePlan) { key = newKey; retune(plan) }
     func setRunning(_ running: Bool) { if running { renderer.play() } else { renderer.pause() } }

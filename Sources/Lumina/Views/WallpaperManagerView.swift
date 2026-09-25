@@ -1207,6 +1207,7 @@ struct WallpaperGridItem: View {
                                     .buttonStyle(LuminaIconButtonStyle())
                                     .accessibilityLabel(isFavorite ? "Unstar" : "Star")
                                 }
+                                .environment(\.luminaButtonFocusRing, false)
                             )
                             .transition(.opacity)
                     }
@@ -1244,6 +1245,7 @@ struct WallpaperGridItem: View {
         }
         .focusable()
         .focused($isFocused)
+        .focusEffectDisabled()
         .onHover { isHovered = $0 }
         .onTapGesture { onApply() }
         .onKeyPress(.space) { onApply(); return .handled }

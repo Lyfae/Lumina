@@ -551,6 +551,36 @@ public enum CoreSelfTest {
             check("live→frozen: destroySource + createSource(.frozen)", destroysVideo && createsStillish)
         }
 
+        // Animated GIF → animated SourceKey (not still / frozen)
+        do {
+            var inputs = baseInputs(displays: 1)
+            let gifID = MediaIdentity(normalizing: "/tmp/loop.gif")
+            let gifRef = MediaReference(identity: gifID, displayPath: "/tmp/loop.gif", bookmark: nil, kind: .animatedImage)
+            var wp = inputs.preferences.wallpapers[display: DisplayKey("D0")]
+            wp.content = .media(gifRef)
+            inputs.preferences.wallpapers[display: DisplayKey("D0")] = wp
+            inputs.media.facts[gifID] = MediaFacts(
+                availability: .available,
+                pixels: PixelSize(width: 480, height: 270),
+                nominalFPS: 10
+            )
+            let plan = Planner.plan(inputs)
+            check("gif wallpaper → .animated source key", {
+                guard let key = plan.sources.keys.first else { return false }
+                if case .animated(let id, _) = key { return id == gifID }
+                return false
+            }())
+            check("gif sourceKey helper", {
+                guard let key = Planner.sourceKey(for: wp) else { return false }
+                if case .animated = key { return true }
+                return false
+            }())
+            check("gif surface is playing when no pause reasons", {
+                if case .playing = plan.surfaces[.desktop(DisplayKey("D0"))]?.run { return true }
+                return false
+            }())
+        }
+
         // experimentalRenderCap default off (no data loss / safe default)
         check("experimentalRenderCap default false", PowerPreferences().experimentalRenderCap == false)
     }

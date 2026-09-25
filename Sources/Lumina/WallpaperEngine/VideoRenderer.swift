@@ -161,6 +161,8 @@ public final class AVVideoRenderer: @unchecked Sendable {
 
     private var currentURL: URL?
     private var currentPolicy: WallpaperPlaybackPolicy = .normal
+    /// Set by play()/pause() so a late GIF keyframe attach honors setRunning that already ran.
+    private var gifPlaybackDesired = false
 
     // Public debug / status accessors (added for prototype testing & UX)
     public private(set) var loadedURL: URL?
@@ -429,6 +431,20 @@ public final class AVVideoRenderer: @unchecked Sendable {
                 // Re-apply crop geometry now that the layer has a real superlayer and bounds.
                 applyCurrentCrop()
             }
+
+            // Images/GIFs need a host layer; load() before install() is a no-op. Retry now.
+            if let url = currentURL, mediaKind == .image || mediaKind == .animatedImage {
+                let kind = mediaKind
+                let host = playerLayer?.superlayer ?? hostLayer
+                if imageLayer == nil || imageLayer?.superlayer !== host {
+                    loadImage(url: url, kind: kind, autoPlay: false)
+                } else if let imageLayer, let host {
+                    imageLayer.removeFromSuperlayer()
+                    host.addSublayer(imageLayer)
+                    imageLayer.frame = host.bounds
+                    applyCurrentCrop()
+                }
+            }
         }
     }
 
@@ -455,9 +471,12 @@ public final class AVVideoRenderer: @unchecked Sendable {
             MainActor.assumeIsolated { slideshow.resume() }
             return
         }
-        if mediaKind == .animatedImage, let layer = imageLayer {
+        if mediaKind == .animatedImage {
+            gifPlaybackDesired = true
             if case .paused = currentPolicy { return }
-            resumeLayerAnimation(layer)
+            if let layer = imageLayer {
+                resumeLayerAnimation(layer)
+            }
             return
         }
         guard let player else { return }
@@ -476,8 +495,11 @@ public final class AVVideoRenderer: @unchecked Sendable {
             MainActor.assumeIsolated { slideshow.pause() }
             return
         }
-        if mediaKind == .animatedImage, let layer = imageLayer {
-            pauseLayerAnimation(layer)
+        if mediaKind == .animatedImage {
+            gifPlaybackDesired = false
+            if let layer = imageLayer {
+                pauseLayerAnimation(layer)
+            }
             return
         }
         player?.pause()
@@ -871,6 +893,7 @@ public final class AVVideoRenderer: @unchecked Sendable {
         // Make sure CALayer timing is reset in case a GIF was paused via speed=0.
         if let layer = imageLayer { layer.speed = 1; layer.timeOffset = 0; layer.beginTime = 0 }
         mediaKind = .video
+        gifPlaybackDesired = false
 
         looper?.disableLooping()
         looper = nil
@@ -1350,7 +1373,8 @@ public final class AVVideoRenderer: @unchecked Sendable {
                 layer.add(animation, forKey: "gif")
                 self.gifAnimation = animation   // retained so the displays can be restarted in sync
 
-                if !autoPlay { self.pauseLayerAnimation(layer) }
+                let shouldPlay = autoPlay || self.gifPlaybackDesired
+                if !shouldPlay { self.pauseLayerAnimation(layer) }
             }
         }
     }

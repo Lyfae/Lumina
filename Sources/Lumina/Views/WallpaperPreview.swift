@@ -71,6 +71,8 @@ struct WallpaperPreview: View {
                         // path so the preview shows the picture, never a stale video frame.
                         if isLivePlayback && assign.mediaType == .video {
                             liveVideoView(assignment: assign, size: geometry.size)
+                        } else if isLivePlayback && assign.mediaType == .animatedImage {
+                            liveGIFView(assignment: assign, size: geometry.size)
                         } else if isFrameScrubMode {
                             scrubVideoView(assignment: assign, size: geometry.size)
                         } else if let thumb = thumbnail {
@@ -99,8 +101,10 @@ struct WallpaperPreview: View {
             setupLivePlaybackIfNeeded()
             setupScrubPlayerIfNeeded()
             // Live looping AVPlayer covers video previews — skip a parallel thumbnail.
+            // Live GIF uses NSImageView animation — skip a static thumbnail too.
             // Scrub mode still loads one as a placeholder until the first seek paints a frame.
-            if !(isLivePlayback && assignment?.mediaType == .video) {
+            let liveMedia = isLivePlayback && (assignment?.mediaType == .video || assignment?.mediaType == .animatedImage)
+            if !liveMedia {
                 loadThumbnailIfNeeded()
             }
         }
@@ -116,7 +120,7 @@ struct WallpaperPreview: View {
             loadThumbnailIfNeeded()
         }
         .onChange(of: previewTime) { _, newValue in
-            guard !(isLivePlayback && assignment?.mediaType == .video) else { return }
+            guard !(isLivePlayback && (assignment?.mediaType == .video || assignment?.mediaType == .animatedImage)) else { return }
             if isFrameScrubMode {
                 setupScrubPlayerIfNeeded()
                 seekScrubPlayer(to: newValue)
@@ -182,6 +186,33 @@ struct WallpaperPreview: View {
         } else {
             Color.black.opacity(0.7)
                 .overlay(LuminaLoadingView(label: "Loading preview…", onMedia: true))
+        }
+    }
+
+    @ViewBuilder
+    private func liveGIFView(assignment: MonitorAssignment, size: CGSize) -> some View {
+        let url = assignment.resolvedURL()
+            ?? assignment.filePath.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) }
+        cropped(to: size) { renderSize in
+            Color.clear
+                .frame(width: renderSize.width, height: renderSize.height)
+                .overlay {
+                    if let url {
+                        AnimatedGIFView(url: url, scaling: effectiveScaling)
+                            .frame(width: renderSize.width, height: renderSize.height)
+                    } else {
+                        LuminaLoadingView(label: "Loading preview…", onMedia: true)
+                    }
+                }
+                .clipped()
+        }
+        .clipShape(RoundedRectangle(cornerRadius: LuminaRadius.panel, style: .continuous))
+        .overlay(alignment: .bottomLeading) {
+            if showsChrome {
+                LuminaOverlayChip(text: assignment.displayName)
+                    .padding(LuminaSpace.sm)
+                    .accessibilityHidden(true)
+            }
         }
     }
 
@@ -292,6 +323,45 @@ struct WallpaperPreview: View {
             override func layout() {
                 super.layout()
                 playerLayer.frame = bounds
+            }
+        }
+    }
+
+    private struct AnimatedGIFView: NSViewRepresentable {
+        let url: URL
+        let scaling: VideoScaling
+
+        func makeNSView(context: Context) -> NSImageView {
+            let view = NSImageView()
+            view.imageScaling = imageScaling(for: scaling)
+            view.imageAlignment = .alignCenter
+            view.animates = true
+            view.wantsLayer = true
+            view.image = NSImage(contentsOf: url)
+            context.coordinator.loadedPath = url.path
+            return view
+        }
+
+        func updateNSView(_ nsView: NSImageView, context: Context) {
+            nsView.imageScaling = imageScaling(for: scaling)
+            nsView.animates = true
+            if context.coordinator.loadedPath != url.path {
+                context.coordinator.loadedPath = url.path
+                nsView.image = NSImage(contentsOf: url)
+            }
+        }
+
+        func makeCoordinator() -> Coordinator { Coordinator() }
+
+        final class Coordinator {
+            var loadedPath: String?
+        }
+
+        private func imageScaling(for scaling: VideoScaling) -> NSImageScaling {
+            switch scaling {
+            case .fit: return .scaleProportionallyUpOrDown
+            case .fill: return .scaleProportionallyUpOrDown
+            case .stretch: return .scaleAxesIndependently
             }
         }
     }
