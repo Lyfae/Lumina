@@ -583,5 +583,99 @@ public enum CoreSelfTest {
 
         // experimentalRenderCap default off (no data loss / safe default)
         check("experimentalRenderCap default false", PowerPreferences().experimentalRenderCap == false)
+
+        // ── AdjustCapability (engine-honored Adjust controls) ──
+        do {
+            let video = AdjustCapability.for(.video)
+            check("video capability: speed", video.playbackSpeed)
+            check("video capability: loop", video.loopMode && video.loopFade)
+            check("video capability: audio", video.audioVolume)
+            check("video capability: frame pick", video.videoFramePick)
+            check("video capability: quality+fps", video.decodeQuality && video.frameRate)
+            check("video capability: compress", video.videoCompression)
+            check("video playback footnote nil", video.playbackFootnote(mediaType: .video, isSlideshow: false) == nil)
+
+            let gif = AdjustCapability.for(.animatedImage)
+            check("gif capability: speed", gif.playbackSpeed)
+            check("gif capability: no loop/audio/freeze", !gif.loopMode && !gif.audioVolume && !gif.videoFramePick)
+            check("gif capability: no compress", !gif.videoCompression)
+            check("gif capability: quality+fps", gif.decodeQuality && gif.frameRate)
+            check("gif playback applies", gif.playbackApplies)
+
+            let still = AdjustCapability.for(.image)
+            check("still capability: none", still == .none)
+            check("still playback footnote", still.playbackFootnote(mediaType: .image, isSlideshow: false) == "Not available for still images")
+            check("still quality footnote", still.qualityMotionFootnote(mediaType: .image, isSlideshow: false) == "Not available for still images")
+
+            let show = AdjustCapability.forSlideshow()
+            check("slideshow: fps only", show.frameRate && !show.playbackApplies && !show.decodeQuality)
+            check("slideshow label", AdjustCapability.unavailableLabel(mediaType: .image, isSlideshow: true) == "slideshows")
+        }
+
+        // ── WallpaperGeometry (preview ↔ desktop WYSIWYG) ──
+        do {
+            func approx(_ a: CGRect, _ b: CGRect, tol: CGFloat = 0.02) -> Bool {
+                abs(a.minX - b.minX) < tol && abs(a.minY - b.minY) < tol
+                    && abs(a.width - b.width) < tol && abs(a.height - b.height) < tol
+            }
+            // 4:3 media → 16:9 display
+            let media43 = CGSize(width: 400, height: 300)
+            let disp169 = CGSize(width: 1600, height: 900)
+            let fill43 = WallpaperGeometry.layout(
+                mediaSize: media43, displaySize: disp169, scaling: .fill, crop: .full
+            )
+            check("4:3→16:9 Fill height covers (zoomed)", fill43.mediaFrame.height > disp169.height + 1)
+            check("4:3→16:9 Fill width matches display", abs(fill43.mediaFrame.width - disp169.width) < 0.5)
+            check("4:3→16:9 Fill Y offset crops top/bottom", fill43.mediaFrame.minY < -1)
+
+            let fit43 = WallpaperGeometry.layout(
+                mediaSize: media43, displaySize: disp169, scaling: .fit, crop: .full
+            )
+            check("4:3→16:9 Fit height matches display", abs(fit43.mediaFrame.height - disp169.height) < 0.5)
+            check("4:3→16:9 Fit X pillarbox", fit43.mediaFrame.minX > 1)
+
+            let stretch43 = WallpaperGeometry.layout(
+                mediaSize: media43, displaySize: disp169, scaling: .stretch, crop: .full
+            )
+            check("4:3→16:9 Stretch fills exactly",
+                  abs(stretch43.mediaFrame.width - disp169.width) < 0.5
+                  && abs(stretch43.mediaFrame.height - disp169.height) < 0.5
+                  && abs(stretch43.mediaFrame.minX) < 0.5
+                  && abs(stretch43.mediaFrame.minY) < 0.5)
+
+            // 16:9 media → 16:10 display
+            let media169 = CGSize(width: 1920, height: 1080)
+            let disp1610 = CGSize(width: 1440, height: 900)
+            let fill169 = WallpaperGeometry.layout(
+                mediaSize: media169, displaySize: disp1610, scaling: .fill, crop: .full
+            )
+            check("16:9→16:10 Fill width covers", fill169.mediaFrame.width > disp1610.width + 1)
+            check("16:9→16:10 Fill height matches", abs(fill169.mediaFrame.height - disp1610.height) < 0.5)
+
+            let fit169 = WallpaperGeometry.layout(
+                mediaSize: media169, displaySize: disp1610, scaling: .fit, crop: .full
+            )
+            check("16:9→16:10 Fit width matches", abs(fit169.mediaFrame.width - disp1610.width) < 0.5)
+            check("16:9→16:10 Fit Y letterbox", fit169.mediaFrame.minY > 1)
+
+            // Crop + contentsRect Y-flip
+            let half = NormalizedRect(unchecked: 0, 0, 0.5, 0.5)
+            check("contentsRect Y-flip top-left half",
+                  approx(WallpaperGeometry.contentsRect(crop: half),
+                         CGRect(x: 0, y: 0.5, width: 0.5, height: 0.5)))
+            let parent = CGRect(x: 0, y: 0, width: 1000, height: 800)
+            let expanded = WallpaperGeometry.expandedFrame(parent: parent, crop: half)
+            check("expandedFrame 2× size", abs(expanded.width - 2000) < 0.001 && abs(expanded.height - 1600) < 0.001)
+            check("expandedFrame Y origin", abs(expanded.minY - (-800)) < 0.001)
+
+            let cropFill = WallpaperGeometry.layout(
+                mediaSize: media43,
+                displaySize: disp169,
+                scaling: .fill,
+                crop: NormalizedRect(unchecked: 0.1, 0.1, 0.8, 0.45)
+            )
+            check("crop Fill maps crop into display",
+                  abs(cropFill.mediaFrame.width / media43.width - cropFill.mediaFrame.height / media43.height) < 0.001)
+        }
     }
 }

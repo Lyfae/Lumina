@@ -59,6 +59,8 @@ struct WallpaperManagerView: View {
     @State private var showSettings: Bool = false
     /// Library column is expanded by default; collapse to give the preview more room.
     @State private var showLibraryColumn: Bool = true
+    /// Library tile staged for Studio preview (discarded on display switch / Studio close).
+    @State private var stagedPick: StagedWallpaperPick? = nil
     @FocusState private var isSearchFocused: Bool
     @State private var libraryRailHovered = false
 
@@ -107,6 +109,9 @@ struct WallpaperManagerView: View {
             .luminaWindowBackdrop()
             .tint(themeManager.current.color)
             .onAppear { autoSelectFirstMonitor() }
+            .onDisappear { stagedPick = nil }
+            .onChange(of: selectedMonitorID) { _, _ in stagedPick = nil }
+            .onChange(of: store.selectedMonitorID) { _, _ in stagedPick = nil }
             .onReceive(NotificationCenter.default.publisher(for: .luminaOpenSettings)) { _ in
                 showSettings = true
             }
@@ -400,11 +405,13 @@ struct WallpaperManagerView: View {
                     ) {
                         ForEach(Array(filteredMedia.enumerated()), id: \.element.id) { index, recent in
                             let isCurrent = isCurrentWallpaper(recent: recent)
+                            let isStaged = stagedPick?.libraryID == recent.id
                             WallpaperGridItem(
                                 recent: recent,
-                                isSelected: isCurrent,
+                                isSelected: isCurrent || isStaged,
                                 isFavorite: favoritesManager.isFavorite(recent.id),
-                                onApply: { applyRecentToSelected(recent: recent) },
+                                onStage: { stageRecentForSelected(recent: recent) },
+                                onApplyNow: { applyRecentToSelected(recent: recent) },
                                 onFavorite: { favoritesManager.toggle(recent.id) },
                                 onRemove: { store.removeFromLibrary(id: recent.id) },
                                 onMoveFocus: { direction in
@@ -551,7 +558,12 @@ struct WallpaperManagerView: View {
             LuminaDivider()
 
             if let monitor = currentTargetMonitor {
-                MonitorDetailPanel(monitor: monitor, store: store, showHeader: false)
+                MonitorDetailPanel(
+                    monitor: monitor,
+                    store: store,
+                    stagedPick: $stagedPick,
+                    showHeader: false
+                )
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 Spacer()
@@ -606,7 +618,27 @@ struct WallpaperManagerView: View {
         return expandedCurrent == recent.url.path || expandedCurrent == recent.id
     }
 
-    // Apply a recent wallpaper to the currently targeted display
+    /// Stages a library item into the Studio preview without changing the desktop.
+    private func stageRecentForSelected(recent: WallpaperManagerStore.RecentMedia) {
+        let targetID = store.selectedMonitorID ?? selectedMonitorID ?? store.monitors.first?.id
+        guard let targetID else {
+            NSSound.beep()
+            return
+        }
+        if selectedMonitorID != targetID { selectedMonitorID = targetID }
+        if store.selectedMonitorID != targetID { store.selectedMonitorID = targetID }
+        if isCurrentWallpaper(recent: recent) {
+            stagedPick = nil
+            return
+        }
+        stagedPick = StagedWallpaperPick(
+            url: recent.url,
+            mediaType: recent.mediaType,
+            libraryID: recent.id
+        )
+    }
+
+    // Apply a recent wallpaper to the currently targeted display immediately.
     private func applyRecentToSelected(recent: WallpaperManagerStore.RecentMedia) {
         let targetID = store.selectedMonitorID ?? selectedMonitorID ?? store.monitors.first?.id
         guard let targetID else {
@@ -615,6 +647,7 @@ struct WallpaperManagerView: View {
         }
         if selectedMonitorID != targetID { selectedMonitorID = targetID }
         if store.selectedMonitorID != targetID { store.selectedMonitorID = targetID }
+        stagedPick = nil
         store.applyRecentMedia(to: targetID, url: recent.url)
     }
 
@@ -1146,7 +1179,8 @@ struct WallpaperGridItem: View {
     let recent: WallpaperManagerStore.RecentMedia
     let isSelected: Bool
     let isFavorite: Bool
-    let onApply: () -> Void
+    let onStage: () -> Void
+    let onApplyNow: () -> Void
     let onFavorite: () -> Void
     var onRemove: (() -> Void)? = nil
     var onMoveFocus: ((MoveCommandDirection) -> Void)? = nil
@@ -1193,12 +1227,13 @@ struct WallpaperGridItem: View {
                             .fill(Color.luminaOverlay.opacity(0.8))
                             .overlay(
                                 HStack(spacing: LuminaSpace.lg) {
-                                    Button { onApply() } label: {
+                                    Button { onApplyNow() } label: {
                                         Image(systemName: "checkmark.circle.fill")
                                             .foregroundStyle(.white)
                                     }
                                     .buttonStyle(LuminaIconButtonStyle())
-                                    .accessibilityLabel("Set as Wallpaper")
+                                    .help("Set as wallpaper now")
+                                    .accessibilityLabel("Set as wallpaper now")
 
                                     Button { onFavorite() } label: {
                                         Image(systemName: isFavorite ? "star.fill" : "star")
@@ -1247,22 +1282,27 @@ struct WallpaperGridItem: View {
         .focused($isFocused)
         .focusEffectDisabled()
         .onHover { isHovered = $0 }
-        .onTapGesture { onApply() }
-        .onKeyPress(.space) { onApply(); return .handled }
-        .onKeyPress(.return) { onApply(); return .handled }
+        .onTapGesture(count: 2) { onApplyNow() }
+        .onTapGesture(count: 1) { onStage() }
+        .onKeyPress(.space) { onStage(); return .handled }
+        .onKeyPress(.return) { onApplyNow(); return .handled }
         .onMoveCommand { direction in
             onMoveFocus?(direction)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(displayTitle)
         .accessibilityValue(isFavorite ? "\(typeLabel), starred" : typeLabel)
-        .accessibilityHint("Sets it on the selected display")
+        .accessibilityHint("Stages it on the selected display. Double-click or press Return to set it now.")
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+        .accessibilityAction(named: Text("Set as wallpaper now")) { onApplyNow() }
         .accessibilityAction(named: Text(isFavorite ? "Unstar" : "Star")) { onFavorite() }
         .accessibilityAction(named: Text("Remove from Library")) { onRemove?() }
         .contextMenu {
-            Button { onApply() } label: {
+            Button { onApplyNow() } label: {
                 Label("Set as Wallpaper", systemImage: "photo.on.rectangle")
+            }
+            Button { onStage() } label: {
+                Label("Preview in Studio", systemImage: "eye")
             }
             Button { onFavorite() } label: {
                 Label(isFavorite ? "Unstar" : "Star", systemImage: isFavorite ? "star.slash" : "star")

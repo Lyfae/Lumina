@@ -585,16 +585,25 @@ extension VideoSource {
         renderer.setOpacity(look.opacity)
         renderer.setColorCorrection(saturation: look.saturation, hue: look.hue, grayscale: look.grayscale)
         renderer.setLoopFade(enabled: look.loopFade.enabled, duration: look.loopFade.duration, easing: look.loopFade.easing)
+        let gravity: AVLayerVideoGravity = {
+            switch look.scaling {
+            case .fit: return .resizeAspect
+            case .fill: return .resizeAspectFill
+            case .stretch: return .resize
+            }
+        }()
+        for layer in extraLayers {
+            layer.videoGravity = gravity
+        }
     }
 }
 
 extension StillImageSource {
     func applyLook(_ look: SurfaceLook, crop: CGRect) {
-        _ = (look, crop)
-        // Crop/gravity applied via layer contentsRect by SurfaceLayer when primary is a CALayer.
         for layer in layers {
             layer.contentsGravity = look.scaling == .fit ? .resizeAspect
                 : look.scaling == .stretch ? .resize : .resizeAspectFill
+            layer.contentsRect = WallpaperGeometry.contentsRect(crop: crop)
             layer.opacity = Float(look.opacity)
         }
     }

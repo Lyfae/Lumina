@@ -268,27 +268,14 @@ public final class AVVideoRenderer: @unchecked Sendable {
         pl.videoGravity = .resizeAspectFill  // fill the (expanded) frame
     }
 
-    /// Pure geometry: expands a player layer's frame beyond `parent` so the normalized
-    /// top-left-origin `crop` region exactly fills the parent (which clips the overflow).
-    /// CALayer uses a bottom-left origin, hence the Y flip on the origin.
     static func expandedVideoFrame(parent: CGRect, crop: CGRect) -> CGRect {
-        let fullW = parent.width  / crop.width
-        let fullH = parent.height / crop.height
-        let originX = parent.minX - crop.minX * fullW
-        let originY = parent.minY + crop.maxY * fullH - fullH   // flip Y
-        return CGRect(x: originX, y: originY, width: fullW, height: fullH)
+        WallpaperGeometry.expandedFrame(parent: parent, crop: crop)
     }
 
     /// Pure geometry: the layer `contentsRect` (bottom-left-origin, normalized) for a
     /// top-left-origin `crop`. Returns the full rect when the crop is the whole image.
     static func imageContentsRect(crop: CGRect) -> CGRect {
-        let clamped = crop.intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
-        let isFull = abs(clamped.minX) < 0.001 && abs(clamped.minY) < 0.001
-                  && abs(clamped.width - 1) < 0.001 && abs(clamped.height - 1) < 0.001
-        if isFull || clamped.width < 0.001 || clamped.height < 0.001 {
-            return CGRect(x: 0, y: 0, width: 1, height: 1)
-        }
-        return CGRect(x: clamped.minX, y: 1 - clamped.maxY, width: clamped.width, height: clamped.height)
+        WallpaperGeometry.contentsRect(crop: crop)
     }
 
     /// Crop + scaling for the CALayer-based image/GIF path.
@@ -326,7 +313,17 @@ public final class AVVideoRenderer: @unchecked Sendable {
     /// Sets the user's desired playback speed (0.25x – 4.0x).
     /// Safe to call even when no video is loaded (value is stored for next load).
     public func setPlaybackSpeed(_ speed: Double) {
-        userPlaybackSpeed = max(0.25, min(4.0, speed))
+        let clamped = max(0.25, min(4.0, speed))
+        let changed = abs(userPlaybackSpeed - clamped) > 0.001
+        userPlaybackSpeed = clamped
+
+        if mediaKind == .animatedImage, changed, let layer = imageLayer, let url = currentURL {
+            applyGIFAnimation(url: url, to: layer, autoPlay: {
+                if case .paused = currentPolicy { return false }
+                return gifPlaybackDesired
+            }())
+            return
+        }
 
         guard let player else { return }
 

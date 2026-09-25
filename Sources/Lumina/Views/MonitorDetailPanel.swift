@@ -2,11 +2,19 @@ import SwiftUI
 import AppKit
 import AVFoundation
 
+/// Library tile staged for Studio preview — not yet on the desktop.
+struct StagedWallpaperPick: Equatable {
+    let url: URL
+    let mediaType: MediaType
+    let libraryID: String
+}
+
 /// Side panel for the selected monitor: full-height live preview by default, with a
 /// Per-display Adjust column that slides in for Pin / Display / Effects / etc.
 struct MonitorDetailPanel: View {
     let monitor: MonitorInfo
     @ObservedObject var store: WallpaperManagerStore
+    @Binding var stagedPick: StagedWallpaperPick?
 
     var onClose: () -> Void = {}
     var showHeader: Bool = true
@@ -27,6 +35,8 @@ struct MonitorDetailPanel: View {
     @State private var measuredPreviewWidth: CGFloat = 0
     @State private var lockedPreviewWidth: CGFloat? = nil
     @State private var previewUnlockTask: Task<Void, Never>? = nil
+    /// Skip one assignment reload when Apply commits a staged library pick (keeps local edits).
+    @State private var suppressAssignmentReload = false
 
     /// Must match the window growth delta so the preview width stays stable while toggling.
     private static var settingsInspectorWidth: CGFloat { LuminaMetrics.adjustColumnWidth }
@@ -93,6 +103,26 @@ struct MonitorDetailPanel: View {
     }
 
     private var displayKey: DisplayKey { DisplayKey(monitor.id) }
+
+    private var isSlideshowContext: Bool {
+        stagedPick == nil && !(assignment?.slideshowItems.isEmpty ?? true)
+    }
+
+    private var adjustMediaType: MediaType {
+        if let staged = stagedPick { return staged.mediaType }
+        if isSlideshowContext { return assignment?.mediaType ?? .image }
+        return assignment?.mediaType ?? .unknown
+    }
+
+    private var adjustCapability: AdjustCapability {
+        if stagedPick != nil {
+            return .for(adjustMediaType)
+        }
+        if isSlideshowContext {
+            return .forSlideshow()
+        }
+        return .for(adjustMediaType)
+    }
 
     private func formatSpeed(_ v: Double) -> String {
         let s = String(format: "%g", v)
@@ -235,15 +265,28 @@ struct MonitorDetailPanel: View {
         .onAppear {
             loadCurrentValues()
             maybeAutoOpenAdjustColumn(
-                hasMedia: assignment?.filePath.map { !$0.isEmpty } ?? false
+                hasMedia: hasPreviewMedia
             )
         }
-        .onChange(of: monitor.id) { _, _ in loadCurrentValues() }
+        .onChange(of: monitor.id) { _, _ in
+            stagedPick = nil
+            loadCurrentValues()
+        }
         // Reloading when the media itself changes resets the staged adjustments to the new
         // assignment's values (so picking new media doesn't leave stale pending edits).
         .onChange(of: assignment?.filePath) { _, newPath in
+            if suppressAssignmentReload {
+                suppressAssignmentReload = false
+                maybeAutoOpenAdjustColumn(hasMedia: newPath.map { !$0.isEmpty } ?? false)
+                return
+            }
+            stagedPick = nil
             loadCurrentValues()
             maybeAutoOpenAdjustColumn(hasMedia: newPath.map { !$0.isEmpty } ?? false)
+        }
+        .onChange(of: stagedPick?.url) { _, _ in
+            maybeAutoOpenAdjustColumn(hasMedia: hasPreviewMedia)
+            if cropEditMode { cropEditMode = false }
         }
         .task(id: previewAssignment?.filePath) {
             if let a = previewAssignment,
@@ -268,9 +311,24 @@ struct MonitorDetailPanel: View {
                 userInfo: ["visible": visible]
             )
         }
+        .onKeyPress(.return) {
+            guard hasUnappliedChanges else { return .ignored }
+            applyToWallpaper()
+            return .handled
+        }
+        .onKeyPress(.escape) {
+            if cropEditMode {
+                LuminaMotion.animate(LuminaMotion.state) { cropEditMode = false }
+                return .handled
+            }
+            guard hasUnappliedChanges else { return .ignored }
+            discardStagedChanges()
+            return .handled
+        }
         // Adjust column window resize is driven explicitly from `toggleConfigColumn`
         // (instant grow on open; column out then soft window shrink on close).
         .onDisappear {
+            stagedPick = nil
             previewUnlockTask?.cancel()
             lockedPreviewWidth = nil
             // If the panel goes away while crop mode is open, tell the window controller to
@@ -322,11 +380,14 @@ struct MonitorDetailPanel: View {
     }
 
     private var settingsColumn: some View {
-        ScrollViewReader { proxy in
+        let caps = adjustCapability
+        return ScrollViewReader { proxy in
             ScrollView {
                 VStack(spacing: LuminaSpace.cardGap) {
-                    if assignment != nil {
+                    if hasPreviewMedia {
                         keepOnStartupControl
+                            .disabled(stagedPick != nil && assignment == nil)
+                            .opacity(stagedPick != nil && assignment == nil ? 0.4 : 1)
 
                         SettingsGroup(icon: "aspectratio", title: "Framing") {
                             displayContent
@@ -336,10 +397,15 @@ struct MonitorDetailPanel: View {
                             visualEffectsContent
                         }
 
-                        if assignment?.mediaType == .video || assignment?.mediaType == .animatedImage {
-                            SettingsGroup(icon: "play.fill", title: "Playback") {
-                                playbackContent
-                            }
+                        SettingsGroup(
+                            icon: "play.fill",
+                            title: "Playback",
+                            footnote: caps.playbackFootnote(
+                                mediaType: adjustMediaType,
+                                isSlideshow: isSlideshowContext
+                            )
+                        ) {
+                            playbackContent
                         }
                     }
 
@@ -373,10 +439,28 @@ struct MonitorDetailPanel: View {
         .luminaWindowBackdrop()
     }
 
-    /// True when the staged (preview) settings differ from what's currently applied to the
-    /// assignment — i.e. there are changes the user hasn't pushed to the desktop yet.
-    private var hasUnappliedChanges: Bool {
-        guard let a = assignment else { return false }
+    private var hasPreviewMedia: Bool {
+        stagedPick != nil || (assignment?.hasMedia ?? false)
+    }
+
+    private var hasAdjustmentChanges: Bool {
+        guard let a = assignment else {
+            // No desktop assignment yet — any non-default local tweak counts once media is staged.
+            guard stagedPick != nil else { return false }
+            return selectedScaling != .fill
+                || abs(playbackSpeed - 1.0) > 0.001
+                || localCropRect != CGRect(x: 0, y: 0, width: 1, height: 1)
+                || abs(brightness) > 0.001
+                || abs(opacity - 1.0) > 0.001
+                || abs(saturation - 1.0) > 0.001
+                || abs(hue) > 0.001
+                || grayscale
+                || abs(audioVolume) > 0.001
+                || loopMode != .loop
+                || loopFadeEnabled
+                || abs(loopFadeDuration - 1.5) > 0.001
+                || loopFadeEasing != .easeInOut
+        }
         return selectedScaling != a.scaling
             || abs(playbackSpeed - a.playbackSpeed) > 0.001
             || localCropRect != a.cropRect
@@ -392,8 +476,19 @@ struct MonitorDetailPanel: View {
             || loopFadeEasing != a.loopFadeEasing
     }
 
-    /// Pushes every staged adjustment to the live desktop wallpaper (and persistence).
+    /// True when the staged (preview) settings or media differ from what's on the desktop.
+    private var hasUnappliedChanges: Bool {
+        stagedPick != nil || hasAdjustmentChanges
+    }
+
+    /// Pushes staged media (if any) and every staged adjustment to the live desktop wallpaper.
     private func applyToWallpaper() {
+        if let pick = stagedPick {
+            stagedPick = nil
+            suppressAssignmentReload = true
+            store.applyRecentMedia(to: monitor.id, url: pick.url)
+        }
+
         store.setScaling(for: monitor, scaling: selectedScaling)
         store.setPlaybackSpeed(for: monitor, speed: playbackSpeed)
         store.setCropRect(for: monitor, cropRect: localCropRect)
@@ -416,6 +511,11 @@ struct MonitorDetailPanel: View {
         store.objectWillChange.send()
     }
 
+    private func discardStagedChanges() {
+        stagedPick = nil
+        loadCurrentValues()
+    }
+
     // MARK: - Header (optional)
 
     private var headerSection: some View {
@@ -435,9 +535,30 @@ struct MonitorDetailPanel: View {
 
     // MARK: - Live Preview
 
-    /// The assignment to show in the preview. For a slideshow monitor (no single filePath,
-    /// but image items present) we preview the first image so the display isn't blank.
+    /// The assignment to show in the preview. Staged library picks override the desktop
+    /// media so Adjust + preview operate on the candidate before Apply. For a slideshow
+    /// monitor (no single filePath, but image items present) we preview the first image.
     private var previewAssignment: MonitorAssignment? {
+        if let staged = stagedPick {
+            var a = assignment ?? MonitorAssignment(monitorIdentifier: monitor.id)
+            a.filePath = staged.url.path
+            a.mediaType = staged.mediaType
+            a.slideshowItems = []
+            a.scaling = selectedScaling
+            a.cropRect = localCropRect
+            a.brightness = brightness
+            a.opacity = opacity
+            a.saturation = saturation
+            a.hue = hue
+            a.grayscale = grayscale
+            a.playbackSpeed = playbackSpeed
+            a.audioVolume = audioVolume
+            a.loopMode = loopMode
+            a.loopFadeEnabled = loopFadeEnabled
+            a.loopFadeDuration = loopFadeDuration
+            a.loopFadeEasing = loopFadeEasing
+            return a
+        }
         guard var a = assignment else { return nil }
         if a.filePath == nil, let first = a.slideshowItems.first {
             a.filePath = first
@@ -501,7 +622,8 @@ struct MonitorDetailPanel: View {
                                     previewOpacity: opacity,
                                     saturation: saturation,
                                     hueDegrees: hue,
-                                    grayscale: grayscale
+                                    grayscale: grayscale,
+                                    playbackSpeed: playbackSpeed
                                 )
                             }
                         }
@@ -616,7 +738,7 @@ struct MonitorDetailPanel: View {
             }
             .padding(.top, LuminaSpace.md)
 
-            if a.mediaType == .video {
+            if adjustCapability.videoFramePick {
                 cropVideoFrameControls(assignment: a)
             }
         }
@@ -755,30 +877,33 @@ struct MonitorDetailPanel: View {
     // MARK: - Playback Section Content
 
     private var playbackContent: some View {
-        VStack(alignment: .leading, spacing: LuminaSpace.md) {
+        let caps = adjustCapability
+        return VStack(alignment: .leading, spacing: LuminaSpace.md) {
             VStack(alignment: .leading, spacing: LuminaSpace.xs) {
                 LuminaSliderLabel(title: "Speed", value: formatSpeed(playbackSpeed))
                     .help("Double-click to reset")
-                    .onTapGesture(count: 2) { playbackSpeed = 1.0 }
+                    .onTapGesture(count: 2) { if caps.playbackSpeed { playbackSpeed = 1.0 } }
                 LuminaSlider(value: $playbackSpeed, range: 0.25...4.0, step: 0.25, label: formatSpeed(playbackSpeed))
             }
+            .disabled(!caps.playbackSpeed)
+            .opacity(caps.playbackSpeed ? 1 : 0.4)
 
-            if assignment?.mediaType == .video {
-                VStack(alignment: .leading, spacing: LuminaSpace.tight) {
-                    Text("At the end").font(uiScale.font(.body)).foregroundStyle(.secondary)
-                    LuminaSegmentedPicker(
-                        selection: $loopMode,
-                        options: LoopMode.allCases.map {
-                            LuminaSegmentedOption($0, title: $0.label)
-                        }
-                    )
-                    Text(loopMode.uiDescription)
-                        .font(uiScale.font(.caption)).foregroundStyle(.secondary)
-                        .animation(LuminaMotion.state, value: loopMode)
-                }
+            VStack(alignment: .leading, spacing: LuminaSpace.tight) {
+                Text("At the end").font(uiScale.font(.body)).foregroundStyle(.secondary)
+                LuminaSegmentedPicker(
+                    selection: $loopMode,
+                    options: LoopMode.allCases.map {
+                        LuminaSegmentedOption($0, title: $0.label)
+                    }
+                )
+                Text(loopMode.uiDescription)
+                    .font(uiScale.font(.caption)).foregroundStyle(.secondary)
+                    .animation(LuminaMotion.state, value: loopMode)
             }
+            .disabled(!caps.loopMode)
+            .opacity(caps.loopMode ? 1 : 0.4)
 
-            if assignment?.mediaType == .video {
+            VStack(alignment: .leading, spacing: LuminaSpace.sm) {
                 HStack {
                     Text("Fade between loops")
                         .font(uiScale.font(.body))
@@ -789,18 +914,20 @@ struct MonitorDetailPanel: View {
                         .controlSize(uiScale.controlSize())
                         .accessibilityLabel("Fade between loops")
                 }
-                .disabled(loopMode != .loop)
-                .help(loopMode == .loop
-                      ? "Fades out and back in at each loop."
-                      : "Needs Loop.")
+                .disabled(!caps.loopFade || loopMode != .loop)
+                .help(caps.loopFade
+                      ? (loopMode == .loop
+                         ? "Fades out and back in at each loop."
+                         : "Needs Loop.")
+                      : "Not available for this media")
 
-                if loopMode != .loop {
+                if caps.loopFade, loopMode != .loop {
                     Text("Needs Loop.")
                         .font(uiScale.font(.caption))
                         .foregroundStyle(.secondary)
                 }
 
-                if loopFadeEnabled && loopMode == .loop {
+                if caps.loopFade, loopFadeEnabled, loopMode == .loop {
                     VStack(alignment: .leading, spacing: LuminaSpace.sm) {
                         VStack(alignment: .leading, spacing: LuminaSpace.xs) {
                             LuminaSliderLabel(title: "Fade length", value: formatFade(loopFadeDuration))
@@ -824,6 +951,7 @@ struct MonitorDetailPanel: View {
                     }
                 }
             }
+            .opacity(caps.loopFade ? 1 : 0.4)
 
             VStack(alignment: .leading, spacing: LuminaSpace.xs) {
                 LuminaSliderLabel(
@@ -841,6 +969,8 @@ struct MonitorDetailPanel: View {
                     )
                 }
             }
+            .disabled(!caps.audioVolume)
+            .opacity(caps.audioVolume ? 1 : 0.4)
         }
     }
 
@@ -1047,12 +1177,12 @@ struct MonitorDetailPanel: View {
 
     private var actionButtons: some View {
         HStack(spacing: LuminaSpace.sm) {
-            if hasUnappliedChanges, assignment != nil {
+            if hasUnappliedChanges, hasPreviewMedia {
                 HStack(spacing: LuminaSpace.xs) {
                     Circle()
                         .fill(LuminaStatusColor.paused)
                         .frame(width: DisplayScale.points(6), height: DisplayScale.points(6))
-                    Text("Not applied")
+                    Text(stagedPick != nil ? "Preview only" : "Not applied")
                         .font(uiScale.font(.caption))
                         .foregroundStyle(.secondary)
                 }
@@ -1065,8 +1195,14 @@ struct MonitorDetailPanel: View {
                 .buttonStyle(LuminaProminentButtonStyle())
                 .controlSize(.regular)
                 .keyboardShortcut(.return, modifiers: .command)
-                .help("Use these settings on your desktop (⌘↩)")
-            } else if assignment != nil {
+                .help(applyButtonHelp)
+                Button("Discard") {
+                    discardStagedChanges()
+                }
+                .buttonStyle(LuminaSecondaryButtonStyle())
+                .controlSize(.regular)
+                .help("Revert the preview to the current desktop wallpaper")
+            } else if hasPreviewMedia || assignment != nil {
                 HStack(spacing: LuminaSpace.xs) {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundStyle(LuminaStatusColor.playing)
@@ -1077,7 +1213,7 @@ struct MonitorDetailPanel: View {
                 .accessibilityLabel("Up to date")
             }
 
-            if assignment != nil {
+            if hasPreviewMedia || assignment != nil {
                 Button("Reset") {
                     resetToDefaults()
                 }
@@ -1087,8 +1223,9 @@ struct MonitorDetailPanel: View {
                 .transition(.opacity)
             }
 
-            if monitor.assignedVideoName != nil || assignment != nil {
+            if monitor.assignedVideoName != nil || assignment != nil || stagedPick != nil {
                 Button("Clear Display", role: .destructive) {
+                    stagedPick = nil
                     store.clearAssignment(for: monitor)
                 }
                 .buttonStyle(LuminaSecondaryButtonStyle(destructive: true))
@@ -1117,17 +1254,22 @@ struct MonitorDetailPanel: View {
             }
         }
         .animation(LuminaMotion.state, value: assignment != nil)
+        .animation(LuminaMotion.state, value: hasUnappliedChanges)
+        .animation(LuminaMotion.state, value: stagedPick != nil)
     }
 
     /// Help text for the Apply control.
     private var applyButtonHelp: String {
-        if assignment == nil {
+        if !hasPreviewMedia {
             return "Choose a wallpaper first"
         }
         if !hasUnappliedChanges {
             return "Your desktop matches the preview"
         }
-        return "Use these settings on your desktop (⌘↩)"
+        if stagedPick != nil {
+            return "Set this wallpaper on your desktop (↩)"
+        }
+        return "Use these settings on your desktop (↩)"
     }
 
     /// Simulates the loop crossfade in the live preview panel so the user can
@@ -1318,8 +1460,19 @@ struct MonitorDetailPanel: View {
 
             LuminaDivider()
 
-            qualityResolutionControls(disabled: usesGlobalQualityPower)
-            qualityFrameRateControls(disabled: usesGlobalQualityPower)
+            if let footnote = adjustCapability.qualityMotionFootnote(
+                mediaType: adjustMediaType,
+                isSlideshow: isSlideshowContext
+            ) {
+                Text(footnote)
+                    .font(uiScale.font(.caption))
+                    .foregroundStyle(.secondary)
+            }
+
+            qualityResolutionControls(disabled: usesGlobalQualityPower || !adjustCapability.decodeQuality)
+                .opacity(adjustCapability.decodeQuality ? 1 : 0.4)
+            qualityFrameRateControls(disabled: usesGlobalQualityPower || !adjustCapability.frameRate)
+                .opacity(adjustCapability.frameRate ? 1 : 0.4)
 
             LuminaDivider()
 
@@ -1691,6 +1844,7 @@ private struct SettingsGroup<Content: View>: View {
     let icon: String
     let title: String
     var caption: String? = nil
+    var footnote: String? = nil
     var flash: Bool = false
 
     @ViewBuilder let content: () -> Content
@@ -1716,6 +1870,13 @@ private struct SettingsGroup<Content: View>: View {
                 }
             }
             .padding(.bottom, LuminaSpace.sm)
+
+            if let footnote {
+                Text(footnote)
+                    .font(uiScale.font(.caption))
+                    .foregroundStyle(.secondary)
+                    .padding(.bottom, LuminaSpace.sm)
+            }
 
             VStack(alignment: .leading, spacing: LuminaSpace.md) {
                 content()

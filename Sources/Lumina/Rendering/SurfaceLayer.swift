@@ -4,14 +4,12 @@ import QuartzCore
 import LuminaCore
 
 enum SurfaceLayer {
-    /// Expands a player layer's frame beyond `parent` so the normalized top-left-origin `crop`
-    /// region exactly fills the parent. CALayer uses bottom-left origin → Y flip.
     static func expandedVideoFrame(parent: CGRect, crop: CGRect) -> CGRect {
-        AVVideoRenderer.expandedVideoFrame(parent: parent, crop: crop)
+        WallpaperGeometry.expandedFrame(parent: parent, crop: crop)
     }
 
     static func imageContentsRect(crop: CGRect) -> CGRect {
-        AVVideoRenderer.imageContentsRect(crop: crop)
+        WallpaperGeometry.contentsRect(crop: crop)
     }
 
     static func apply(look: SurfaceLook, to layer: CALayer, brightnessOverlay: CALayer?) {

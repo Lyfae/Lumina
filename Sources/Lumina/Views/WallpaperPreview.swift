@@ -33,6 +33,7 @@ struct WallpaperPreview: View {
     var saturation: Double = 1      // 0...2
     var hueDegrees: Double = 0      // -180...180
     var grayscale: Bool = false
+    var playbackSpeed: Double = 1.0
 
     @State private var thumbnail: NSImage?
     @State private var isLoading = false
@@ -133,43 +134,35 @@ struct WallpaperPreview: View {
 
     @ViewBuilder
     private func thumbnailView(_ image: NSImage, assignment: MonitorAssignment, size: CGSize) -> some View {
-        let scaling = effectiveScaling
-
-        GeometryReader { geo in
-            let containerSize = geo.size
-
-            cropped(to: containerSize) { renderSize in
-                Group {
-                    if scaling == .stretch {
-                        // Stretch: fill the frame with distortion (no aspectRatio constraint)
-                        Image(nsImage: image)
-                            .resizable()
-                            .frame(width: renderSize.width, height: renderSize.height)
-                    } else if scaling == .fill {
-                        // Fill: fill entire frame, crop any overflow (matches AVLayerVideoGravity.resizeAspectFill)
-                        Image(nsImage: image)
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                            .frame(width: renderSize.width, height: renderSize.height)
-                            .clipped()
-                    } else {
-                        // Fit: show full image with letterbox/pillarbox (matches AVLayerVideoGravity.resizeAspect)
-                        Image(nsImage: image)
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .frame(width: renderSize.width, height: renderSize.height)
-                    }
+        let mediaSize = mediaPixelSize(of: image)
+        let layout = WallpaperGeometry.layout(
+            mediaSize: mediaSize,
+            displaySize: size,
+            scaling: effectiveScaling,
+            crop: effectiveCrop
+        )
+        Image(nsImage: image)
+            .resizable()
+            .interpolation(.high)
+            .frame(width: layout.mediaFrame.width, height: layout.mediaFrame.height)
+            .offset(x: layout.mediaFrame.minX, y: layout.mediaFrame.minY)
+            .frame(width: size.width, height: size.height, alignment: .topLeading)
+            .clipped()
+            .clipShape(RoundedRectangle(cornerRadius: LuminaRadius.panel, style: .continuous))
+            .overlay(alignment: .bottomLeading) {
+                if showsChrome {
+                    LuminaOverlayChip(text: assignment.displayName)
+                        .padding(LuminaSpace.sm)
+                        .accessibilityHidden(true)
                 }
             }
-            .clipShape(RoundedRectangle(cornerRadius: LuminaRadius.panel, style: .continuous))
+    }
+
+    private func mediaPixelSize(of image: NSImage) -> CGSize {
+        if let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) {
+            return CGSize(width: cg.width, height: cg.height)
         }
-        .overlay(alignment: .bottomLeading) {
-            if showsChrome {
-                LuminaOverlayChip(text: assignment.displayName)
-                    .padding(LuminaSpace.sm)
-                    .accessibilityHidden(true)
-            }
-        }
+        return image.size
     }
 
     // MARK: - Live Video Playback
@@ -177,11 +170,14 @@ struct WallpaperPreview: View {
     @ViewBuilder
     private func liveVideoView(assignment: MonitorAssignment, size: CGSize) -> some View {
         if let player = player {
-            cropped(to: size) { renderSize in
-                PlayerLayerView(player: player, videoGravity: gravityForScaling(effectiveScaling))
-                    .frame(width: renderSize.width, height: renderSize.height)
-                    .clipped()
-            }
+            PlayerLayerView(
+                player: player,
+                scaling: effectiveScaling,
+                crop: effectiveCrop,
+                playbackSpeed: playbackSpeed
+            )
+            .frame(width: size.width, height: size.height)
+            .clipped()
             .clipShape(RoundedRectangle(cornerRadius: LuminaRadius.panel, style: .continuous))
         } else {
             Color.black.opacity(0.7)
@@ -193,19 +189,20 @@ struct WallpaperPreview: View {
     private func liveGIFView(assignment: MonitorAssignment, size: CGSize) -> some View {
         let url = assignment.resolvedURL()
             ?? assignment.filePath.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) }
-        cropped(to: size) { renderSize in
-            Color.clear
-                .frame(width: renderSize.width, height: renderSize.height)
-                .overlay {
-                    if let url {
-                        AnimatedGIFView(url: url, scaling: effectiveScaling)
-                            .frame(width: renderSize.width, height: renderSize.height)
-                    } else {
-                        LuminaLoadingView(label: "Loading preview…", onMedia: true)
-                    }
-                }
-                .clipped()
+        Group {
+            if let url {
+                MatchedMediaLayerView(
+                    url: url,
+                    scaling: effectiveScaling,
+                    crop: effectiveCrop,
+                    speed: playbackSpeed
+                )
+                .frame(width: size.width, height: size.height)
+            } else {
+                LuminaLoadingView(label: "Loading preview…", onMedia: true)
+            }
         }
+        .clipped()
         .clipShape(RoundedRectangle(cornerRadius: LuminaRadius.panel, style: .continuous))
         .overlay(alignment: .bottomLeading) {
             if showsChrome {
@@ -220,27 +217,25 @@ struct WallpaperPreview: View {
     /// while the next seek lands (no black flash).
     @ViewBuilder
     private func scrubVideoView(assignment: MonitorAssignment, size: CGSize) -> some View {
-        cropped(to: size) { renderSize in
-            ZStack {
-                // Fallback under the player so seeks never flash an empty black frame.
-                if let thumb = thumbnail {
-                    Image(nsImage: thumb)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(width: renderSize.width, height: renderSize.height)
-                }
-
-                if let player {
-                    PlayerLayerView(player: player, videoGravity: gravityForScaling(effectiveScaling))
-                        .frame(width: renderSize.width, height: renderSize.height)
-                        .clipped()
-                } else if thumbnail == nil {
-                    ProgressView()
-                        .tint(.white)
-                }
+        ZStack {
+            if let thumb = thumbnail {
+                thumbnailView(thumb, assignment: assignment, size: size)
             }
-            .frame(width: renderSize.width, height: renderSize.height)
+            if let player {
+                PlayerLayerView(
+                    player: player,
+                    scaling: effectiveScaling,
+                    crop: effectiveCrop,
+                    playbackSpeed: 0
+                )
+                .frame(width: size.width, height: size.height)
+                .clipped()
+            } else if thumbnail == nil {
+                ProgressView()
+                    .tint(.white)
+            }
         }
+        .frame(width: size.width, height: size.height)
         .clipShape(RoundedRectangle(cornerRadius: LuminaRadius.panel, style: .continuous))
         .overlay(alignment: .bottomLeading) {
             if showsChrome {
@@ -251,56 +246,38 @@ struct WallpaperPreview: View {
         }
     }
 
-    private var isFullCrop: Bool {
-        let crop = effectiveCrop
-        return abs(crop.minX) < 0.001 && abs(crop.minY) < 0.001
-            && abs(crop.width - 1) < 0.001 && abs(crop.height - 1) < 0.001
-    }
-
-    /// Renders the crop *result*: the media is enlarged and shifted so the crop region
-    /// exactly fills `size`. The preview then matches what lands on the desktop, instead of
-    /// showing the whole source with a marker rectangle drawn on it.
-    @ViewBuilder
-    private func cropped<Content: View>(
-        to size: CGSize,
-        @ViewBuilder content: (CGSize) -> Content
-    ) -> some View {
-        let crop = effectiveCrop
-        if isFullCrop || crop.width <= 0.001 || crop.height <= 0.001 {
-            content(size)
-        } else {
-            let scaled = CGSize(
-                width: size.width / crop.width,
-                height: size.height / crop.height
-            )
-            content(scaled)
-                .offset(x: -crop.minX * scaled.width, y: -crop.minY * scaled.height)
-                .frame(width: size.width, height: size.height, alignment: .topLeading)
-                .clipped()
-        }
-    }
-
-    /// Lightweight NSViewRepresentable that hosts an AVPlayerLayer.
-    /// This avoids pulling in AVPlayerView (the cause of the "VideoPlayerView" demangle crash in .accessory apps).
     private struct PlayerLayerView: NSViewRepresentable {
         let player: AVPlayer
-        var videoGravity: AVLayerVideoGravity = .resizeAspectFill
+        var scaling: VideoScaling = .fill
+        var crop: CGRect = CGRect(x: 0, y: 0, width: 1, height: 1)
+        var playbackSpeed: Double = 1
 
         func makeNSView(context: Context) -> PlayerHostingView {
             let view = PlayerHostingView()
             view.playerLayer.player = player
-            view.playerLayer.videoGravity = videoGravity
+            view.scaling = scaling
+            view.crop = crop
             view.wantsLayer = true
+            applyRate()
             return view
         }
 
         func updateNSView(_ nsView: PlayerHostingView, context: Context) {
             nsView.playerLayer.player = player
-            nsView.playerLayer.videoGravity = videoGravity
+            nsView.scaling = scaling
+            nsView.crop = crop
+            nsView.needsLayout = true
+            applyRate()
         }
 
-        // AVPlayerLayer strongly retains its player; without this the layer can keep the
-        // player decoding after SwiftUI tears the view down.
+        private func applyRate() {
+            guard playbackSpeed > 0 else {
+                player.pause()
+                return
+            }
+            player.rate = Float(max(0.25, min(4, playbackSpeed)))
+        }
+
         static func dismantleNSView(_ nsView: PlayerHostingView, coordinator: ()) {
             nsView.playerLayer.player?.pause()
             nsView.playerLayer.player = nil
@@ -308,11 +285,14 @@ struct WallpaperPreview: View {
 
         final class PlayerHostingView: NSView {
             let playerLayer = AVPlayerLayer()
+            var scaling: VideoScaling = .fill
+            var crop: CGRect = CGRect(x: 0, y: 0, width: 1, height: 1)
 
             override init(frame frameRect: NSRect) {
                 super.init(frame: frameRect)
                 wantsLayer = true
                 layer = CALayer()
+                layer?.masksToBounds = true
                 layer?.addSublayer(playerLayer)
             }
 
@@ -322,46 +302,79 @@ struct WallpaperPreview: View {
 
             override func layout() {
                 super.layout()
-                playerLayer.frame = bounds
+                let parent = bounds
+                let isFull = abs(crop.minX) < 0.001 && abs(crop.minY) < 0.001
+                    && abs(crop.width - 1) < 0.001 && abs(crop.height - 1) < 0.001
+                if isFull || crop.width < 0.001 || crop.height < 0.001 {
+                    playerLayer.frame = parent
+                    switch scaling {
+                    case .fit: playerLayer.videoGravity = .resizeAspect
+                    case .fill: playerLayer.videoGravity = .resizeAspectFill
+                    case .stretch: playerLayer.videoGravity = .resize
+                    }
+                } else {
+                    playerLayer.frame = WallpaperGeometry.expandedFrame(parent: parent, crop: crop)
+                    playerLayer.videoGravity = .resizeAspectFill
+                }
             }
         }
     }
 
-    private struct AnimatedGIFView: NSViewRepresentable {
+    /// Same CALayer gravity + contentsRect + speed path the desktop uses for image/GIF.
+    private struct MatchedMediaLayerView: NSViewRepresentable {
         let url: URL
         let scaling: VideoScaling
+        let crop: CGRect
+        let speed: Double
 
-        func makeNSView(context: Context) -> NSImageView {
-            let view = NSImageView()
-            view.imageScaling = imageScaling(for: scaling)
-            view.imageAlignment = .alignCenter
-            view.animates = true
+        func makeNSView(context: Context) -> HostView {
+            let view = HostView()
             view.wantsLayer = true
-            view.image = NSImage(contentsOf: url)
-            context.coordinator.loadedPath = url.path
+            view.layer = CALayer()
+            view.layer?.backgroundColor = NSColor.black.cgColor
+            view.layer?.masksToBounds = true
+            view.renderer.install(into: view)
+            context.coordinator.apply(url: url, scaling: scaling, crop: crop, speed: speed, to: view)
             return view
         }
 
-        func updateNSView(_ nsView: NSImageView, context: Context) {
-            nsView.imageScaling = imageScaling(for: scaling)
-            nsView.animates = true
-            if context.coordinator.loadedPath != url.path {
-                context.coordinator.loadedPath = url.path
-                nsView.image = NSImage(contentsOf: url)
-            }
+        func updateNSView(_ nsView: HostView, context: Context) {
+            context.coordinator.apply(url: url, scaling: scaling, crop: crop, speed: speed, to: nsView)
+            nsView.renderer.relayout()
+        }
+
+        static func dismantleNSView(_ nsView: HostView, coordinator: Coordinator) {
+            nsView.renderer.cleanup()
         }
 
         func makeCoordinator() -> Coordinator { Coordinator() }
 
-        final class Coordinator {
-            var loadedPath: String?
+        final class HostView: NSView {
+            let renderer = AVVideoRenderer()
+            override func layout() {
+                super.layout()
+                renderer.relayout()
+            }
         }
 
-        private func imageScaling(for scaling: VideoScaling) -> NSImageScaling {
-            switch scaling {
-            case .fit: return .scaleProportionallyUpOrDown
-            case .fill: return .scaleProportionallyUpOrDown
-            case .stretch: return .scaleAxesIndependently
+        final class Coordinator {
+            var loadedPath: String?
+
+            func apply(url: URL, scaling: VideoScaling, crop: CGRect, speed: Double, to view: HostView) {
+                if loadedPath != url.path {
+                    loadedPath = url.path
+                    view.renderer.load(url: url, autoPlay: true)
+                }
+                let mapped: AVVideoRenderer.VideoScaling
+                switch scaling {
+                case .fit: mapped = .fit
+                case .fill: mapped = .fill
+                case .stretch: mapped = .stretch
+                }
+                view.renderer.setScaling(mapped)
+                view.renderer.setCropRect(crop)
+                view.renderer.setPlaybackSpeed(speed)
+                view.renderer.play()
             }
         }
     }
@@ -378,10 +391,10 @@ struct WallpaperPreview: View {
 
         let item = AVPlayerItem(url: url)
         let queuePlayer = AVQueuePlayer(playerItem: item)
-        queuePlayer.isMuted = true   // Previews in manager should be silent
+        queuePlayer.isMuted = true
 
         let looper = AVPlayerLooper(player: queuePlayer, templateItem: item)
-        queuePlayer.play()
+        queuePlayer.rate = Float(max(0.25, min(4, playbackSpeed)))
 
         self.player = queuePlayer
         self.playerLooper = looper
@@ -419,18 +432,8 @@ struct WallpaperPreview: View {
         let clamped = max(0.0, min(1.0, normalized))
         let seconds = scrubDurationSeconds * clamped
         let time = CMTime(seconds: seconds, preferredTimescale: 600)
-        // Slight tolerance keeps scrubbing fluid; still close enough for frame picking.
         let tolerance = CMTime(seconds: 0.04, preferredTimescale: 600)
         player.seek(to: time, toleranceBefore: tolerance, toleranceAfter: tolerance)
-    }
-
-    /// Match the desktop renderer's scaling in the live preview (was hardcoded to letterbox).
-    private func gravityForScaling(_ scaling: VideoScaling) -> AVLayerVideoGravity {
-        switch scaling {
-        case .fit:     return .resizeAspect
-        case .fill:    return .resizeAspectFill
-        case .stretch: return .resize
-        }
     }
 
     private func cleanupPlayer() {
