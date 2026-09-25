@@ -295,30 +295,30 @@ private struct WidgetMetrics {
         switch size {
         case .compact:
             width = DisplayScale.points(248)
-            baseHeight = DisplayScale.points(112)
+            baseHeight = DisplayScale.points(132)
             sidePad = DisplayScale.points(10)
             art = DisplayScale.points(40)
-            waveBand = DisplayScale.points(22)
+            waveBand = DisplayScale.points(56)
             controlsBand = DisplayScale.points(24)
             play = DisplayScale.points(28)
             volume = DisplayScale.points(44)
             titleFont = .callout
         case .regular:
             width = DisplayScale.points(288)
-            baseHeight = DisplayScale.points(140)
+            baseHeight = DisplayScale.points(168)
             sidePad = DisplayScale.points(12)
             art = DisplayScale.points(56)
-            waveBand = DisplayScale.points(30)
+            waveBand = DisplayScale.points(64)
             controlsBand = DisplayScale.points(24)
             play = DisplayScale.points(34)
             volume = DisplayScale.points(56)
             titleFont = .bodyStrong
         case .expanded:
             width = DisplayScale.points(336)
-            baseHeight = DisplayScale.points(168)
+            baseHeight = DisplayScale.points(200)
             sidePad = DisplayScale.points(14)
             art = DisplayScale.points(72)
-            waveBand = DisplayScale.points(36)
+            waveBand = DisplayScale.points(72)
             controlsBand = DisplayScale.points(28)
             play = DisplayScale.points(40)
             volume = DisplayScale.points(72)
@@ -668,11 +668,13 @@ struct NowPlayingWidgetView: View {
         let timeWidth: CGFloat = duration >= 3600
             ? DisplayScale.points(48)
             : DisplayScale.points(32)
-        return HStack(spacing: LuminaSpace.sm) {
+        let trackLift = m.waveBand / 6
+        return HStack(alignment: .bottom, spacing: LuminaSpace.sm) {
             Text(formatTime(scrubPreview ?? audio.currentTime))
                 .font(uiScale.font(.micro).monospacedDigit())
                 .foregroundStyle(scrubPreview == nil ? Color.secondary : accent)
                 .frame(width: timeWidth, alignment: .trailing)
+                .padding(.bottom, max(0, trackLift - DisplayScale.points(5)))
 
             LuminaWaveformScrubber(
                 currentTime: audio.currentTime,
@@ -680,10 +682,12 @@ struct NowPlayingWidgetView: View {
                 isPlaying: audio.isPlaying,
                 style: .widget,
                 source: .live,
+                trackID: audio.trackURL?.path,
+                loadFailed: audio.loadFailed,
                 preview: $scrubPreview,
                 onSeek: { audio.seekToTime($0) }
             )
-            .frame(height: m.waveBand)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
             .focusEffectDisabled()
             .environment(\.luminaButtonFocusRing, false)
 
@@ -691,6 +695,7 @@ struct NowPlayingWidgetView: View {
                 .font(uiScale.font(.micro).monospacedDigit())
                 .foregroundStyle(.secondary)
                 .frame(width: timeWidth, alignment: .leading)
+                .padding(.bottom, max(0, trackLift - DisplayScale.points(5)))
         }
     }
 

@@ -19,6 +19,8 @@ final class AmbientAudioManager: NSObject, ObservableObject {
     @Published var shuffle: Bool = false
     @Published var currentTime: Double = 0
     @Published var duration: Double = 0
+    /// True after the most recent `loadTrack` failed (cleared on success / clear).
+    @Published var loadFailed: Bool = false
     /// When on, a floating now-playing widget appears while the Studio window is minimized.
     @Published var showWidgetWhenMinimized: Bool = true {
         didSet { writeWidgetPreference() }
@@ -363,6 +365,7 @@ final class AmbientAudioManager: NSObject, ObservableObject {
             p.prepareToPlay()
             player = p
             isPlaying = false
+            loadFailed = false
             trackURL = url
             trackName = url.lastPathComponent
             let stem = (url.lastPathComponent as NSString).deletingPathExtension
@@ -377,6 +380,7 @@ final class AmbientAudioManager: NSObject, ObservableObject {
             return true
         } catch {
             LuminaLog.audio.error("Failed to load: \(error)")
+            loadFailed = true
             return false
         }
     }
@@ -446,6 +450,7 @@ final class AmbientAudioManager: NSObject, ObservableObject {
         trackArtwork = nil
         currentTime = 0
         duration = 0
+        loadFailed = false
         mutateAudio { $0.trackPath = nil }
     }
 

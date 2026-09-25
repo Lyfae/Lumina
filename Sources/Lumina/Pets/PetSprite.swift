@@ -27,14 +27,21 @@ struct PetSprite: View {
     }
 
     private var shouldBob: Bool {
-        !reduceMotion && (state == .runningRight || state == .runningLeft)
+        !reduceMotion && (state == .runningRight || state == .runningLeft || state == .running)
     }
 
     var body: some View {
         Group {
             if shouldAnimate {
-                TimelineView(.periodic(from: .now, by: 1.0 / max(fps, 1))) { context in
-                    frameContent(date: context.date)
+                // Always keep a static first frame underneath — TimelineView can
+                // fail to paint in non-key / nonactivating panels (music widget).
+                ZStack {
+                    if let first = frames.first {
+                        staticFrame(first, bob: 0)
+                    }
+                    TimelineView(.periodic(from: .now, by: 1.0 / max(fps, 1))) { context in
+                        frameContent(date: context.date)
+                    }
                 }
             } else if let first = frames.first {
                 staticFrame(first, bob: 0)

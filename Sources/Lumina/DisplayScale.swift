@@ -44,9 +44,9 @@ enum DisplayScale {
 
     static func musicWidgetSize(for size: MusicWidgetPreferences.Size) -> NSSize {
         switch size {
-        case .compact: return nsSize(width: 248, height: 112)
-        case .regular: return nsSize(width: 288, height: 140)
-        case .expanded: return nsSize(width: 336, height: 168)
+        case .compact: return nsSize(width: 248, height: 132)
+        case .regular: return nsSize(width: 288, height: 168)
+        case .expanded: return nsSize(width: 336, height: 200)
         }
     }
 

@@ -542,6 +542,14 @@ struct SettingsView: View {
             )
         )
 
+        SettingsToggleRow(
+            title: "Show pet in Studio",
+            isOn: Binding(
+                get: { petCatalog.showInStudio },
+                set: { petCatalog.showInStudio = $0 }
+            )
+        )
+
         if !petCatalog.pets.isEmpty {
             LazyVGrid(
                 columns: [

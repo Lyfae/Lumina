@@ -273,7 +273,12 @@ struct WallpaperManagerView: View {
                 .fill(Color.luminaBorder)
                 .frame(width: 1)
 
-            configurationColumn
+            ZStack {
+                // Companion stays in the preview/detail column — not over the library rail.
+                configurationColumn
+                StudioPetCompanion()
+                    .padding(.bottom, DisplayScale.points(44)) // clear Adjust / Apply row
+            }
         }
         .frame(maxHeight: .infinity)
     }
@@ -824,6 +829,8 @@ private struct AudioFooterBar: View {
                         isPlaying: audioManager.isPlaying,
                         style: .footer,
                         source: .live,
+                        trackID: audioManager.trackURL?.path,
+                        loadFailed: audioManager.loadFailed,
                         preview: $scrubPreview,
                         onSeek: { audioManager.seekToTime($0) }
                     )
@@ -906,7 +913,7 @@ private struct AudioFooterBar: View {
                 .accessibilityValue(musicWidget.isVisible ? "Shown" : "Hidden")
             }
             .padding(.horizontal, LuminaLayout.contentPadding)
-            .padding(.vertical, LuminaSpace.barPaddingV)
+            .padding(.vertical, LuminaSpace.barPaddingV + DisplayScale.points(6))
             .luminaGlassChrome()
             .animation(LuminaMotion.state, value: hasTrack)
         }

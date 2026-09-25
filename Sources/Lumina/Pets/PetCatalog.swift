@@ -140,6 +140,7 @@ final class PetCatalog: ObservableObject {
 
     private static let slugKey = "music.pet.slug"
     private static let enabledKey = "music.pet.enabled"
+    private static let studioKey = "music.pet.studio"
     private static let bundledSlugs = ["lumi", "mochi", "nimbus", "ember", "pip", "koi"]
 
     @Published private(set) var pets: [PetInfo] = []
@@ -158,6 +159,14 @@ final class PetCatalog: ObservableObject {
         }
     }
 
+    /// Floating companion inside Lumina Studio (above the music bar).
+    @Published var showInStudio: Bool {
+        didSet {
+            guard showInStudio != oldValue else { return }
+            UserDefaults.standard.set(showInStudio, forKey: Self.studioKey)
+        }
+    }
+
     /// Selected pet, falling back to `lumi` then first available. Nil only when nothing loaded.
     var currentPet: PetInfo? {
         if let match = pets.first(where: { $0.slug == selectedSlug }) { return match }
@@ -170,11 +179,15 @@ final class PetCatalog: ObservableObject {
         if defaults.object(forKey: Self.enabledKey) == nil {
             defaults.set(true, forKey: Self.enabledKey)
         }
+        if defaults.object(forKey: Self.studioKey) == nil {
+            defaults.set(true, forKey: Self.studioKey)
+        }
         if defaults.object(forKey: Self.slugKey) == nil {
             defaults.set("lumi", forKey: Self.slugKey)
         }
         selectedSlug = defaults.string(forKey: Self.slugKey) ?? "lumi"
         isEnabled = defaults.object(forKey: Self.enabledKey) as? Bool ?? true
+        showInStudio = defaults.object(forKey: Self.studioKey) as? Bool ?? true
         reload()
     }
 

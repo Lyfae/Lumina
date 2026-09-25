@@ -903,7 +903,11 @@ public enum CoreSelfTest {
                 direction: Double = 0,
                 finished: Bool = false,
                 failed: Bool = false,
-                track: Bool = true
+                track: Bool = true,
+                waving: Bool = false,
+                jumping: Bool = false,
+                hovering: Bool = false,
+                pausedLong: Bool = false
             ) -> PetState {
                 PetState.forPlayback(
                     isPlaying: playing,
@@ -911,24 +915,40 @@ public enum CoreSelfTest {
                     dragDirection: direction,
                     didFinish: finished,
                     loadFailed: failed,
-                    hasTrack: track
+                    hasTrack: track,
+                    isWaving: waving,
+                    isJumping: jumping,
+                    isHovering: hovering,
+                    pausedLong: pausedLong
                 )
             }
 
             check("no track → idle", state(playing: true, track: false) == .idle)
             check("paused with track → idle", state(playing: false, track: true) == .idle)
-            check("playing → runningRight", state(playing: true) == .runningRight)
+            check("playing → running", state(playing: true) == .running)
             check("drag held → review", state(playing: true, dragging: true, direction: 0) == .review)
             check("drag left → runningLeft", state(dragging: true, direction: -1) == .runningLeft)
             check("drag right → runningRight", state(dragging: true, direction: 1) == .runningRight)
             check("didFinish → jumping", state(finished: true) == .jumping)
+            check("jump pulse → jumping", state(playing: true, jumping: true) == .jumping)
+            check("wave → waving", state(playing: true, waving: true) == .waving)
+            check("hover → review", state(playing: true, hovering: true) == .review)
+            check("paused long → waiting", state(pausedLong: true) == .waiting)
+            check("paused short stays idle", state(pausedLong: false) == .idle)
             check("loadFailed → failed", state(playing: true, failed: true) == .failed)
             check("loadFailed beats drag", state(dragging: true, direction: 1, failed: true) == .failed)
+            check("drag beats wave", state(dragging: true, direction: 1, waving: true) == .runningRight)
             check("drag beats didFinish", state(dragging: true, finished: true) == .review)
+            check("wave beats jump", state(playing: true, waving: true, jumping: true) == .waving)
+            check("jump beats hover", state(jumping: true, hovering: true) == .jumping)
+            check("hover beats playing", state(playing: true, hovering: true) == .review)
+            check("playing beats pausedLong", state(playing: true, pausedLong: true) == .running)
             check("didFinish beats playing", state(playing: true, finished: true) == .jumping)
             check("wave alias", PetState.fromRowKey("wave") == .waving)
             check("jump alias", PetState.fromRowKey("jump") == .jumping)
             check("run alias", PetState.fromRowKey("run") == .running)
+            check("wait alias", PetState.fromRowKey("wait") == .waiting)
+            check("hold alias", PetState.fromRowKey("hold") == .review)
         }
     }
 }
