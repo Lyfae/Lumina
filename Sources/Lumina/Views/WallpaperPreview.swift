@@ -81,7 +81,8 @@ struct WallpaperPreview: View {
                         } else if isLoading {
                             LuminaLoadingView(label: "Loading preview…", onMedia: true)
                         } else {
-                            LuminaLoadingView(label: "Loading preview…", onMedia: true)
+                            LuminaEmptyState(icon: "photo", title: "Preview unavailable", compact: true)
+                                .foregroundStyle(.white.opacity(0.85))
                         }
                     }
                     // WYSIWYG effect overlays — mirror the per-monitor adjustments so the preview
@@ -118,7 +119,10 @@ struct WallpaperPreview: View {
             scrubDurationSeconds = 0
             setupLivePlaybackIfNeeded()
             setupScrubPlayerIfNeeded()
-            loadThumbnailIfNeeded()
+            let liveMedia = isLivePlayback && (assignment?.mediaType == .video || assignment?.mediaType == .animatedImage)
+            if !liveMedia {
+                loadThumbnailIfNeeded()
+            }
         }
         .onChange(of: previewTime) { _, newValue in
             guard !(isLivePlayback && (assignment?.mediaType == .video || assignment?.mediaType == .animatedImage)) else { return }

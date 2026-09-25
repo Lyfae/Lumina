@@ -31,10 +31,12 @@ final class LuminaLook: ObservableObject {
 
     func set(material newValue: StudioLookPreferences.Material) {
         material = newValue
-        guard let preferences else { return }
-        var studio = preferences.studio
-        studio.material = newValue
-        preferences.studio = studio
+        if let preferences {
+            var studio = preferences.studio
+            studio.material = newValue
+            preferences.studio = studio
+        }
+        LuminaGlass.refreshConfiguredWindows()
     }
 
     private func trackChanges() {
@@ -45,7 +47,10 @@ final class LuminaLook: ObservableObject {
             Task { @MainActor in
                 if let studio = self?.preferences?.studio {
                     if self?.density != studio.density { self?.density = studio.density }
-                    if self?.material != studio.material { self?.material = studio.material }
+                    if self?.material != studio.material {
+                        self?.material = studio.material
+                        LuminaGlass.refreshConfiguredWindows()
+                    }
                 }
                 self?.trackChanges()
             }

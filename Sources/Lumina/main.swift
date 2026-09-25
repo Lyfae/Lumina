@@ -128,8 +128,9 @@ final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func reapplyPowerPolicy() {
-        // Planner re-reads prefs via Observation; nudge a no-op write path by toggling nothing.
-        // PowerSignals + prefs observation already replan. Keep API for Settings.
+        // Settings mutates nested power fields then calls this — force a plan pass so
+        // pause / frame / decode caps apply immediately (Observation may miss nested writes).
+        playbackEngine?.forceReplan()
         updateStatusItemFromEngine()
     }
 

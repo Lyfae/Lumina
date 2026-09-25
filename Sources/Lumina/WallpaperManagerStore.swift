@@ -236,34 +236,37 @@ final class WallpaperManagerStore: ObservableObject {
     }
 
     func setSlideshowItems(for monitor: MonitorInfo, items: [String]) {
+        if items.isEmpty {
+            guard let prefs = appDelegate?.preferencesStore else { return }
+            let key = DisplayKey(monitor.id)
+            guard case .slideshow = prefs.wallpapers.byDisplay[key]?.content else { return }
+            prefs.removeWallpaperAssignment(for: monitor.id)
+            return
+        }
         mutateWallpaper(for: monitor) { wallpaper in
-            if items.isEmpty {
-                if case .slideshow = wallpaper.content { wallpaper.content = .none }
-            } else {
-                let refs = items.map { path -> MediaReference in
-                    MediaReference(
-                        identity: MediaIdentity(normalizing: path),
-                        displayPath: path,
-                        bookmark: nil,
-                        kind: .image
-                    )
-                }
-                let interval: Double
-                let transition: SlideshowTransition
-                let kenBurns: Bool
-                if case .slideshow(let existing) = wallpaper.content {
-                    interval = existing.interval
-                    transition = existing.transition
-                    kenBurns = existing.kenBurns
-                } else {
-                    interval = 10
-                    transition = .fade
-                    kenBurns = true
-                }
-                wallpaper.content = .slideshow(SlideshowSpec(
-                    items: refs, interval: interval, transition: transition, kenBurns: kenBurns
-                ))
+            let refs = items.map { path -> MediaReference in
+                MediaReference(
+                    identity: MediaIdentity(normalizing: path),
+                    displayPath: path,
+                    bookmark: nil,
+                    kind: .image
+                )
             }
+            let interval: Double
+            let transition: SlideshowTransition
+            let kenBurns: Bool
+            if case .slideshow(let existing) = wallpaper.content {
+                interval = existing.interval
+                transition = existing.transition
+                kenBurns = existing.kenBurns
+            } else {
+                interval = 10
+                transition = .fade
+                kenBurns = true
+            }
+            wallpaper.content = .slideshow(SlideshowSpec(
+                items: refs, interval: interval, transition: transition, kenBurns: kenBurns
+            ))
         }
     }
 

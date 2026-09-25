@@ -35,20 +35,23 @@ struct MonitorLayout {
         }
         
         self.monitors = layoutMonitors
-        
-        // Calculate overall bounding rect for the visual layout
-        var minX = CGFloat.greatestFiniteMagnitude
-        var minY = CGFloat.greatestFiniteMagnitude
-        var maxX = -CGFloat.greatestFiniteMagnitude
-        var maxY = -CGFloat.greatestFiniteMagnitude
-        
-        for monitor in layoutMonitors {
-            minX = min(minX, monitor.frame.minX)
-            minY = min(minY, monitor.frame.minY)
-            maxX = max(maxX, monitor.frame.maxX)
-            maxY = max(maxY, monitor.frame.maxY)
+
+        if layoutMonitors.isEmpty {
+            self.boundingRect = .zero
+        } else {
+            var minX = CGFloat.greatestFiniteMagnitude
+            var minY = CGFloat.greatestFiniteMagnitude
+            var maxX = -CGFloat.greatestFiniteMagnitude
+            var maxY = -CGFloat.greatestFiniteMagnitude
+
+            for monitor in layoutMonitors {
+                minX = min(minX, monitor.frame.minX)
+                minY = min(minY, monitor.frame.minY)
+                maxX = max(maxX, monitor.frame.maxX)
+                maxY = max(maxY, monitor.frame.maxY)
+            }
+
+            self.boundingRect = CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
         }
-        
-        self.boundingRect = CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
     }
 }

@@ -418,6 +418,7 @@ final class AmbientAudioManager: NSObject, ObservableObject {
         if let first = urls.first {
             _ = loadTrack(url: first)
             mutateAudio { $0.trackPath = first.path }
+            play()
         }
     }
 
@@ -430,6 +431,8 @@ final class AmbientAudioManager: NSObject, ObservableObject {
     func loadTrack(url: URL) -> Bool {
         do {
             stopPlaybackTimer()
+            stopMetering(decay: false)
+            player?.stop()
             let p = try AVAudioPlayer(contentsOf: url)
             // We always play the file exactly once and drive looping / auto-advance ourselves
             // in `audioPlayerDidFinishPlaying`. Using AVAudioPlayer's own `numberOfLoops = -1`
@@ -442,6 +445,7 @@ final class AmbientAudioManager: NSObject, ObservableObject {
             p.delegate = self   // drives loop-restart / auto-advance when the track ends
             p.prepareToPlay()
             player = p
+            isPlaying = false
             trackURL = url
             trackName = url.lastPathComponent
             let stem = (url.lastPathComponent as NSString).deletingPathExtension

@@ -584,6 +584,223 @@ public enum CoreSelfTest {
         // experimentalRenderCap default off (no data loss / safe default)
         check("experimentalRenderCap default false", PowerPreferences().experimentalRenderCap == false)
 
+        // ── Power / quality rules (every UI-exposed option) ──
+        do {
+            var inputs = baseInputs(displays: 1)
+            inputs.system.power.source = .battery(percent: 80)
+            inputs.preferences.power.defaults.battery.pauseOnBattery = true
+            let plan = Planner.plan(inputs)
+            if case .paused(let r) = plan.surfaces[.desktop(DisplayKey("D0"))]?.run {
+                check("pauseOnBattery → onBattery", r.contains(.onBattery))
+            } else {
+                check("pauseOnBattery → onBattery", false)
+            }
+            check("pauseOnBattery → source not running", plan.sources.values.first?.running == false)
+        }
+        do {
+            var inputs = baseInputs(displays: 1)
+            inputs.system.power.source = .battery(percent: 25)
+            inputs.preferences.power.defaults.battery.pauseBelowEnabled = true
+            inputs.preferences.power.defaults.battery.pauseBelowPercent = 20
+            let plan = Planner.plan(inputs)
+            check("battery above threshold → playing", plan.surfaces[.desktop(DisplayKey("D0"))]?.run == .playing)
+        }
+        do {
+            var inputs = baseInputs(displays: 1)
+            inputs.system.power.source = .ac
+            inputs.preferences.power.defaults.battery.pauseOnBattery = true
+            let plan = Planner.plan(inputs)
+            check("pauseOnBattery on AC → playing", plan.surfaces[.desktop(DisplayKey("D0"))]?.run == .playing)
+        }
+        do {
+            var inputs = baseInputs(displays: 1)
+            inputs.system.power.lowPowerMode = true
+            inputs.preferences.power.defaults.pauseInLowPowerMode = true
+            let plan = Planner.plan(inputs)
+            if case .paused(let r) = plan.surfaces[.desktop(DisplayKey("D0"))]?.run {
+                check("LPM pause → lowPowerMode", r.contains(.lowPowerMode))
+            } else {
+                check("LPM pause → lowPowerMode", false)
+            }
+            inputs.preferences.power.defaults.pauseInLowPowerMode = false
+            let plan2 = Planner.plan(inputs)
+            check("LPM pause off → playing", plan2.surfaces[.desktop(DisplayKey("D0"))]?.run == .playing)
+        }
+        do {
+            var inputs = baseInputs(displays: 1)
+            inputs.system.power.thermal = .serious
+            inputs.preferences.power.defaults.thermal.pauseAt = .serious
+            let plan = Planner.plan(inputs)
+            if case .paused(let r) = plan.surfaces[.desktop(DisplayKey("D0"))]?.run {
+                check("thermal pauseAt serious → thermal", r.contains(.thermal))
+            } else {
+                check("thermal pauseAt serious → thermal", false)
+            }
+            inputs.preferences.power.defaults.thermal.pauseAt = nil
+            let plan2 = Planner.plan(inputs)
+            check("thermal pauseAt nil → not paused thermal", {
+                if case .paused(let r) = plan2.surfaces[.desktop(DisplayKey("D0"))]?.run {
+                    return !r.contains(.thermal)
+                }
+                return plan2.surfaces[.desktop(DisplayKey("D0"))]?.run == .playing
+            }())
+        }
+        do {
+            var inputs = baseInputs(displays: 1)
+            inputs.system.activity.screenLocked = true
+            let plan = Planner.plan(inputs)
+            if case .paused(let r) = plan.surfaces[.desktop(DisplayKey("D0"))]?.run {
+                check("screenLocked → displayInactive", r.contains(.displayInactive))
+            } else {
+                check("screenLocked → displayInactive", false)
+            }
+        }
+        do {
+            var inputs = baseInputs(displays: 1)
+            inputs.system.activity.screensAsleep = true
+            let plan = Planner.plan(inputs)
+            if case .paused(let r) = plan.surfaces[.desktop(DisplayKey("D0"))]?.run {
+                check("screensAsleep → displayInactive", r.contains(.displayInactive))
+            } else {
+                check("screensAsleep → displayInactive", false)
+            }
+        }
+        do {
+            var inputs = baseInputs(displays: 1)
+            inputs.system.occlusion.trusted = true
+            inputs.system.occlusion.covered = [DisplayKey("D0")]
+            inputs.preferences.power.defaults.pauseWhenCovered = false
+            let plan = Planner.plan(inputs)
+            check("pauseWhenCovered off → playing while covered",
+                  plan.surfaces[.desktop(DisplayKey("D0"))]?.run == .playing)
+        }
+        do {
+            // Frame rate cap → quantized budget on source
+            var inputs = baseInputs(displays: 1)
+            inputs.preferences.power.defaults.frameCap = .fps(30)
+            let plan = Planner.plan(inputs)
+            let budget = plan.sources.values.first?.budget
+            check("frameCap 30 → maxFPS 30", budget?.maxFPS == 30)
+            check("frameCap 30 no variant → renderCap", budget?.enforcement == .renderCap)
+        }
+        do {
+            var inputs = baseInputs(displays: 1)
+            inputs.system.power.source = .battery(percent: 50)
+            inputs.preferences.power.defaults.frameCap = .native
+            inputs.preferences.power.defaults.battery.capOnBattery = .fps(15)
+            let plan = Planner.plan(inputs)
+            check("capOnBattery 15 → maxFPS ≤15", (plan.sources.values.first?.budget.maxFPS ?? 99) <= 15)
+            inputs.system.power.source = .ac
+            let planAC = Planner.plan(inputs)
+            check("capOnBattery ignored on AC", planAC.sources.values.first?.budget.maxFPS == nil)
+        }
+        do {
+            var inputs = baseInputs(displays: 1)
+            inputs.preferences.playback.defaultQuality = .fhd1080
+            let plan = Planner.plan(inputs)
+            check("fhd1080 decodeTarget ≤1080", (plan.sources.values.first?.decodeTarget?.height ?? 9999) <= 1080)
+        }
+        do {
+            var inputs = baseInputs(displays: 1)
+            inputs.preferences.power.defaults.frameCap = .fps(15)
+            inputs.preferences.playback.defaultQuality = .fhd1080
+            inputs.preferences.power.defaults.fullQualityWhileStudioOpen = true
+            inputs.system.studioVisible = true
+            let plan = Planner.plan(inputs)
+            check("studio fullQuality → native fps budget", plan.sources.values.first?.budget.maxFPS == nil)
+            check("studio fullQuality → decode lifts past 1080",
+                  (plan.sources.values.first?.decodeTarget?.height ?? 0) >= 1440)
+            inputs.system.studioVisible = false
+            let closed = Planner.plan(inputs)
+            check("studio closed → frameCap returns", closed.sources.values.first?.budget.maxFPS == 15)
+            check("studio closed → 1080 decode returns",
+                  (closed.sources.values.first?.decodeTarget?.height ?? 9999) <= 1080)
+        }
+        do {
+            var inputs = baseInputs(displays: 1)
+            inputs.preferences.power.defaults.fullQualityWhileStudioOpen = true
+            inputs.system.studioVisible = true
+            inputs.system.power.lowPowerMode = true
+            inputs.preferences.power.defaults.pauseInLowPowerMode = true
+            let plan = Planner.plan(inputs)
+            if case .paused(let r) = plan.surfaces[.desktop(DisplayKey("D0"))]?.run {
+                check("studio fullQuality still pauses for LPM", r.contains(.lowPowerMode))
+            } else {
+                check("studio fullQuality still pauses for LPM", false)
+            }
+        }
+        do {
+            // Per-display override: D0 pauses on battery, D1 does not
+            var inputs = baseInputs(displays: 2)
+            inputs.system.power.source = .battery(percent: 70)
+            var ov = inputs.preferences.power.defaults
+            ov.battery.pauseOnBattery = true
+            inputs.preferences.power[display: DisplayKey("D0")] = ov
+            var other = inputs.preferences.power.defaults
+            other.battery.pauseOnBattery = false
+            inputs.preferences.power[display: DisplayKey("D1")] = other
+            let plan = Planner.plan(inputs)
+            if case .paused(let r) = plan.surfaces[.desktop(DisplayKey("D0"))]?.run {
+                check("per-display pauseOnBattery D0", r.contains(.onBattery))
+            } else {
+                check("per-display pauseOnBattery D0", false)
+            }
+            check("per-display D1 still playing", plan.surfaces[.desktop(DisplayKey("D1"))]?.run == .playing)
+        }
+        do {
+            // GIF speed + frame cap land on animated source budget
+            var inputs = baseInputs(displays: 1)
+            let gifID = MediaIdentity(normalizing: "/tmp/power.gif")
+            let gifRef = MediaReference(identity: gifID, displayPath: "/tmp/power.gif", bookmark: nil, kind: .animatedImage)
+            var wp = inputs.preferences.wallpapers[display: DisplayKey("D0")]
+            wp.content = .media(gifRef)
+            wp.timing.speed = 0.5
+            inputs.preferences.wallpapers[display: DisplayKey("D0")] = wp
+            inputs.media.facts[gifID] = MediaFacts(
+                availability: .available,
+                pixels: PixelSize(width: 800, height: 600),
+                nominalFPS: 50
+            )
+            inputs.preferences.power.defaults.frameCap = .fps(15)
+            inputs.preferences.playback.defaultQuality = .fhd1080
+            let plan = Planner.plan(inputs)
+            check("gif frameCap → budget maxFPS", (plan.sources.values.first?.budget.maxFPS ?? 99) <= 15)
+            check("gif quality → decodeTarget set", plan.sources.values.first?.decodeTarget != nil)
+            check("gif speed in SourceKey", {
+                guard let key = plan.sources.keys.first else { return false }
+                if case .animated(_, let speed) = key { return abs(speed - 0.5) < 0.001 }
+                return false
+            }())
+        }
+        do {
+            // Thermal frame soft-cap (profile / silent) while not yet at pauseAt
+            var inputs = baseInputs(displays: 1)
+            inputs.system.power.thermal = .fair
+            inputs.preferences.power.defaults.frameCap = .native
+            inputs.preferences.power.defaults.thermal.capAt = .fair
+            inputs.preferences.power.defaults.thermal.cap = .fps(15)
+            inputs.preferences.power.defaults.thermal.pauseAt = .serious
+            let plan = Planner.plan(inputs)
+            check("thermal capAt fair → maxFPS 15", plan.sources.values.first?.budget.maxFPS == 15)
+            check("thermal fair not paused", plan.surfaces[.desktop(DisplayKey("D0"))]?.run == .playing)
+        }
+        do {
+            let reasons = Planner.pauseReasons(
+                display: DisplayKey("D0"),
+                wallpaper: {
+                    var wp = DisplayWallpaper()
+                    wp.content = .media(MediaReference(
+                        identity: identity, displayPath: identity.path, bookmark: nil, kind: .video))
+                    wp.enabled = false
+                    return wp
+                }(),
+                rules: PowerRuleSet(),
+                system: SystemSnapshot(),
+                session: SessionState()
+            )
+            check("wallpaper disabled → .disabled", reasons.contains(.disabled))
+        }
+
         // ── AdjustCapability (engine-honored Adjust controls) ──
         do {
             let video = AdjustCapability.for(.video)

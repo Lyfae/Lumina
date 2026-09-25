@@ -6,8 +6,10 @@ extension PreferencesStore {
     /// Session + pinned wallpapers keyed like the old AssignmentStore.
     func wallpaperAssignment(for monitorID: String) -> MonitorAssignment? {
         let key = DisplayKey(monitorID)
-        guard wallpapers.byDisplay[key] != nil else { return nil }
-        return LegacyMigration.wire(from: wallpapers[display: key], key: key)
+        guard let wallpaper = wallpapers.byDisplay[key] else { return nil }
+        if case .none = wallpaper.content { return nil }
+        let wire = LegacyMigration.wire(from: wallpaper, key: key)
+        return wire.hasMedia ? wire : nil
     }
 
     func upsertWallpaperAssignment(_ assignment: MonitorAssignment) {

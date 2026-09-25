@@ -99,6 +99,7 @@ final class VideoSource: MediaSource {
             }
         }
 
+        applyDecodeLimits(spec)
         applyBudget(spec.budget)
         swapVariantIfNeeded(spec)
     }
@@ -170,6 +171,24 @@ final class VideoSource: MediaSource {
             renderer.applyVideoFrame(normalizedTime: normalized, useStatic: false)
         }
         applyBudget(spec.budget)
+        applyDecodeLimits(spec)
+    }
+
+    /// Cap hardware decode to the plan’s pixel budget. Without this, Resolution /
+    /// Auto only affected proxy selection — AVPlayer kept decoding the full file.
+    private func applyDecodeLimits(_ spec: SourcePlan) {
+        guard let item = sharedPlayer?.currentItem else { return }
+        if let target = spec.decodeTarget {
+            item.preferredMaximumResolution = CGSize(width: target.width, height: target.height)
+            // Local files ignore peak bit rate for stream switching, but AVFoundation
+            // still uses it as a decode/throughput hint when a max resolution is set.
+            let fps = Double(spec.budget.maxFPS ?? 60)
+            let pixels = Double(max(1, target.width) * max(1, target.height))
+            item.preferredPeakBitRate = pixels * fps * 0.12
+        } else {
+            item.preferredMaximumResolution = .zero
+            item.preferredPeakBitRate = 0
+        }
     }
 
     /// `.renderCap` uses FramePump only when the experimental preference is on.
@@ -350,6 +369,11 @@ final class AnimatedImageSource: MediaSource {
             renderer.setPlaybackSpeed(speed)
         }
         renderer.setPresentationMaxFPS(spec.budget.maxFPS)
+        if let target = spec.decodeTarget {
+            renderer.setDecodeMaxPixelSize(CGFloat(target.longestSide))
+        } else {
+            renderer.setDecodeMaxPixelSize(nil)
+        }
         if didLoad, renderer.loadedURL?.path != mediaPath {
             renderer.load(url: URL(fileURLWithPath: mediaPath), autoPlay: false)
         }

@@ -15,6 +15,11 @@ public enum Planner {
             let wp = prefs.wallpapers[display: display.key]
             let sid = SurfaceID.desktop(display.key)
             let geometry = SurfaceGeometry(frame: display.frame, pixels: display.backingPixels)
+            let rules = prefs.power[display: display.key]
+            let storedQuality = prefs.playback[display: display.key]
+            // Studio open + "full quality": lift decode height + frame caps (pauses still apply).
+            let quality: QualityPreset =
+                (inputs.system.studioVisible && rules.fullQualityWhileStudioOpen) ? .original : storedQuality
 
             if inputs.session.isLaunching && !prefs.startup.restoreAtLaunch {
                 continue
@@ -23,7 +28,7 @@ public enum Planner {
             let (content, baseDemand, probe) = contentFor(
                 wallpaper: wp,
                 display: display,
-                quality: prefs.playback[display: display.key],
+                quality: quality,
                 globalMaxHeight: prefs.playback.maxDecodeHeight,
                 media: inputs.media
             )
@@ -32,7 +37,7 @@ public enum Planner {
             let reasons = pauseReasons(
                 display: display.key,
                 wallpaper: wp,
-                rules: prefs.power[display: display.key],
+                rules: rules,
                 system: inputs.system,
                 session: inputs.session
             )
@@ -44,8 +49,8 @@ public enum Planner {
             surfaces[sid] = SurfacePlan(id: sid, geometry: geometry, content: content, run: run)
             if var demand = baseDemand {
                 demand.frameCap = frameCap(
-                    rules: prefs.power[display: display.key],
-                    quality: prefs.playback[display: display.key],
+                    rules: rules,
+                    quality: quality,
                     system: inputs.system
                 )
                 wants[key, default: []].append((sid, demand))
@@ -195,8 +200,10 @@ public enum Planner {
         quality: QualityPreset,
         system: SystemSnapshot
     ) -> FrameRateCap {
+        // Caller already lifts quality to `.original` when Studio asks for full quality;
+        // keep an explicit native escape so helpers stay correct if called directly.
         if system.studioVisible && rules.fullQualityWhileStudioOpen {
-            return qualityLimits(quality).fps
+            return .native
         }
         var caps: [FrameRateCap] = [rules.frameCap, qualityLimits(quality).fps]
         if let at = rules.thermal.capAt, system.power.thermal >= at {

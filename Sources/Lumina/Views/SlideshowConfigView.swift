@@ -306,10 +306,7 @@ struct SlideshowConfigView: View {
     }
 
     private static func isImageURL(_ url: URL) -> Bool {
-        if let type = UTType(filenameExtension: url.pathExtension.lowercased()) {
-            return type.conforms(to: .image)
-        }
-        return false
+        MediaType.from(url: url) == .image
     }
 }
 

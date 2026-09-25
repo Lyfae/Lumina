@@ -128,7 +128,7 @@ public struct PowerRuleSet: Hashable, Codable, Sendable {
     public var battery = BatteryRule()
     /// Always-on ceiling (the "real frame-rate cap"). Max Battery migrates to `.fps(30)`.
     public var frameCap: FrameRateCap = .native
-    /// While Studio is visible, lift frame caps (never lifts pauses). Replaces
+    /// While Studio is visible, lift frame + decode caps (never lifts pauses). Replaces
     /// `luminaManagerWindowsAreActive` forcing `.normal` (PowerManager.swift:243-247).
     public var fullQualityWhileStudioOpen = true
     public init() {}

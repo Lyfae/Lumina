@@ -84,6 +84,12 @@ final class PlaybackEngine {
         setNeedsPlan()
     }
 
+    /// Settings calls this after power/quality toggles so nested Binding writes still replan
+    /// even if Observation did not see a top-level `power` / `playback` assignment.
+    func forceReplan() {
+        setNeedsPlan()
+    }
+
     /// Studio preview surface hook. `nil` request removes the preview from the plan.
     func setPreview(id: PreviewID, request: PreviewRequest?, host: NSView?) {
         reconciler.registerPreviewHost(id, host)

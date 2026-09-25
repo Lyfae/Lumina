@@ -338,6 +338,10 @@ public final class AVVideoRenderer: @unchecked Sendable {
     /// Video frame caps use variants / optional FramePump — never AVPlayer.rate.
     private var presentationMaxFPS: Int?
 
+    /// Optional longest-side decode ceiling from the playback plan (quality / display demand).
+    /// When nil, falls back to the host layer’s backing-pixel size.
+    private var decodeMaxPixelSizeOverride: CGFloat?
+
     public func setPresentationMaxFPS(_ fps: Int?) {
         guard presentationMaxFPS != fps else { return }
         presentationMaxFPS = fps
@@ -351,6 +355,20 @@ public final class AVVideoRenderer: @unchecked Sendable {
             MainActor.assumeIsolated {
                 slideshow.setPreferredFrameRate(fps)
             }
+        }
+    }
+
+    public func setDecodeMaxPixelSize(_ maxPixel: CGFloat?) {
+        let next = maxPixel.map { max(1, $0) }
+        guard decodeMaxPixelSizeOverride != next else { return }
+        decodeMaxPixelSizeOverride = next
+        if mediaKind == .animatedImage, let layer = imageLayer, let url = currentURL {
+            applyGIFAnimation(url: url, to: layer, autoPlay: {
+                if case .paused = currentPolicy { return false }
+                return gifPlaybackDesired
+            }())
+        } else if mediaKind == .image, let url = currentURL {
+            loadImage(url: url, kind: .image, autoPlay: false)
         }
     }
 
@@ -1255,9 +1273,11 @@ public final class AVVideoRenderer: @unchecked Sendable {
         }
     }
 
-    /// The largest pixel dimension worth decoding for this display — the host layer's longest
-    /// side in backing pixels. Decoding larger than this just wastes memory/bandwidth.
+    /// The largest pixel dimension worth decoding — plan override, else host layer backing size.
     private func targetMaxPixelSize() -> CGFloat {
+        if let override = decodeMaxPixelSizeOverride {
+            return override
+        }
         let layer = playerLayer?.superlayer ?? hostLayer
         let bounds = layer?.bounds ?? .zero
         let scale = layer?.contentsScale ?? 2.0

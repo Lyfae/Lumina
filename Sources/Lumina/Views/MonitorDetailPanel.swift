@@ -49,6 +49,7 @@ struct MonitorDetailPanel: View {
     @State private var videoPreviewTime: Double = 0.15
     @State private var videoDuration: Double = 0
     @State private var committedUseStaticFrame: Bool = false
+    @State private var pendingFrameCommit: (time: Double, useStatic: Bool)? = nil
     @State private var showVideoFrameGuide: Bool = true
     @State private var frameActionFeedback: String?
     @State private var frameFeedbackTask: Task<Void, Never>?
@@ -146,17 +147,23 @@ struct MonitorDetailPanel: View {
     }
 
     private func aspectLockLabel() -> String {
-        let components = monitor.resolution.lowercased().split(separator: "x")
-        let w = Int(components.first.flatMap { Double($0) } ?? 16)
-        let h = Int(components.dropFirst().first.flatMap { Double($0) } ?? 10)
-        func gcd(_ a: Int, _ b: Int) -> Int { b == 0 ? abs(a) : gcd(b, a % b) }
-        let g = max(1, gcd(w, h))
-        let rw = max(1, w / g)
-        let rh = max(1, h / g)
-        if rw > 32 || rh > 32 {
-            return String(format: "Locked to %.2g:1", Double(monitor.aspectRatio))
+        let normalized = monitor.resolution
+            .replacingOccurrences(of: "×", with: "x")
+            .lowercased()
+        let components = normalized.split(separator: "x")
+        let w = Int(components.first.flatMap { Double($0) } ?? 0)
+        let h = Int(components.dropFirst().first.flatMap { Double($0) } ?? 0)
+        if w > 0, h > 0 {
+            func gcd(_ a: Int, _ b: Int) -> Int { b == 0 ? abs(a) : gcd(b, a % b) }
+            let g = max(1, gcd(w, h))
+            let rw = max(1, w / g)
+            let rh = max(1, h / g)
+            if rw <= 32, rh <= 32 {
+                return "Locked to \(rw):\(rh)"
+            }
+            return String(format: "Locked to %.2g:1", Double(w) / Double(h))
         }
-        return "Locked to \(rw):\(rh)"
+        return String(format: "Locked to %.2g:1", Double(monitor.aspectRatio))
     }
 
     /// Monitor aspect expressed in normalized crop coordinates (width ÷ height in 0–1 space).
@@ -193,8 +200,18 @@ struct MonitorDetailPanel: View {
 
     private func commitVideoFrame(useStatic: Bool) {
         committedUseStaticFrame = useStatic
-        store.setVideoFrameTime(for: monitor, time: videoPreviewTime, useStatic: useStatic)
         let label = formattedVideoTime(videoPreviewTime * max(videoDuration, 0))
+        if stagedPick != nil {
+            pendingFrameCommit = (videoPreviewTime, useStatic)
+            if useStatic {
+                showFrameFeedback("Still from \(label) — Apply to set on desktop.")
+            } else {
+                showFrameFeedback("Start at \(label) — Apply to set on desktop.")
+            }
+            return
+        }
+        pendingFrameCommit = nil
+        store.setVideoFrameTime(for: monitor, time: videoPreviewTime, useStatic: useStatic)
         if useStatic {
             showFrameFeedback("Your desktop now shows a still from \(label).")
         } else {
@@ -329,6 +346,9 @@ struct MonitorDetailPanel: View {
         // (instant grow on open; column out then soft window shrink on close).
         .onDisappear {
             stagedPick = nil
+            pendingFrameCommit = nil
+            frameFeedbackTask?.cancel()
+            frameFeedbackTask = nil
             previewUnlockTask?.cancel()
             lockedPreviewWidth = nil
             // If the panel goes away while crop mode is open, tell the window controller to
@@ -492,8 +512,10 @@ struct MonitorDetailPanel: View {
         store.setScaling(for: monitor, scaling: selectedScaling)
         store.setPlaybackSpeed(for: monitor, speed: playbackSpeed)
         store.setCropRect(for: monitor, cropRect: localCropRect)
-        // Note: videoFrameTime + static/video choice is set explicitly via the buttons in crop mode
-        // (not auto-saved on every Apply, to respect the user's "Freeze" vs "Video start" choice)
+        if let pending = pendingFrameCommit {
+            store.setVideoFrameTime(for: monitor, time: pending.time, useStatic: pending.useStatic)
+            pendingFrameCommit = nil
+        }
         store.setBrightness(for: monitor, brightness: brightness)
         store.setOpacity(for: monitor, opacity: opacity)
         store.setColorCorrection(for: monitor, saturation: saturation, hue: hue, grayscale: grayscale)
@@ -513,6 +535,7 @@ struct MonitorDetailPanel: View {
 
     private func discardStagedChanges() {
         stagedPick = nil
+        pendingFrameCommit = nil
         loadCurrentValues()
     }
 
@@ -564,6 +587,7 @@ struct MonitorDetailPanel: View {
             a.filePath = first
             a.mediaType = .image
         }
+        if a.filePath == nil && a.slideshowItems.isEmpty { return nil }
         return a
     }
 
@@ -993,7 +1017,7 @@ struct MonitorDetailPanel: View {
                     .animation(LuminaMotion.state, value: selectedScaling)
             }
 
-            if assignment != nil, !cropEditMode {
+            if hasPreviewMedia, !cropEditMode {
                 Button {
                     LuminaMotion.animate(LuminaMotion.state) {
                         cropEditMode = true
@@ -1006,6 +1030,8 @@ struct MonitorDetailPanel: View {
                 }
                 .buttonStyle(LuminaSecondaryButtonStyle())
                 .controlSize(.small)
+                .help("Crop and position")
+                .accessibilityLabel("Crop")
             }
         }
     }
@@ -1202,7 +1228,7 @@ struct MonitorDetailPanel: View {
                 .buttonStyle(LuminaSecondaryButtonStyle())
                 .controlSize(.regular)
                 .help("Revert the preview to the current desktop wallpaper")
-            } else if hasPreviewMedia || assignment != nil {
+            } else if hasPreviewMedia {
                 HStack(spacing: LuminaSpace.xs) {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundStyle(LuminaStatusColor.playing)
@@ -1213,7 +1239,7 @@ struct MonitorDetailPanel: View {
                 .accessibilityLabel("Up to date")
             }
 
-            if hasPreviewMedia || assignment != nil {
+            if hasPreviewMedia {
                 Button("Reset") {
                     resetToDefaults()
                 }
@@ -1223,9 +1249,10 @@ struct MonitorDetailPanel: View {
                 .transition(.opacity)
             }
 
-            if monitor.assignedVideoName != nil || assignment != nil || stagedPick != nil {
+            if hasPreviewMedia || monitor.assignedVideoName != nil {
                 Button("Clear Display", role: .destructive) {
                     stagedPick = nil
+                    pendingFrameCommit = nil
                     store.clearAssignment(for: monitor)
                 }
                 .buttonStyle(LuminaSecondaryButtonStyle(destructive: true))
@@ -1267,9 +1294,9 @@ struct MonitorDetailPanel: View {
             return "Your desktop matches the preview"
         }
         if stagedPick != nil {
-            return "Set this wallpaper on your desktop (↩)"
+            return "Set this wallpaper on your desktop (⌘↩)"
         }
-        return "Use these settings on your desktop (↩)"
+        return "Use these settings on your desktop (⌘↩)"
     }
 
     /// Simulates the loop crossfade in the live preview panel so the user can
@@ -1298,6 +1325,7 @@ struct MonitorDetailPanel: View {
             localCropRect = CGRect(x: 0, y: 0, width: 1, height: 1)
             videoPreviewTime = 0.15
             committedUseStaticFrame = false
+            pendingFrameCommit = nil
             frameActionFeedback = nil
             loopFadeEnabled = false
             loopFadeDuration = 1.5
@@ -1326,6 +1354,8 @@ struct MonitorDetailPanel: View {
         // Leaving crop mode when the target display changes prevents stale crop UI and
         // ensures cropEditorVisibilityChanged fires so the window can shrink if needed.
         if cropEditMode { cropEditMode = false }
+        pendingFrameCommit = nil
+        frameActionFeedback = nil
 
         if let a = store.assignment(for: monitor.id) {
             selectedScaling = a.scaling
@@ -1357,7 +1387,6 @@ struct MonitorDetailPanel: View {
             localCropRect = CGRect(x: 0, y: 0, width: 1, height: 1)
             videoPreviewTime = 0.15
             committedUseStaticFrame = false
-            frameActionFeedback = nil
             loopFadeEnabled = false
             loopFadeDuration = 1.5
             loopFadeEasing = .easeInOut

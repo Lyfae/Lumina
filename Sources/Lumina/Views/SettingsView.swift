@@ -24,6 +24,8 @@ struct SettingsView: View {
     @State private var expandedSection: SettingsSection? = .appearance
     @State private var shortcutConflicts: [ShortcutAction: String] = [:]
     @State private var shortcutCautions: [ShortcutAction: String] = [:]
+    /// Measured scroll content height; drives sheet hugging (no dead space).
+    @State private var scrollContentHeight: CGFloat = 0
 
     private var hotKeys: HotKeyCenter? {
         store.appDelegate?.hotKeyCenter ?? HotKeyCenter.shared
@@ -33,27 +35,87 @@ struct SettingsView: View {
         engine ?? store.appDelegate?.playbackEngine
     }
 
+    /// Cap the sheet at ~80% of the host Studio window (fallback: main screen).
+    private var maxSheetHeight: CGFloat {
+        let hostHeight =
+            NSApp.windows.first(where: { $0.isMainWindow && $0.isVisible })?.frame.height
+            ?? NSApp.mainWindow?.frame.height
+            ?? NSScreen.main?.visibleFrame.height
+            ?? 900
+        return hostHeight * 0.8
+    }
+
+    private var headerReserve: CGFloat {
+        // LuminaSheetHeader: icon row + vertical padding + divider.
+        DisplayScale.points(56)
+    }
+
+    private var maxScrollHeight: CGFloat {
+        max(DisplayScale.points(160), maxSheetHeight - headerReserve)
+    }
+
+    private var fittedScrollHeight: CGFloat {
+        // Before the first preference pass, use a modest estimate so the sheet
+        // doesn't flash at maxScrollHeight (the old 660pt dead-space bug).
+        let content = scrollContentHeight > 0 ? scrollContentHeight : DisplayScale.points(480)
+        return min(content, maxScrollHeight)
+    }
+
     var body: some View {
         @Bindable var prefs = prefs
         return VStack(spacing: 0) {
             LuminaSheetHeader(icon: "gearshape.fill", title: "Settings", onClose: onClose)
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: LuminaSpace.sm) {
-                    ForEach(SettingsSection.allCases) { section in
-                        SettingsDisclosureCard(section: section, expandedSection: $expandedSection) {
-                            sectionContent(section, prefs: prefs)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: LuminaSpace.sm) {
+                        ForEach(SettingsSection.allCases) { section in
+                            SettingsDisclosureCard(section: section, expandedSection: $expandedSection) {
+                                sectionContent(section, prefs: prefs)
+                            }
+                            .id(section)
+                        }
+                    }
+                    .padding(.horizontal, LuminaSpace.xxl)
+                    .padding(.vertical, LuminaSpace.xl)
+                    .background(
+                        GeometryReader { geo in
+                            Color.clear.preference(
+                                key: SettingsScrollContentHeightKey.self,
+                                value: geo.size.height
+                            )
+                        }
+                    )
+                }
+                .frame(height: fittedScrollHeight)
+                .frame(maxHeight: maxScrollHeight, alignment: .top)
+                .animation(Self.accordionAnimation, value: scrollContentHeight)
+                .onPreferenceChange(SettingsScrollContentHeightKey.self) { height in
+                    guard abs(height - scrollContentHeight) > 0.5 else { return }
+                    if scrollContentHeight == 0 {
+                        // First measure: snap, don't spring open from the estimate.
+                        var transaction = Transaction()
+                        transaction.disablesAnimations = true
+                        withTransaction(transaction) { scrollContentHeight = height }
+                    } else {
+                        scrollContentHeight = height
+                    }
+                }
+                .onChange(of: expandedSection) { _, section in
+                    guard let section else { return }
+                    // Wait one turn so the expanding card has laid out, then reveal it.
+                    DispatchQueue.main.async {
+                        LuminaMotion.animate(Self.accordionAnimation) {
+                            proxy.scrollTo(section, anchor: .top)
                         }
                     }
                 }
-                .padding(.horizontal, LuminaSpace.xxl)
-                .padding(.vertical, LuminaSpace.xl)
-                .animation(LuminaMotion.reveal, value: expandedSection)
             }
-            .frame(maxHeight: .infinity)
         }
-        .frame(minWidth: DisplayScale.points(520))
-        .scaledFrame(width: 520, height: 660)
+        .frame(width: DisplayScale.points(520))
+        .frame(maxHeight: maxSheetHeight)
+        .fixedSize(horizontal: false, vertical: true)
+        .presentationSizing(.fitted)
         .luminaWindowBackdrop()
         .clipShape(RoundedRectangle(cornerRadius: LuminaRadius.floating, style: .continuous))
         .overlay(
@@ -75,9 +137,16 @@ struct SettingsView: View {
         .onAppear(perform: prepareOnAppear)
         .onChange(of: router.pendingSection) { _, section in
             guard let section else { return }
-            LuminaMotion.animate(LuminaMotion.reveal) { expandedSection = section }
+            LuminaMotion.animate(Self.accordionAnimation) { expandedSection = section }
             router.pendingSection = nil
         }
+    }
+
+    /// Spring used for accordion open/close (and matching scroll). Respects Reduce Motion.
+    fileprivate static var accordionAnimation: Animation? {
+        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+            ? nil
+            : .spring(response: 0.32, dampingFraction: 0.86)
     }
 
     // MARK: - Section content
@@ -423,7 +492,7 @@ struct SettingsView: View {
     @ViewBuilder private func musicContent(prefs: PreferencesStore) -> some View {
         @Bindable var prefs = prefs
 
-        SettingsPickerRow(title: "Size", placesControlBelow: false) {
+        SettingsPickerRow(title: "Widget size", placesControlBelow: true) {
             LuminaSegmentedPicker(
                 selection: $prefs.widget.size,
                 options: [
@@ -432,12 +501,12 @@ struct SettingsView: View {
                     LuminaSegmentedOption(.expanded, title: "Large"),
                 ]
             )
-            .frame(maxWidth: DisplayScale.points(320))
+            .frame(maxWidth: .infinity)
         }
 
         LuminaDivider()
 
-        SettingsPickerRow(title: "Position", placesControlBelow: false) {
+        SettingsPickerRow(title: "Position", placesControlBelow: true) {
             HStack(spacing: LuminaSpace.sm) {
                 LuminaCornerPicker(corner: $prefs.widget.placement.corner)
                 Picker("Display", selection: Binding(
@@ -454,6 +523,7 @@ struct SettingsView: View {
                 .pickerStyle(.menu)
                 .labelsHidden()
                 .controlSize(uiScale.controlSize())
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
 
@@ -534,9 +604,11 @@ struct SettingsView: View {
         let isQuit = action == .quit
 
         VStack(alignment: .leading, spacing: LuminaSpace.hair) {
-            HStack(spacing: LuminaSpace.sm) {
+            HStack(alignment: .center, spacing: LuminaSpace.sm) {
                 Text(action.settingsLabel)
                     .font(uiScale.font(.body))
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 LuminaShortcutRecorder(
@@ -905,6 +977,15 @@ private struct SettingsButtonRow: View {
     }
 }
 
+// MARK: - Scroll content sizing
+
+private struct SettingsScrollContentHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
 // MARK: - Disclosure Card
 
 private struct SettingsDisclosureCard<Content: View>: View {
@@ -917,10 +998,24 @@ private struct SettingsDisclosureCard<Content: View>: View {
 
     private var isExpanded: Bool { expandedSection == section }
 
+    private var cardShape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: LuminaRadius.card, style: .continuous)
+    }
+
+    private var contentTransition: AnyTransition {
+        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            return .opacity
+        }
+        return .opacity
+            .combined(with: .move(edge: .top))
+            .combined(with: .scale(scale: 0.98, anchor: .top))
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Button {
-                LuminaMotion.animate(LuminaMotion.reveal) {
+                // Single transaction: opening this card closes any other in the same spring.
+                LuminaMotion.animate(SettingsView.accordionAnimation) {
                     expandedSection = isExpanded ? nil : section
                 }
             } label: {
@@ -932,6 +1027,7 @@ private struct SettingsDisclosureCard<Content: View>: View {
                     Text(section.title)
                         .font(uiScale.font(.bodyStrong))
                         .foregroundStyle(.primary)
+                        .lineLimit(1)
                     Spacer(minLength: 0)
                     Image(systemName: "chevron.down")
                         .font(.system(size: uiScale.iconSize(.inline), weight: .semibold))
@@ -955,19 +1051,13 @@ private struct SettingsDisclosureCard<Content: View>: View {
                 .padding(.horizontal, LuminaSpace.lg)
                 .padding(.top, LuminaSpace.md)
                 .padding(.bottom, LuminaSpace.md)
-                .transition(NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-                            ? .opacity
-                            : .opacity.combined(with: .move(edge: .top)))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .transition(contentTransition)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            Color.luminaCard,
-            in: RoundedRectangle(cornerRadius: LuminaRadius.card, style: .continuous)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: LuminaRadius.card, style: .continuous)
-                .strokeBorder(Color.luminaBorder, lineWidth: 1)
-        )
+        .background(Color.luminaCard)
+        .clipShape(cardShape)
+        .overlay(cardShape.strokeBorder(Color.luminaBorder, lineWidth: 1))
     }
 }

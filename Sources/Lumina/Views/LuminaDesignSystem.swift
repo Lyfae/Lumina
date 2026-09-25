@@ -182,6 +182,7 @@ private struct LuminaPressableBody: View {
 
     var body: some View {
         configuration.label
+            .opacity(labelOpacity)
             .background {
                 if wantsHoverPlate && isHovered && isEnabled {
                     RoundedRectangle(cornerRadius: LuminaRadius.control, style: .continuous)
@@ -189,17 +190,22 @@ private struct LuminaPressableBody: View {
                 }
             }
             .overlay {
-                if isFocused {
+                if isFocused && isEnabled {
                     RoundedRectangle(cornerRadius: LuminaRadius.control + 3, style: .continuous)
                         .strokeBorder(theme.current.color.opacity(0.9), lineWidth: 2)
                         .padding(-3)
                 }
             }
             .scaleEffect(configuration.isPressed && isEnabled ? LuminaButtonPress.scale : 1)
-            .opacity(configuration.isPressed && isEnabled ? 0.7 : 1)
             .animation(LuminaButtonPress.animation, value: configuration.isPressed)
             .onHover { isHovered = $0 }
             .focusEffectDisabled()
+    }
+
+    private var labelOpacity: Double {
+        if !isEnabled { return 0.4 }
+        if configuration.isPressed { return 0.7 }
+        return 1
     }
 }
 
@@ -349,6 +355,7 @@ struct LuminaCloseButton: View {
     var action: () -> Void
 
     @StateObject private var uiScale = UIScaleManager.shared
+    @Environment(\.isEnabled) private var isEnabled
     @State private var isHovered = false
 
     var body: some View {
@@ -358,10 +365,11 @@ struct LuminaCloseButton: View {
                 .foregroundStyle(.secondary)
                 .frame(width: DisplayScale.points(24), height: DisplayScale.points(24))
                 .background(
-                    Circle().fill(isHovered ? Color.luminaFillHover : Color.luminaFill)
+                    Circle().fill(isHovered && isEnabled ? Color.luminaFillHover : Color.luminaFill)
                 )
                 .frame(width: uiScale.touchTarget(), height: uiScale.touchTarget())
                 .contentShape(Rectangle())
+                .opacity(isEnabled ? 1 : 0.4)
         }
         .buttonStyle(LuminaPressableButtonStyle())
         .keyboardShortcut(.cancelAction)
@@ -382,7 +390,6 @@ struct LuminaSheetHeader<Trailing: View>: View {
 
     @StateObject private var theme = ThemeManager.shared
     @StateObject private var uiScale = UIScaleManager.shared
-    @ObservedObject private var look = LuminaLook.shared
     @Environment(\.colorScheme) private var colorScheme
 
     init(
@@ -446,16 +453,8 @@ struct LuminaSheetHeader<Trailing: View>: View {
             LuminaDivider()
         }
         .background {
-            let reduce = NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency
-            let solid = reduce || look.material == .solid
-            Group {
-                if solid {
-                    Color.luminaCard
-                } else {
-                    Rectangle().fill(.bar)
-                }
-            }
-            .clipShape(headerShape)
+            LuminaToolbarMaterialFill()
+                .clipShape(headerShape)
         }
     }
 }
@@ -1134,16 +1133,8 @@ private struct LuminaSecondaryButtonBody: View {
             return Color.luminaFill
         }
         if pressed { return Color.luminaFillPressed }
-        if isHovered {
-            // rest fill +0.04
-            return colorScheme == .light
-                ? Color.primary.opacity(0.10)
-                : Color.primary.opacity(0.16)
-        }
-        // rest: keep today's 0.12 dark / 0.06 light
-        return colorScheme == .light
-            ? Color.primary.opacity(0.06)
-            : Color.primary.opacity(0.12)
+        if isHovered { return Color.luminaFillHover }
+        return Color.luminaFill
     }
 
     private func border(pressed: Bool) -> Color {

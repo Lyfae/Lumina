@@ -62,6 +62,7 @@ struct WallpaperManagerView: View {
     /// Library tile staged for Studio preview (discarded on display switch / Studio close).
     @State private var stagedPick: StagedWallpaperPick? = nil
     @FocusState private var isSearchFocused: Bool
+    @FocusState private var focusedLibraryID: String?
     @State private var libraryRailHovered = false
 
     // MARK: - Computed
@@ -408,8 +409,10 @@ struct WallpaperManagerView: View {
                             let isStaged = stagedPick?.libraryID == recent.id
                             WallpaperGridItem(
                                 recent: recent,
-                                isSelected: isCurrent || isStaged,
+                                isStaged: isStaged,
+                                isCurrent: isCurrent,
                                 isFavorite: favoritesManager.isFavorite(recent.id),
+                                focusedItemID: $focusedLibraryID,
                                 onStage: { stageRecentForSelected(recent: recent) },
                                 onApplyNow: { applyRecentToSelected(recent: recent) },
                                 onFavorite: { favoritesManager.toggle(recent.id) },
@@ -473,9 +476,27 @@ struct WallpaperManagerView: View {
         )
     }
 
+    private var libraryGridColumnCount: Int {
+        let minTile = DisplayScale.points(120)
+        let spacing = LuminaSpace.md
+        let width = LuminaLayout.libraryColumnWidth - 2 * LuminaLayout.contentPadding
+        return max(1, Int((width + spacing) / (minTile + spacing)))
+    }
+
     private func moveLibraryFocus(from index: Int, direction: MoveCommandDirection) {
-        // Focus movement is handled per-item via onMoveCommand; apply stays on Space/Return.
-        _ = (index, direction)
+        let count = filteredMedia.count
+        guard count > 0, index >= 0, index < count else { return }
+        let columns = libraryGridColumnCount
+        let delta: Int
+        switch direction {
+        case .left:  delta = -1
+        case .right: delta = 1
+        case .up:    delta = -columns
+        case .down:  delta = columns
+        @unknown default: return
+        }
+        let next = min(max(0, index + delta), count - 1)
+        focusedLibraryID = filteredMedia[next].id
     }
 
     // MARK: - Configuration Column (right)
@@ -704,7 +725,7 @@ struct WallpaperManagerView: View {
         if selectedFilter != .all {
             return "Nothing in this filter yet."
         }
-        return "Add a video, GIF, or image, then click one to set it on the selected display."
+        return "Add a video, GIF, or image. Click to preview, double-click to set it."
     }
 
 }
@@ -1177,8 +1198,10 @@ private struct CompactLibraryFilterChip: View {
 
 struct WallpaperGridItem: View {
     let recent: WallpaperManagerStore.RecentMedia
-    let isSelected: Bool
+    let isStaged: Bool
+    let isCurrent: Bool
     let isFavorite: Bool
+    var focusedItemID: FocusState<String?>.Binding
     let onStage: () -> Void
     let onApplyNow: () -> Void
     let onFavorite: () -> Void
@@ -1188,9 +1211,12 @@ struct WallpaperGridItem: View {
     @State private var thumbnail: NSImage?
     @State private var isLoading = true
     @State private var isHovered = false
-    @FocusState private var isFocused: Bool
     @StateObject private var uiScale = UIScaleManager.shared
     @StateObject private var theme = ThemeManager.shared
+
+    private var isFocused: Bool {
+        focusedItemID.wrappedValue == recent.id
+    }
 
     private var typeLabel: String {
         switch recent.mediaType {
@@ -1248,13 +1274,15 @@ struct WallpaperGridItem: View {
                     }
                 }
                 .overlay(alignment: .topTrailing) {
-                    if isSelected {
-                        Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: DisplayScale.points(16)))
+                    if isCurrent {
+                        Image(systemName: "display")
+                            .font(.system(size: DisplayScale.points(11), weight: .semibold))
                             .foregroundStyle(accent)
-                            .background(Circle().fill(Color.luminaCard).padding(2))
+                            .padding(LuminaSpace.xs)
+                            .background(Circle().fill(Color.luminaCard))
                             .padding(LuminaSpace.tight)
-                    } else if isFavorite && !isHovered {
+                            .accessibilityLabel("On desktop")
+                    } else if isFavorite && !isHovered && !isFocused {
                         Image(systemName: "star.fill")
                             .font(.system(size: uiScale.iconSize(.inline)))
                             .foregroundStyle(LuminaStatusColor.star)
@@ -1264,10 +1292,10 @@ struct WallpaperGridItem: View {
                 .overlay {
                     shape
                         .strokeBorder(
-                            isSelected || isHovered || isFocused
+                            isStaged || isHovered || isFocused
                                 ? accent
                                 : Color.luminaBorder.opacity(0.5),
-                            lineWidth: isSelected ? 2 : 1
+                            lineWidth: isStaged ? 2 : 1
                         )
                 }
 
@@ -1279,21 +1307,30 @@ struct WallpaperGridItem: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .focusable()
-        .focused($isFocused)
+        .focused(focusedItemID, equals: recent.id)
         .focusEffectDisabled()
         .onHover { isHovered = $0 }
         .onTapGesture(count: 2) { onApplyNow() }
         .onTapGesture(count: 1) { onStage() }
         .onKeyPress(.space) { onStage(); return .handled }
         .onKeyPress(.return) { onApplyNow(); return .handled }
+        .onKeyPress(characters: CharacterSet(charactersIn: "sS"), phases: .down) { _ in
+            onFavorite()
+            return .handled
+        }
         .onMoveCommand { direction in
             onMoveFocus?(direction)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(displayTitle)
-        .accessibilityValue(isFavorite ? "\(typeLabel), starred" : typeLabel)
-        .accessibilityHint("Stages it on the selected display. Double-click or press Return to set it now.")
-        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+        .accessibilityValue({
+            var parts = [typeLabel]
+            if isCurrent { parts.append("on desktop") }
+            if isFavorite { parts.append("starred") }
+            return parts.joined(separator: ", ")
+        }())
+        .accessibilityHint("Stages it on the selected display. Double-click or press Return to set it now. Press S to star.")
+        .accessibilityAddTraits(isStaged ? [.isButton, .isSelected] : .isButton)
         .accessibilityAction(named: Text("Set as wallpaper now")) { onApplyNow() }
         .accessibilityAction(named: Text(isFavorite ? "Unstar" : "Star")) { onFavorite() }
         .accessibilityAction(named: Text("Remove from Library")) { onRemove?() }

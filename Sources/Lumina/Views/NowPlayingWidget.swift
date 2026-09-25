@@ -16,6 +16,7 @@ final class NowPlayingWidgetController: NSObject, ObservableObject, NSWindowDele
     private var wasPlaying = false
     private var playingObservation: NSKeyValueObservation?
     private var prefsObservationTask: Task<Void, Never>?
+    private var playbackPollTask: Task<Void, Never>?
 
     private override init() {
         super.init()
@@ -251,11 +252,13 @@ final class NowPlayingWidgetController: NSObject, ObservableObject, NSWindowDele
             }
         }
         // Also poll playing state since AmbientAudioManager may not post the custom notification.
-        Task { @MainActor [weak self] in
-            while !Task.isCancelled {
-                self?.handlePlaybackTransition()
-                self?.updateVisualizer()
-                try? await Task.sleep(nanoseconds: 400_000_000)
+        if playbackPollTask == nil {
+            playbackPollTask = Task { @MainActor [weak self] in
+                while !Task.isCancelled {
+                    self?.handlePlaybackTransition()
+                    self?.updateVisualizer()
+                    try? await Task.sleep(nanoseconds: 400_000_000)
+                }
             }
         }
     }
@@ -486,13 +489,19 @@ struct NowPlayingWidgetView: View {
             return .handled
         }
         .onKeyPress(.leftArrow) {
-            guard hasTrack, audio.duration > 0 else { return .ignored }
-            audio.seekToTime(max(0, audio.currentTime - 5))
+            guard hasTrack else { return .ignored }
+            let duration = audio.duration.isFinite ? max(0, audio.duration) : 0
+            guard duration > 0 else { return .ignored }
+            let step = NSEvent.modifierFlags.contains(.shift) ? 30.0 : 5.0
+            audio.seekToTime(max(0, audio.currentTime - step))
             return .handled
         }
         .onKeyPress(.rightArrow) {
-            guard hasTrack, audio.duration > 0 else { return .ignored }
-            audio.seekToTime(min(audio.duration, audio.currentTime + 5))
+            guard hasTrack else { return .ignored }
+            let duration = audio.duration.isFinite ? max(0, audio.duration) : 0
+            guard duration > 0 else { return .ignored }
+            let step = NSEvent.modifierFlags.contains(.shift) ? 30.0 : 5.0
+            audio.seekToTime(min(duration, audio.currentTime + step))
             return .handled
         }
     }
@@ -545,12 +554,14 @@ struct NowPlayingWidgetView: View {
                     .foregroundStyle(.primary)
                     .lineLimit(1)
                     .truncationMode(.middle)
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
                 Text(subtitleLine)
                     .font(uiScale.font(.caption))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.tail)
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
                 if !hasTrack {
                     addMusicButton
@@ -558,6 +569,7 @@ struct NowPlayingWidgetView: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            .layoutPriority(1)
             .allowsHitTesting(!hasTrack)
 
             if hasTrack {
@@ -654,14 +666,19 @@ struct NowPlayingWidgetView: View {
     private func waveformRow(_ m: WidgetMetrics) -> some View {
         let seed = audio.trackURL?.absoluteString.hashValue ?? 0
         let showsWave = prefs?.widget.showsWaveform ?? true
+        let duration = audio.duration.isFinite ? max(0, audio.duration) : 0
+        let timeWidth: CGFloat = duration >= 3600
+            ? DisplayScale.points(48)
+            : DisplayScale.points(32)
         return HStack(spacing: LuminaSpace.sm) {
             Text(formatTime(scrubPreview ?? audio.currentTime))
                 .font(uiScale.font(.micro).monospacedDigit())
                 .foregroundStyle(scrubPreview == nil ? Color.secondary : accent)
+                .frame(width: timeWidth, alignment: .trailing)
 
             LuminaWaveformScrubber(
                 currentTime: audio.currentTime,
-                duration: max(audio.duration, 0),
+                duration: duration,
                 isPlaying: audio.isPlaying,
                 style: .widget,
                 source: showsWave ? .live : .staticSeed(seed),
@@ -670,9 +687,10 @@ struct NowPlayingWidgetView: View {
             )
             .frame(height: m.waveBand)
 
-            Text(formatTime(audio.duration))
+            Text(formatTime(duration))
                 .font(uiScale.font(.micro).monospacedDigit())
                 .foregroundStyle(.secondary)
+                .frame(width: timeWidth, alignment: .leading)
         }
     }
 
@@ -791,8 +809,14 @@ struct NowPlayingWidgetView: View {
 
     private func formatTime(_ seconds: Double) -> String {
         guard seconds.isFinite else { return "0:00" }
-        let s = Int(max(0, seconds).rounded())
-        return String(format: "%d:%02d", s / 60, s % 60)
+        let total = Int(max(0, seconds).rounded())
+        let h = total / 3600
+        let m = (total % 3600) / 60
+        let s = total % 60
+        if h > 0 {
+            return String(format: "%d:%02d:%02d", h, m, s)
+        }
+        return String(format: "%d:%02d", m, s)
     }
 
     private func iconButton(

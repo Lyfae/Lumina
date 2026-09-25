@@ -24,15 +24,15 @@ struct AboutStatusView: View {
             brandHeader
 
             ScrollView {
-                VStack(alignment: .leading, spacing: DisplayScale.points(20)) {
-                    VStack(alignment: .leading, spacing: DisplayScale.points(6)) {
+                VStack(alignment: .leading, spacing: LuminaSpace.xl) {
+                    VStack(alignment: .leading, spacing: LuminaSpace.tight) {
                         Text("Lumina Studio")
-                            .font(.system(size: DisplayScale.points(22), weight: .bold))
-                        Text("Version \(appVersion) (build \(buildNumber))")
-                            .font(.system(size: DisplayScale.points(14), weight: .medium))
+                            .font(uiScale.font(.title).weight(.bold))
+                        Text("Version \(appVersion) (\(buildNumber))")
+                            .font(uiScale.font(.callout).weight(.medium))
                             .foregroundStyle(themeManager.current.color)
                         Text("Native live wallpaper engine for macOS — free, fast, and battery-friendly.")
-                            .font(.system(size: DisplayScale.points(12)))
+                            .font(uiScale.font(.caption))
                             .foregroundStyle(.secondary)
                     }
 
@@ -43,42 +43,45 @@ struct AboutStatusView: View {
 
                     sectionHeader("Changelog")
                     ForEach(LuminaChangelog.releases) { release in
-                        VStack(alignment: .leading, spacing: DisplayScale.points(8)) {
+                        VStack(alignment: .leading, spacing: LuminaSpace.sm) {
                             Text("Version \(release.version)")
-                                .font(.system(size: DisplayScale.points(14), weight: .semibold))
+                                .font(uiScale.font(.callout).weight(.semibold))
                                 .foregroundStyle(release.version == appVersion ? themeManager.current.color : .primary)
                             entryList(release.entries)
                         }
                     }
                 }
-                .padding(.horizontal, DisplayScale.points(24))
-                .padding(.vertical, DisplayScale.points(18))
+                .padding(.horizontal, LuminaSpace.xxl)
+                .padding(.vertical, LuminaSpace.lg)
             }
             .frame(maxHeight: .infinity)
 
             LuminaDivider()
 
-            HStack(spacing: DisplayScale.points(10)) {
+            HStack(spacing: LuminaSpace.md) {
                 Button("Print Debug") { onPrintDebug() }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(LuminaSecondaryButtonStyle())
+                    .controlSize(uiScale.controlSize())
                 Button("Testing Guide") { onOpenTestingGuide() }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(LuminaSecondaryButtonStyle())
+                    .controlSize(uiScale.controlSize())
                 Button("Releases") {
                     if let url = URL(string: "https://github.com/Lyfae/Lumina/releases") {
                         NSWorkspace.shared.open(url)
                     }
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(LuminaSecondaryButtonStyle())
+                .controlSize(uiScale.controlSize())
 
                 Spacer()
 
                 Button("Close") { onClose() }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(LuminaProminentButtonStyle())
                     .controlSize(.large)
                     .keyboardShortcut(.defaultAction)
             }
-            .padding(.horizontal, DisplayScale.points(24))
-            .padding(.vertical, DisplayScale.points(14))
+            .padding(.horizontal, LuminaSpace.xxl)
+            .padding(.vertical, LuminaSpace.barPaddingV)
             .background(.bar)
         }
         .scaledFrame(width: 540, height: 620)
@@ -114,21 +117,27 @@ struct AboutStatusView: View {
     // MARK: - Status
 
     private var statusCard: some View {
-        VStack(alignment: .leading, spacing: DisplayScale.points(10)) {
+        VStack(alignment: .leading, spacing: LuminaSpace.md) {
             sectionHeader("Status")
             Text(statusSummary)
-                .font(.system(size: DisplayScale.points(11), design: .monospaced))
+                .font(uiScale.font(.caption).monospaced())
                 .foregroundStyle(.secondary)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(DisplayScale.points(12))
-                .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: DisplayScale.points(8), style: .continuous))
+                .padding(LuminaSpace.md)
+                .background(
+                    Color.primary.opacity(0.04),
+                    in: RoundedRectangle(cornerRadius: LuminaRadius.control, style: .continuous)
+                )
         }
-        .padding(DisplayScale.points(14))
+        .padding(LuminaSpace.cardPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.luminaCard, in: RoundedRectangle(cornerRadius: DisplayScale.points(10), style: .continuous))
+        .background(
+            Color.luminaCard,
+            in: RoundedRectangle(cornerRadius: LuminaRadius.panel, style: .continuous)
+        )
         .overlay(
-            RoundedRectangle(cornerRadius: DisplayScale.points(10), style: .continuous)
+            RoundedRectangle(cornerRadius: LuminaRadius.panel, style: .continuous)
                 .strokeBorder(Color.luminaBorder, lineWidth: 1)
         )
     }
@@ -137,24 +146,24 @@ struct AboutStatusView: View {
 
     private func sectionHeader(_ title: String) -> some View {
         Text(title)
-            .font(.system(size: DisplayScale.points(15), weight: .bold))
-            .padding(.top, DisplayScale.points(4))
+            .font(uiScale.font(.headline))
+            .padding(.top, LuminaSpace.xs)
     }
 
     @ViewBuilder
     private func entryList(_ entries: [ChangelogEntry]) -> some View {
-        VStack(alignment: .leading, spacing: DisplayScale.points(14)) {
+        VStack(alignment: .leading, spacing: LuminaSpace.lg) {
             ForEach(entries) { entry in
-                HStack(alignment: .top, spacing: DisplayScale.points(12)) {
+                HStack(alignment: .top, spacing: LuminaSpace.md) {
                     Image(systemName: entry.icon)
                         .font(.system(size: uiScale.iconSize(.card), weight: .semibold))
                         .foregroundStyle(themeManager.current.color)
                         .frame(width: DisplayScale.points(26), alignment: .center)
-                    VStack(alignment: .leading, spacing: DisplayScale.points(3)) {
+                    VStack(alignment: .leading, spacing: LuminaSpace.hair) {
                         Text(entry.title)
-                            .font(.system(size: DisplayScale.points(13), weight: .semibold))
+                            .font(uiScale.font(.callout).weight(.semibold))
                         Text(entry.description)
-                            .font(.system(size: DisplayScale.points(12)))
+                            .font(uiScale.font(.caption))
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }

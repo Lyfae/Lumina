@@ -78,7 +78,7 @@ extension MonitorAssignmentWire {
 
     /// Whether this assignment has any media assigned (single file or slideshow).
     public var hasMedia: Bool {
-        return (filePath != nil && bookmarkData != nil) || !slideshowItems.isEmpty
+        return filePath != nil || !slideshowItems.isEmpty
     }
 
     /// Creates a clean copy with sensitive data cleared (useful for logging).
