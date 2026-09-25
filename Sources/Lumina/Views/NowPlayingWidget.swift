@@ -242,8 +242,8 @@ final class NowPlayingWidgetController: NSObject, ObservableObject, NSWindowDele
                     _ = prefs.widget.size
                     _ = prefs.widget.showsWaveform
                     _ = prefs.widget.placement
-                } onChange: {
-                    Task { @MainActor [weak self] in
+                } onChange: { [weak self] in
+                    Task { @MainActor in
                         self?.handlePrefsChange()
                     }
                 }

@@ -117,8 +117,8 @@ struct MonitorDetailPanel: View {
 
     private func aspectLockLabel() -> String {
         let components = monitor.resolution.lowercased().split(separator: "x")
-        let w = Int(components.first.flatMap { Double($0) } ?? 16) ?? 16
-        let h = Int(components.dropFirst().first.flatMap { Double($0) } ?? 10) ?? 10
+        let w = Int(components.first.flatMap { Double($0) } ?? 16)
+        let h = Int(components.dropFirst().first.flatMap { Double($0) } ?? 10)
         func gcd(_ a: Int, _ b: Int) -> Int { b == 0 ? abs(a) : gcd(b, a % b) }
         let g = max(1, gcd(w, h))
         let rw = max(1, w / g)

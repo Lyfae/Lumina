@@ -136,7 +136,7 @@ final class VideoSource: MediaSource {
         generator.requestedTimeToleranceBefore = .zero
         generator.requestedTimeToleranceAfter = .zero
         let time = player.currentTime()
-        return try? generator.copyCGImage(at: time, actualTime: nil)
+        return copyVideoFrame(with: generator, at: time)
     }
 
     func setExperimentalRenderCap(_ enabled: Bool) {
@@ -303,7 +303,7 @@ final class StillImageSource: MediaSource {
             let duration = (try? await asset.load(.duration)) ?? .zero
             let seconds = max(0, min(1, normalizedTime)) * (duration.seconds.isFinite ? duration.seconds : 0)
             let time = CMTime(seconds: seconds, preferredTimescale: 600)
-            return try? generator.copyCGImage(at: time, actualTime: nil)
+            return copyVideoFrame(with: generator, at: time)
         }.value
         await MainActor.run {
             guard url.path == self.currentPath else { return }
@@ -604,4 +604,17 @@ extension AnimatedImageSource {
         renderer.setOpacity(look.opacity)
         renderer.setColorCorrection(saturation: look.saturation, hue: look.hue, grayscale: look.grayscale)
     }
+}
+
+/// One frame from a video, off the deprecated synchronous generator API.
+private func copyVideoFrame(with generator: AVAssetImageGenerator, at time: CMTime) -> CGImage? {
+    final class Box: @unchecked Sendable { var image: CGImage? }
+    let box = Box()
+    let done = DispatchSemaphore(value: 0)
+    generator.generateCGImageAsynchronously(for: time) { image, _, _ in
+        box.image = image
+        done.signal()
+    }
+    done.wait()
+    return box.image
 }

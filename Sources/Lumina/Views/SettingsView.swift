@@ -650,14 +650,14 @@ struct SettingsView: View {
     private var materialBinding: Binding<StudioLookPreferences.Material> {
         Binding(
             get: { look.material },
-            set: { LuminaMotion.animate(LuminaMotion.state) { look.set(material: $0) } }
+            set: { value in LuminaMotion.animate(LuminaMotion.state) { look.set(material: value) } }
         )
     }
 
     private var densityBinding: Binding<StudioLookPreferences.Density> {
         Binding(
             get: { look.density },
-            set: { LuminaMotion.animate(LuminaMotion.state) { look.set(density: $0) } }
+            set: { value in LuminaMotion.animate(LuminaMotion.state) { look.set(density: value) } }
         )
     }
 

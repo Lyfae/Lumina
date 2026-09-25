@@ -395,16 +395,11 @@ struct WallpaperPreview: View {
         let mediaType = assign.mediaType
         let previewTimeCopy = previewTime
 
-        // Use Task (not detached) so the closure is main-actor-isolated: avoids the
-        // #SendingClosureRisksDataRace entirely. Inside the task we use nonisolated(unsafe)
-        // copy of the captured mediaType before the cross-actor call. This is safe for the
-        // immutable enum and breaks the isolation-region tracking for the send.
         let expectedPath = assign.filePath
         Task { [url, mediaType, previewTimeCopy] in
-            nonisolated(unsafe) let sendableMediaType = mediaType
             let loadedImage = await ThumbnailService.shared.thumbnail(
                 for: url,
-                mediaType: sendableMediaType,
+                mediaType: mediaType,
                 maxSize: CGSize(width: 640, height: 360),
                 previewTime: previewTimeCopy
             )

@@ -1260,8 +1260,7 @@ struct WallpaperGridItem: View {
 
     private func loadThumbnail() async {
         isLoading = true
-        nonisolated(unsafe) let mt = recent.mediaType
-        let img = await ThumbnailService.shared.smallThumbnail(for: recent.url, mediaType: mt)
+        let img = await ThumbnailService.shared.smallThumbnail(for: recent.url, mediaType: recent.mediaType)
         await MainActor.run {
             thumbnail = img
             isLoading = false

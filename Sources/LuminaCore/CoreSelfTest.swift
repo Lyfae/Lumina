@@ -369,7 +369,7 @@ public enum CoreSelfTest {
 
         // chooseVariant
         do {
-            var facts = MediaFacts(
+            let facts = MediaFacts(
                 availability: .available,
                 pixels: PixelSize(width: 3840, height: 2160),
                 nominalFPS: 60,
@@ -389,7 +389,6 @@ public enum CoreSelfTest {
             }())
             check("chooseVariant enforcement variant", budget.enforcement == .variant)
             check("chooseVariant no request", req == nil)
-            _ = facts
         }
         do {
             let facts = MediaFacts(

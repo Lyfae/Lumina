@@ -271,10 +271,8 @@ struct CropRectangle: View {
                 if w > 0, h > 0 { return w / h }
             }
         }
-        let mediaType = assignment.mediaType
-        nonisolated(unsafe) let sendableMediaType = mediaType
         let thumb = await ThumbnailService.shared.thumbnail(
-            for: url, mediaType: sendableMediaType, maxSize: CGSize(width: 64, height: 64)
+            for: url, mediaType: assignment.mediaType, maxSize: CGSize(width: 64, height: 64)
         )
         if let thumb, thumb.size.height > 0 {
             return thumb.size.width / thumb.size.height

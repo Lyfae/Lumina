@@ -14,7 +14,7 @@ final class FramePump {
 
     init(item: AVPlayerItem, maxFPS: Int) {
         preferredFPS = Float(max(1, maxFPS))
-        let attrs: [String: Any] = [
+        let attrs: [String: any Sendable] = [
             kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32BGRA)
         ]
         output = AVPlayerItemVideoOutput(pixelBufferAttributes: attrs)
