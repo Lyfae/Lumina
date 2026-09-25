@@ -5,7 +5,7 @@ import SwiftUI
 
 @main
 @MainActor
-final class LuminaApp: NSObject, NSApplicationDelegate {
+final class LuminaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     var preferencesStore: PreferencesStore!
     var playbackEngine: PlaybackEngine!
@@ -13,7 +13,8 @@ final class LuminaApp: NSObject, NSApplicationDelegate {
     var hotKeyCenter: HotKeyCenter?
     private var currentVideoURL: URL?
     private var currentVideoURLMonitorID: String?
-    private var currentWallpaperMenuItem: NSMenuItem!
+    private var statusMenuItem: NSMenuItem!
+    private var pauseAllMenuItem: NSMenuItem!
     private var statusItem: NSStatusItem!
     private var wallpaperManagerWindow: WallpaperManagerWindowController?
 
@@ -148,7 +149,6 @@ final class LuminaApp: NSObject, NSApplicationDelegate {
     func clearMonitor(monitorID: String) {
         preferencesStore?.removeWallpaperAssignment(for: monitorID)
         if monitorID == currentVideoURLMonitorID { currentVideoURL = nil }
-        updateCurrentWallpaperDisplay()
         updateStatusItemFromEngine()
         LuminaLog.app.info("Cleared wallpaper for \(monitorID)")
     }
@@ -166,7 +166,6 @@ final class LuminaApp: NSObject, NSApplicationDelegate {
 
         currentVideoURL = url
         currentVideoURLMonitorID = monitorID
-        updateCurrentWallpaperDisplay()
         updateStatusItemFromEngine()
         LuminaLog.wallpaper.info("Assigned \(ref.kind) to \(monitorID): \(url.lastPathComponent)")
     }
@@ -444,7 +443,7 @@ final class LuminaApp: NSObject, NSApplicationDelegate {
     }
 
 
-    // MARK: - Status Item & Menu (enhanced for B: UX + C: debug)
+    // MARK: - Status Item & Menu
 
     private func makeStatusBarIcon() -> NSImage {
         LuminaMenuIcon.make(
@@ -464,12 +463,19 @@ final class LuminaApp: NSObject, NSApplicationDelegate {
             button.image = makeStatusBarIcon()
             button.title = ""
         }
-        
+
         updateStatusItemFromEngine()
 
-        // Minimal menu bar: Studio, music widget, or quit. Everything else (power toggles,
-        // performance profile, about/welcome/what's new) lives in Settings inside Studio.
+        // Status, Studio, Music Widget, Pause/Resume All, Settings, Quit.
         let menu = NSMenu()
+        menu.delegate = self
+
+        let status = NSMenuItem(title: "No wallpapers set", action: nil, keyEquivalent: "")
+        status.isEnabled = false
+        statusMenuItem = status
+        menu.addItem(status)
+
+        menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Lumina Studio", action: #selector(openWallpaperManager), keyEquivalent: "m"))
 
         let musicItem = NSMenuItem(
@@ -480,46 +486,61 @@ final class LuminaApp: NSObject, NSApplicationDelegate {
         musicItem.keyEquivalentModifierMask = [.command, .shift]
         menu.addItem(musicItem)
 
+        let pauseItem = NSMenuItem(
+            title: "Pause All",
+            action: #selector(togglePause),
+            keyEquivalent: "p"
+        )
+        pauseItem.keyEquivalentModifierMask = [.command, .option]
+        pauseAllMenuItem = pauseItem
+        menu.addItem(pauseItem)
+
         menu.addItem(NSMenuItem.separator())
+        menu.addItem(NSMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ","))
         menu.addItem(NSMenuItem(title: "Quit Lumina", action: #selector(quit), keyEquivalent: "q"))
 
         statusItem.menu = menu
+        refreshStatusMenuItems()
+    }
+
+    func menuWillOpen(_ menu: NSMenu) {
+        refreshStatusMenuItems()
+    }
+
+    private func refreshStatusMenuItems() {
+        guard let engine = playbackEngine else {
+            statusMenuItem?.title = "No wallpapers set"
+            pauseAllMenuItem?.title = "Pause All"
+            pauseAllMenuItem?.isEnabled = false
+            return
+        }
+        let plan = engine.plan
+        let displays = engine.displays
+        statusMenuItem?.title = LuminaPlaybackHeadline.text(plan: plan, displays: displays)
+
+        let manual = LuminaPlaybackHeadline.isManuallyPaused(plan: plan)
+        pauseAllMenuItem?.title = manual ? "Resume All" : "Pause All"
+
+        let canToggle = displays.contains { display in
+            switch LuminaDisplayState.from(plan: plan, key: display.key) {
+            case .playing, .paused: return true
+            default: return false
+            }
+        }
+        pauseAllMenuItem?.isEnabled = canToggle
     }
 
     @objc private func toggleMusicWidget() {
         NowPlayingWidgetController.shared.toggle()
     }
 
-    /// Updates the disabled "current wallpaper" menu row and related UI.
-    private func updateCurrentWallpaperDisplay() {
-        guard let item = currentWallpaperMenuItem else { return }
-        if let url = currentVideoURL {
-            item.title = "Wallpaper: \(url.lastPathComponent)"
-        } else {
-            item.title = "No video loaded — use 'Load Video…' below"
-        }
+    @objc private func openSettings() {
+        openWallpaperManager()
+        SettingsRouter.shared.open(.appearance)
     }
 
     @objc private func togglePause() {
         playbackEngine?.togglePause()
-        updateStatusItemFromEngine()
-    }
-
-    @objc private func reloadLastVideo() {
-        LuminaLog.wallpaper.debug("Legacy global wallpaper restore removed; use per-display Restore at launch.")
-    }
-
-    @objc private func clearSavedWallpaper() {
-        LuminaLog.wallpaper.info("Legacy global wallpaper clear is a no-op; use Clear on each display.")
-        currentVideoURL = nil
-        updateCurrentWallpaperDisplay()
-        updateStatusItemFromEngine()
-    }
-
-    /// B: Stop playback immediately but leave the saved wallpaper in persistence (user can "Reload Last Video" later).
-    @objc private func clearCurrentWallpaper() {
-        currentVideoURL = nil
-        updateCurrentWallpaperDisplay()
         updateStatusItemFromEngine()
     }
 

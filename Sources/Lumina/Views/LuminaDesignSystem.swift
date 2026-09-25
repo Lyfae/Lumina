@@ -249,6 +249,7 @@ private struct LuminaToolbarButtonBody: View {
     let isEnabled: Bool
     @State private var isHovered = false
     @Environment(\.isFocused) private var isFocused
+    @Environment(\.luminaButtonFocusRing) private var showsFocusRing
     @StateObject private var theme = ThemeManager.shared
 
     var body: some View {
@@ -259,7 +260,7 @@ private struct LuminaToolbarButtonBody: View {
                     .fill(plateFill)
             )
             .overlay {
-                if isFocused && isEnabled {
+                if isFocused && isEnabled && showsFocusRing {
                     RoundedRectangle(cornerRadius: LuminaRadius.control + 3, style: .continuous)
                         .strokeBorder(theme.current.color.opacity(0.9), lineWidth: 2)
                         .padding(-3)
@@ -298,6 +299,7 @@ private struct LuminaIconButtonBody: View {
     let size: LuminaIconButtonStyle.Size
 
     @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.luminaButtonFocusRing) private var showsFocusRing
     @State private var isHovered = false
     @Environment(\.isFocused) private var isFocused
     @StateObject private var theme = ThemeManager.shared
@@ -320,7 +322,7 @@ private struct LuminaIconButtonBody: View {
             .contentShape(Rectangle())
             .opacity(isEnabled ? 1 : 0.4)
             .overlay {
-                if isFocused && isEnabled {
+                if isFocused && isEnabled && showsFocusRing {
                     RoundedRectangle(cornerRadius: LuminaRadius.control + 3, style: .continuous)
                         .strokeBorder(theme.current.color.opacity(0.9), lineWidth: 2)
                         .padding(-3)
@@ -1046,10 +1048,23 @@ struct LuminaSecondaryButtonStyle: ButtonStyle {
     }
 }
 
+private struct LuminaButtonFocusRingKey: EnvironmentKey {
+    static let defaultValue = true
+}
+
+extension EnvironmentValues {
+    /// Off inside views whose container holds focus, since `isFocused` reports the ancestor's focus.
+    var luminaButtonFocusRing: Bool {
+        get { self[LuminaButtonFocusRingKey.self] }
+        set { self[LuminaButtonFocusRingKey.self] = newValue }
+    }
+}
+
 private struct LuminaSecondaryButtonBody: View {
     let configuration: ButtonStyleConfiguration
     let destructive: Bool
     let prominent: Bool
+    @Environment(\.luminaButtonFocusRing) private var showsFocusRing
 
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.controlSize) private var controlSize
@@ -1089,7 +1104,7 @@ private struct LuminaSecondaryButtonBody: View {
                 }
             }
             .overlay {
-                if isFocused && isEnabled {
+                if isFocused && isEnabled && showsFocusRing {
                     RoundedRectangle(cornerRadius: LuminaRadius.control + 3, style: .continuous)
                         .strokeBorder(theme.current.color.opacity(0.9), lineWidth: 2)
                         .padding(-3)

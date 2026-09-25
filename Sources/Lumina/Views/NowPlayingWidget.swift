@@ -340,6 +340,7 @@ struct NowPlayingWidgetView: View {
     @State private var showQueue: Bool = false
     @State private var scrubPreview: Double? = nil
     @State private var isPanelKey: Bool = false
+    @FocusState private var isContainerFocused: Bool
 
     private var accent: Color { theme.current.color }
     private var hasTrack: Bool { audio.trackURL != nil }
@@ -373,49 +374,77 @@ struct NowPlayingWidgetView: View {
         return label + gaps + rows + LuminaSpace.sm
     }
 
-    private var cardHeight: CGFloat { metrics.baseHeight + queueHeight }
+    private var contentPad: CGFloat { LuminaSpace.md }
+
+    private var artCornerRadius: CGFloat {
+        let raw = LuminaRadius.widget - contentPad
+        return min(max(raw, LuminaRadius.badge), LuminaRadius.panel)
+    }
+
+    private var emptyCardHeight: CGFloat {
+        let m = metrics
+        let titleLine = DisplayScale.points(18)
+        let subtitleLine = DisplayScale.points(14)
+        let button = DisplayScale.points(28)
+        let textColumn = titleLine + LuminaSpace.hair + subtitleLine + LuminaSpace.xs + button
+        return contentPad * 2 + max(m.art, textColumn)
+    }
+
+    private var cardHeight: CGFloat {
+        if hasTrack {
+            return metrics.baseHeight + queueHeight
+        }
+        return emptyCardHeight
+    }
 
     private var chromeVisible: Bool {
         isHovering
             || isPanelKey
             || NSWorkspace.shared.isVoiceOverEnabled
             || NSApp.isFullKeyboardAccessEnabled
-            || !hasTrack
     }
 
     var body: some View {
         let cardShape = RoundedRectangle(cornerRadius: LuminaRadius.widget, style: .continuous)
         let m = metrics
 
-        VStack(spacing: 0) {
-            headerRow(m)
-                .padding(.horizontal, m.sidePad)
-                .padding(.top, LuminaSpace.md)
+        ZStack(alignment: .topTrailing) {
+            VStack(spacing: 0) {
+                headerRow(m)
 
-            Spacer(minLength: LuminaSpace.xs)
+                if hasTrack {
+                    Spacer(minLength: LuminaSpace.xs)
 
-            waveformRow(m)
-                .frame(height: m.waveBand)
-                .padding(.horizontal, m.sidePad)
+                    waveformRow(m)
+                        .frame(height: m.waveBand)
+                        .transition(.opacity)
 
-            if showQueue, !upcomingTracks.isEmpty {
-                upNextList
-                    .padding(.horizontal, m.sidePad)
-                    .padding(.top, LuminaSpace.tight)
-                    .transition(.opacity)
+                    if showQueue, !upcomingTracks.isEmpty {
+                        upNextList
+                            .padding(.top, LuminaSpace.tight)
+                            .transition(.opacity)
+                    }
+
+                    controlsRow(m)
+                        .frame(height: m.controlsBand)
+                        .opacity(chromeVisible ? 1 : 0)
+                        .allowsHitTesting(chromeVisible)
+                        .transition(.opacity)
+                }
             }
+            .padding(contentPad)
+            .frame(width: m.width, height: cardHeight, alignment: .top)
 
-            controlsRow(m)
-                .frame(height: m.controlsBand)
-                .padding(.horizontal, m.sidePad)
-                .padding(.bottom, LuminaSpace.barPaddingV)
-                .opacity(chromeVisible ? 1 : 0)
+            closeCornerButton
+                .padding(.top, contentPad - LuminaSpace.xs)
+                .padding(.trailing, contentPad - LuminaSpace.xs)
                 .allowsHitTesting(chromeVisible)
         }
         .frame(width: m.width, height: cardHeight, alignment: .top)
         .background(Color.luminaCard, in: cardShape)
         .overlay(cardShape.strokeBorder(Color.luminaBorder, lineWidth: 1))
         .clipShape(cardShape)
+        .animation(LuminaMotion.reveal, value: hasTrack)
         .contextMenu { widgetContextMenu }
         .onHover { hovering in
             LuminaMotion.animate(LuminaMotion.hover) {
@@ -426,6 +455,7 @@ struct NowPlayingWidgetView: View {
         .onAppear {
             onSizeChange(CGSize(width: m.width, height: cardHeight))
             syncPanelKey()
+            isContainerFocused = true
         }
         .onChange(of: cardHeight) { _, height in
             onSizeChange(CGSize(width: m.width, height: height))
@@ -433,13 +463,19 @@ struct NowPlayingWidgetView: View {
         .onChange(of: prefs?.widget.size) { _, _ in
             onSizeChange(CGSize(width: metrics.width, height: cardHeight))
         }
+        .onChange(of: hasTrack) { _, _ in
+            isContainerFocused = true
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
             syncPanelKey()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResignKeyNotification)) { _ in
             syncPanelKey()
         }
+        .environment(\.luminaButtonFocusRing, false)
         .focusable()
+        .focused($isContainerFocused)
+        .focusEffectDisabled()
         .onKeyPress(.space) {
             guard hasTrack else { return .ignored }
             audio.toggle()
@@ -499,7 +535,7 @@ struct NowPlayingWidgetView: View {
     // MARK: Header
 
     private func headerRow(_ m: WidgetMetrics) -> some View {
-        HStack(spacing: LuminaSpace.md) {
+        HStack(alignment: hasTrack ? .center : .top, spacing: LuminaSpace.md) {
             albumArt(m)
                 .allowsHitTesting(false)
 
@@ -515,13 +551,22 @@ struct NowPlayingWidgetView: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.tail)
+
+                if !hasTrack {
+                    addMusicButton
+                        .padding(.top, LuminaSpace.xs)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .allowsHitTesting(false)
+            .allowsHitTesting(!hasTrack)
 
             if hasTrack {
                 playButton(m)
             }
+
+            Color.clear
+                .frame(width: DisplayScale.points(16), height: 1)
+                .accessibilityHidden(true)
         }
         .background(
             Color.clear
@@ -529,7 +574,34 @@ struct NowPlayingWidgetView: View {
                 .gesture(WindowDragGesture())
                 .help("Drag to move")
         )
-        .frame(height: m.art)
+        .frame(height: hasTrack ? m.art : nil, alignment: .topLeading)
+    }
+
+    private var addMusicButton: some View {
+        Button {
+            audio.chooseTrack()
+        } label: {
+            Label("Add Music…", systemImage: "plus")
+        }
+        .buttonStyle(LuminaProminentButtonStyle())
+        .controlSize(.small)
+        .focusEffectDisabled()
+        .help("Add songs to the queue")
+    }
+
+    private var closeCornerButton: some View {
+        Button(action: onClose) {
+            Image(systemName: "xmark")
+                .font(.system(size: DisplayScale.points(9), weight: .semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: DisplayScale.points(20), height: DisplayScale.points(20))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .opacity(chromeVisible ? 1 : 0)
+        .focusEffectDisabled()
+        .help("Close")
+        .accessibilityLabel("Close")
     }
 
     private func playButton(_ m: WidgetMetrics) -> some View {
@@ -546,12 +618,13 @@ struct NowPlayingWidgetView: View {
             .contentShape(Circle())
         }
         .buttonStyle(LuminaPressableButtonStyle())
+        .focusEffectDisabled()
         .help(audio.isPlaying ? "Pause" : "Play")
         .accessibilityLabel(audio.isPlaying ? "Pause" : "Play")
     }
 
     private func albumArt(_ m: WidgetMetrics) -> some View {
-        let shape = RoundedRectangle(cornerRadius: LuminaRadius.panel, style: .continuous)
+        let shape = RoundedRectangle(cornerRadius: artCornerRadius, style: .continuous)
         return ZStack {
             shape.fill(
                 LinearGradient(
@@ -605,67 +678,63 @@ struct NowPlayingWidgetView: View {
 
     private func controlsRow(_ m: WidgetMetrics) -> some View {
         HStack(spacing: LuminaSpace.hair) {
-            if hasTrack {
+            iconButton(
+                "shuffle",
+                label: "Shuffle",
+                value: audio.shuffle ? "On" : "Off",
+                active: audio.shuffle,
+                disabled: audio.library.count < 2
+            ) {
+                audio.setShuffle(!audio.shuffle)
+            }
+
+            iconButton("backward.end.fill", label: "Previous", disabled: audio.library.count < 2) {
+                audio.previousTrack()
+            }
+
+            iconButton("forward.end.fill", label: "Next", disabled: audio.library.count < 2) {
+                audio.nextTrack()
+            }
+
+            iconButton(
+                "repeat",
+                label: "Repeat",
+                value: audio.loops ? "On" : "Off",
+                active: audio.loops
+            ) {
+                audio.setLoops(!audio.loops)
+            }
+
+            Image(systemName: audio.volume < 0.01 ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                .font(uiScale.font(.micro).weight(.semibold))
+                .foregroundStyle(.secondary)
+                .padding(.leading, LuminaSpace.hair)
+                .accessibilityHidden(true)
+
+            Slider(
+                value: Binding(get: { audio.volume }, set: { audio.setVolume($0) }),
+                in: 0...1
+            )
+            .controlSize(.mini)
+            .tint(accent)
+            .frame(width: m.volume)
+            .accessibilityLabel("Volume")
+
+            if prefs?.widget.showsUpNext != false {
                 iconButton(
-                    "shuffle",
-                    label: "Shuffle",
-                    value: audio.shuffle ? "On" : "Off",
-                    active: audio.shuffle,
-                    disabled: audio.library.count < 2
+                    "list.bullet",
+                    label: "Up Next",
+                    value: showQueue ? "Shown" : "Hidden",
+                    active: showQueue,
+                    disabled: upcomingTracks.isEmpty
                 ) {
-                    audio.setShuffle(!audio.shuffle)
-                }
-
-                iconButton("backward.end.fill", label: "Previous", disabled: audio.library.count < 2) {
-                    audio.previousTrack()
-                }
-
-                iconButton("forward.end.fill", label: "Next", disabled: audio.library.count < 2) {
-                    audio.nextTrack()
-                }
-
-                iconButton(
-                    "repeat",
-                    label: "Repeat",
-                    value: audio.loops ? "On" : "Off",
-                    active: audio.loops
-                ) {
-                    audio.setLoops(!audio.loops)
-                }
-
-                Image(systemName: audio.volume < 0.01 ? "speaker.slash.fill" : "speaker.wave.2.fill")
-                    .font(uiScale.font(.micro).weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .padding(.leading, LuminaSpace.hair)
-                    .accessibilityHidden(true)
-
-                Slider(
-                    value: Binding(get: { audio.volume }, set: { audio.setVolume($0) }),
-                    in: 0...1
-                )
-                .controlSize(.mini)
-                .tint(accent)
-                .frame(width: m.volume)
-                .accessibilityLabel("Volume")
-
-                if prefs?.widget.showsUpNext != false {
-                    iconButton(
-                        "list.bullet",
-                        label: "Up Next",
-                        value: showQueue ? "Shown" : "Hidden",
-                        active: showQueue,
-                        disabled: upcomingTracks.isEmpty
-                    ) {
-                        LuminaMotion.animate(LuminaMotion.hover) { showQueue.toggle() }
-                    }
+                    LuminaMotion.animate(LuminaMotion.hover) { showQueue.toggle() }
                 }
             }
 
             iconButton("plus", label: "Add Music…") {
                 audio.chooseTrack()
             }
-
-            iconButton("xmark", label: "Close", action: onClose)
         }
     }
 
@@ -738,6 +807,7 @@ struct NowPlayingWidgetView: View {
             Image(systemName: symbol)
         }
         .buttonStyle(LuminaIconButtonStyle(active: active, size: .compact))
+        .focusEffectDisabled()
         .disabled(disabled)
         .help(label)
         .accessibilityLabel(label)
