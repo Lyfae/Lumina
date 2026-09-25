@@ -17,7 +17,6 @@ public enum Planner {
             let geometry = SurfaceGeometry(frame: display.frame, pixels: display.backingPixels)
 
             if inputs.session.isLaunching && !prefs.startup.restoreAtLaunch {
-                surfaces[sid] = SurfacePlan(id: sid, geometry: geometry, content: .empty, run: .idle)
                 continue
             }
 
@@ -37,16 +36,13 @@ public enum Planner {
                 system: inputs.system,
                 session: inputs.session
             )
-            let run: SurfaceRun
-            switch content {
-            case .empty, .failed:
-                run = .idle
-            case .source:
-                run = reasons.isEmpty ? .playing : .paused(reasons)
-            }
+            // No media: leave the system desktop. An empty window here is a black screen.
+            guard case .source(let key, _) = content else { continue }
+
+            let run: SurfaceRun = reasons.isEmpty ? .playing : .paused(reasons)
 
             surfaces[sid] = SurfacePlan(id: sid, geometry: geometry, content: content, run: run)
-            if case .source(let key, _) = content, var demand = baseDemand {
+            if var demand = baseDemand {
                 demand.frameCap = frameCap(
                     rules: prefs.power[display: display.key],
                     quality: prefs.playback[display: display.key],

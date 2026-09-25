@@ -380,6 +380,7 @@ struct LuminaSheetHeader<Trailing: View>: View {
 
     @StateObject private var theme = ThemeManager.shared
     @StateObject private var uiScale = UIScaleManager.shared
+    @ObservedObject private var look = LuminaLook.shared
     @Environment(\.colorScheme) private var colorScheme
 
     init(
@@ -396,9 +397,19 @@ struct LuminaSheetHeader<Trailing: View>: View {
         self.trailing = trailing
     }
 
+    private var headerShape: UnevenRoundedRectangle {
+        UnevenRoundedRectangle(
+            topLeadingRadius: LuminaRadius.floating,
+            bottomLeadingRadius: 0,
+            bottomTrailingRadius: 0,
+            topTrailingRadius: LuminaRadius.floating,
+            style: .continuous
+        )
+    }
+
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: LuminaSpace.sm) {
+            HStack(alignment: .center, spacing: LuminaSpace.sm) {
                 ZStack {
                     RoundedRectangle(cornerRadius: LuminaRadius.control, style: .continuous)
                         .fill(theme.current.color.opacity(0.14))
@@ -427,18 +438,108 @@ struct LuminaSheetHeader<Trailing: View>: View {
                 }
             }
             .padding(.horizontal, LuminaSpace.xl)
-            .padding(.vertical, LuminaSpace.barPaddingV + DisplayScale.points(2))
-            .frame(minHeight: LuminaSpace.rowHeight + DisplayScale.points(16))
+            .padding(.vertical, LuminaSpace.md)
+            .frame(minHeight: LuminaSpace.rowHeight + DisplayScale.points(16), alignment: .center)
 
             LuminaDivider()
         }
-        .luminaGlassChrome()
+        .background {
+            let reduce = NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency
+            let solid = reduce || look.material == .solid
+            Group {
+                if solid {
+                    Color.luminaCard
+                } else {
+                    Rectangle().fill(.bar)
+                }
+            }
+            .clipShape(headerShape)
+        }
     }
 }
 
 extension LuminaSheetHeader where Trailing == EmptyView {
     init(icon: String, title: String, subtitle: String? = nil, onClose: (() -> Void)? = nil) {
         self.init(icon: icon, title: title, subtitle: subtitle, onClose: onClose) { EmptyView() }
+    }
+}
+
+// MARK: - Segmented picker
+
+struct LuminaSegmentedOption<Value: Hashable>: Hashable {
+    let value: Value
+    let title: String
+    let systemImage: String?
+
+    init(_ value: Value, title: String, systemImage: String? = nil) {
+        self.value = value
+        self.title = title
+        self.systemImage = systemImage
+    }
+}
+
+struct LuminaSegmentedPicker<Value: Hashable>: View {
+    @Binding var selection: Value
+    let options: [LuminaSegmentedOption<Value>]
+
+    @Namespace private var selectionNamespace
+    @StateObject private var theme = ThemeManager.shared
+    @StateObject private var uiScale = UIScaleManager.shared
+    @ObservedObject private var look = LuminaLook.shared
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var trackHeight: CGFloat {
+        switch look.density {
+        case .tight: return DisplayScale.points(26)
+        case .regular: return DisplayScale.points(28)
+        case .airy: return DisplayScale.points(32)
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(options, id: \.value) { option in
+                let isSelected = selection == option.value
+                Button {
+                    LuminaMotion.animate(LuminaMotion.state) { selection = option.value }
+                } label: {
+                    HStack(spacing: LuminaSpace.tight) {
+                        if let systemImage = option.systemImage {
+                            Image(systemName: systemImage)
+                                .font(.system(size: uiScale.iconSize(.filter), weight: .semibold))
+                        }
+                        Text(option.title)
+                            .font(uiScale.font(.callout).weight(.semibold))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.85)
+                    }
+                    .foregroundStyle(isSelected ? theme.current.text(in: colorScheme) : .secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .contentShape(Rectangle())
+                    .background {
+                        if isSelected {
+                            RoundedRectangle(cornerRadius: LuminaRadius.control, style: .continuous)
+                                .fill(theme.current.color.opacity(0.16))
+                                .matchedGeometryEffect(id: "luminaSegmentSelection", in: selectionNamespace)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(option.title)
+                .accessibilityAddTraits(isSelected ? .isSelected : [])
+            }
+        }
+        .padding(LuminaSpace.hair)
+        .frame(height: trackHeight)
+        .background(
+            RoundedRectangle(cornerRadius: LuminaRadius.control, style: .continuous)
+                .fill(Color.luminaFill)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: LuminaRadius.control, style: .continuous)
+                .strokeBorder(Color.luminaBorder, lineWidth: 1)
+        )
+        .controlSize(uiScale.controlSize())
     }
 }
 

@@ -45,6 +45,11 @@ struct SlideshowConfigView: View {
         }
         .scaledFrame(width: 560, height: 660)
         .background(Color.luminaBase)
+        .clipShape(RoundedRectangle(cornerRadius: LuminaRadius.floating, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: LuminaRadius.floating, style: .continuous)
+                .strokeBorder(Color.luminaBorder, lineWidth: 1)
+        )
         .tint(themeManager.current.color)
         .onAppear(perform: load)
     }
@@ -174,15 +179,13 @@ struct SlideshowConfigView: View {
                 Text("Transition")
                     .font(uiScale.font(.bodyStrong))
                 Spacer()
-                Picker("Transition", selection: $transition) {
-                    ForEach(SlideshowTransition.allCases, id: \.self) { t in
-                        Text(t.rawValue.capitalized).tag(t)
+                LuminaSegmentedPicker(
+                    selection: $transition,
+                    options: SlideshowTransition.allCases.map {
+                        LuminaSegmentedOption($0, title: $0.rawValue.capitalized)
                     }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .controlSize(uiScale.controlSize())
-                .scaledFrame(width: 160)
+                )
+                .scaledFrame(width: 180)
             }
 
             Toggle(isOn: $kenBurnsEnabled) {
@@ -366,7 +369,9 @@ private struct SlideshowQueueRow: View {
         if let thumbnail {
             Image(nsImage: thumbnail).resizable().aspectRatio(contentMode: .fill)
         } else {
-            Color.luminaFill.overlay(ProgressView().controlSize(.small))
+            RoundedRectangle(cornerRadius: LuminaRadius.small, style: .continuous)
+                .fill(Color.luminaFill)
+                .overlay(ProgressView().controlSize(.small))
         }
     }
 }
@@ -387,7 +392,9 @@ private struct LibraryImageThumb: View {
                 if let thumbnail {
                     Image(nsImage: thumbnail).resizable().aspectRatio(contentMode: .fill)
                 } else {
-                    Color.luminaFill.overlay(ProgressView().controlSize(.small))
+                    RoundedRectangle(cornerRadius: LuminaRadius.small, style: .continuous)
+                        .fill(Color.luminaFill)
+                        .overlay(ProgressView().controlSize(.small))
                 }
             }
             .scaledFrame(width: 92, height: 52)

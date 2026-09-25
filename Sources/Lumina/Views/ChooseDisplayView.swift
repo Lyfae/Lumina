@@ -124,13 +124,13 @@ private struct MonitorDisplayCard: View {
             ZStack(alignment: .bottomLeading) {
                 thumbnailContent
                     .frame(height: LuminaMetrics.displayCardThumbHeight)
-                    .clipShape(RoundedRectangle(cornerRadius: LuminaRadius.control, style: .continuous))
+                    .clipShape(RoundedRectangle(cornerRadius: LuminaRadius.card, style: .continuous))
 
                 LuminaOverlayChip(text: "\(index)")
                     .padding(LuminaSpace.sm)
             }
             .overlay(
-                RoundedRectangle(cornerRadius: LuminaRadius.control, style: .continuous)
+                RoundedRectangle(cornerRadius: LuminaRadius.card, style: .continuous)
                     .strokeBorder(
                         isSelected
                             ? theme.current.color
@@ -183,7 +183,7 @@ private struct MonitorDisplayCard: View {
                 targetAspect: monitor.aspectRatio
             )
         } else {
-            RoundedRectangle(cornerRadius: LuminaRadius.control, style: .continuous)
+            RoundedRectangle(cornerRadius: LuminaRadius.card, style: .continuous)
                 .fill(Color.luminaCard)
                 .overlay {
                     LuminaEmptyState(icon: "photo", title: "No wallpaper", compact: true)

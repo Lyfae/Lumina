@@ -229,7 +229,7 @@ struct MonitorDetailPanel: View {
             LuminaDivider()
 
             actionButtons
-                .padding(.horizontal, LuminaSpace.md)
+                .padding(.horizontal, LuminaSpace.xl)
                 .padding(.vertical, LuminaSpace.barPaddingV)
         }
         .onAppear {
@@ -325,26 +325,27 @@ struct MonitorDetailPanel: View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(spacing: LuminaSpace.cardGap) {
-                    keepOnStartupControl
+                    if assignment != nil {
+                        keepOnStartupControl
 
-                    SettingsGroup(icon: "aspectratio", title: "Framing") {
-                        displayContent
-                    }
+                        SettingsGroup(icon: "aspectratio", title: "Framing") {
+                            displayContent
+                        }
 
-                    SettingsGroup(icon: "camera.filters", title: "Color") {
-                        visualEffectsContent
-                    }
+                        SettingsGroup(icon: "camera.filters", title: "Color") {
+                            visualEffectsContent
+                        }
 
-                    if assignment?.mediaType == .video || assignment?.mediaType == .animatedImage {
-                        SettingsGroup(icon: "play.fill", title: "Playback") {
-                            playbackContent
+                        if assignment?.mediaType == .video || assignment?.mediaType == .animatedImage {
+                            SettingsGroup(icon: "play.fill", title: "Playback") {
+                                playbackContent
+                            }
                         }
                     }
 
                     SettingsGroup(
                         icon: "photo.on.rectangle.angled",
-                        title: "Slideshow",
-                        caption: "Applies right away"
+                        title: "Slideshow"
                     ) {
                         slideshowContent
                     }
@@ -352,7 +353,6 @@ struct MonitorDetailPanel: View {
                     SettingsGroup(
                         icon: "gauge.with.dots.needle.50percent",
                         title: "Quality & Power",
-                        caption: "Applies right away",
                         flash: qualityPowerFlash
                     ) {
                         qualityPowerContent
@@ -505,7 +505,7 @@ struct MonitorDetailPanel: View {
                                 )
                             }
                         }
-                        .clipShape(RoundedRectangle(cornerRadius: LuminaRadius.panel, style: .continuous))
+                        .clipShape(RoundedRectangle(cornerRadius: LuminaRadius.card, style: .continuous))
                         .opacity(previewOpacity)
 
                         if let msg = failedMessage, !cropEditMode {
@@ -545,18 +545,27 @@ struct MonitorDetailPanel: View {
                 .padding(LuminaSpace.sm)
             } else {
                 ZStack {
-                    RoundedRectangle(cornerRadius: LuminaRadius.panel, style: .continuous)
+                    RoundedRectangle(cornerRadius: LuminaRadius.card, style: .continuous)
                         .fill(Color.luminaCard)
                         .overlay(
-                            RoundedRectangle(cornerRadius: LuminaRadius.panel, style: .continuous)
+                            RoundedRectangle(cornerRadius: LuminaRadius.card, style: .continuous)
                                 .strokeBorder(Color.luminaBorder, lineWidth: 1)
                         )
-                    LuminaEmptyState(
-                        icon: "display",
-                        title: "No wallpaper yet",
-                        message: "Choose one from the library.",
-                        compact: true
-                    )
+                    VStack(spacing: LuminaSpace.sm) {
+                        Image(systemName: "display")
+                            .font(.system(size: DisplayScale.points(36)))
+                            .foregroundStyle(.secondary)
+                            .symbolRenderingMode(.hierarchical)
+                        Text("No wallpaper yet")
+                            .font(uiScale.font(.headline))
+                            .foregroundStyle(.primary)
+                            .multilineTextAlignment(.center)
+                        Text("Choose one from the library.")
+                            .font(uiScale.font(.callout))
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
                 .padding(LuminaSpace.sm)
             }
@@ -701,30 +710,32 @@ struct MonitorDetailPanel: View {
     // primary persistence / power-user toggles.
 
     private var keepOnStartupControl: some View {
-        Toggle(isOn: $keepOnStartup) {
-            HStack(alignment: .center, spacing: LuminaSpace.sm) {
-                Image(systemName: keepOnStartup ? "pin.fill" : "pin")
-                    .font(.system(size: uiScale.iconSize(.card), weight: .semibold))
-                    .foregroundStyle(keepOnStartup ? themeManager.current.color : .secondary)
-                    .frame(width: DisplayScale.points(20), alignment: .center)
+        HStack(alignment: .center, spacing: LuminaSpace.sm) {
+            Image(systemName: keepOnStartup ? "pin.fill" : "pin")
+                .font(.system(size: uiScale.iconSize(.card), weight: .semibold))
+                .foregroundStyle(keepOnStartup ? themeManager.current.color : .secondary)
+                .frame(width: DisplayScale.points(20), alignment: .center)
 
-                VStack(alignment: .leading, spacing: LuminaSpace.hair) {
-                    Text("Restore at launch")
-                        .font(uiScale.font(.bodyStrong))
+            VStack(alignment: .leading, spacing: LuminaSpace.hair) {
+                Text("Restore at launch")
+                    .font(uiScale.font(.bodyStrong))
 
-                    Text(keepOnStartup
-                         ? "Comes back when Lumina starts. Saves right away."
-                         : "Stays until you quit Lumina.")
-                        .font(uiScale.font(.caption))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                Text(keepOnStartup
+                     ? "Comes back when Lumina starts. Saves right away."
+                     : "Stays until you quit Lumina.")
+                    .font(uiScale.font(.caption))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Toggle("", isOn: $keepOnStartup)
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(uiScale.controlSize())
+                .accessibilityLabel("Restore at launch")
         }
-        .toggleStyle(.switch)
-        .controlSize(uiScale.controlSize())
         .onChange(of: keepOnStartup) { _, newValue in
             store.setKeepOnStartup(for: monitor, enabled: newValue)
         }
@@ -755,14 +766,12 @@ struct MonitorDetailPanel: View {
             if assignment?.mediaType == .video {
                 VStack(alignment: .leading, spacing: LuminaSpace.tight) {
                     Text("At the end").font(uiScale.font(.body)).foregroundStyle(.secondary)
-                    Picker("At the end", selection: $loopMode) {
-                        ForEach(LoopMode.allCases, id: \.self) { mode in
-                            Text(mode.label).tag(mode)
+                    LuminaSegmentedPicker(
+                        selection: $loopMode,
+                        options: LoopMode.allCases.map {
+                            LuminaSegmentedOption($0, title: $0.label)
                         }
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    .controlSize(uiScale.controlSize())
+                    )
                     Text(loopMode.uiDescription)
                         .font(uiScale.font(.caption)).foregroundStyle(.secondary)
                         .animation(LuminaMotion.state, value: loopMode)
@@ -770,14 +779,20 @@ struct MonitorDetailPanel: View {
             }
 
             if assignment?.mediaType == .video {
-                Toggle("Fade between loops", isOn: $loopFadeEnabled)
-                    .toggleStyle(.switch)
-                    .font(uiScale.font(.body))
-                    .controlSize(uiScale.controlSize())
-                    .disabled(loopMode != .loop)
-                    .help(loopMode == .loop
-                          ? "Fades out and back in at each loop."
-                          : "Needs Loop.")
+                HStack {
+                    Text("Fade between loops")
+                        .font(uiScale.font(.body))
+                    Spacer(minLength: 0)
+                    Toggle("", isOn: $loopFadeEnabled)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .controlSize(uiScale.controlSize())
+                        .accessibilityLabel("Fade between loops")
+                }
+                .disabled(loopMode != .loop)
+                .help(loopMode == .loop
+                      ? "Fades out and back in at each loop."
+                      : "Needs Loop.")
 
                 if loopMode != .loop {
                     Text("Needs Loop.")
@@ -794,13 +809,12 @@ struct MonitorDetailPanel: View {
 
                         VStack(alignment: .leading, spacing: LuminaSpace.xs) {
                             LuminaSliderLabel(title: "Curve")
-                            Picker("Curve", selection: $loopFadeEasing) {
-                                ForEach(FadeEasing.allCases, id: \.self) { e in
-                                    Text(e.label).tag(e)
+                            LuminaSegmentedPicker(
+                                selection: $loopFadeEasing,
+                                options: FadeEasing.allCases.map {
+                                    LuminaSegmentedOption($0, title: $0.label)
                                 }
-                            }
-                            .pickerStyle(.segmented)
-                            .labelsHidden()
+                            )
                         }
 
                         Button("Preview Fade") { previewFadeInPreview() }
@@ -836,14 +850,14 @@ struct MonitorDetailPanel: View {
         VStack(alignment: .leading, spacing: LuminaSpace.md) {
             VStack(alignment: .leading, spacing: LuminaSpace.tight) {
                 Text("Scaling").font(uiScale.font(.body)).foregroundStyle(.secondary)
-                Picker("Scaling", selection: $selectedScaling) {
-                    Text("Fit").tag(VideoScaling.fit)
-                    Text("Fill").tag(VideoScaling.fill)
-                    Text("Stretch").tag(VideoScaling.stretch)
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .controlSize(uiScale.controlSize())
+                LuminaSegmentedPicker(
+                    selection: $selectedScaling,
+                    options: [
+                        LuminaSegmentedOption(VideoScaling.fit, title: "Fit"),
+                        LuminaSegmentedOption(VideoScaling.fill, title: "Fill"),
+                        LuminaSegmentedOption(VideoScaling.stretch, title: "Stretch"),
+                    ]
+                )
                 Text(scalingDescription)
                     .font(uiScale.font(.caption)).foregroundStyle(.secondary)
                     .animation(LuminaMotion.state, value: selectedScaling)
@@ -874,7 +888,7 @@ struct MonitorDetailPanel: View {
                 LuminaSliderLabel(title: "Brightness", value: formatBrightness(brightness))
                     .help("Double-click to reset")
                     .onTapGesture(count: 2) { brightness = 0 }
-                LuminaSlider(value: $brightness, range: -0.5...0.5, step: 0.05, label: formatBrightness(brightness))
+                LuminaSlider(value: $brightness, range: -0.5...0.5, label: formatBrightness(brightness))
             }
 
             VStack(alignment: .leading, spacing: LuminaSpace.xs) {
@@ -898,10 +912,16 @@ struct MonitorDetailPanel: View {
                 LuminaSlider(value: $hue, range: -180...180, label: "\(Int(hue.rounded()))°")
             }
 
-            Toggle("Black and white", isOn: $grayscale)
-                .toggleStyle(.switch)
-                .controlSize(uiScale.controlSize())
-                .font(uiScale.font(.body))
+            HStack {
+                Text("Black and white")
+                    .font(uiScale.font(.body))
+                Spacer(minLength: 0)
+                Toggle("", isOn: $grayscale)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .controlSize(uiScale.controlSize())
+                    .accessibilityLabel("Black and white")
+            }
         }
     }
 
@@ -1057,13 +1077,15 @@ struct MonitorDetailPanel: View {
                 .accessibilityLabel("Up to date")
             }
 
-            Button("Reset") {
-                resetToDefaults()
+            if assignment != nil {
+                Button("Reset") {
+                    resetToDefaults()
+                }
+                .buttonStyle(LuminaSecondaryButtonStyle())
+                .controlSize(.regular)
+                .help("Reset crop, speed, and color. Click Apply to use it.")
+                .transition(.opacity)
             }
-            .buttonStyle(LuminaSecondaryButtonStyle())
-            .controlSize(.regular)
-            .help("Reset crop, speed, and color. Click Apply to use it.")
-            .disabled(assignment == nil)
 
             if monitor.assignedVideoName != nil || assignment != nil {
                 Button("Clear Display", role: .destructive) {
@@ -1094,6 +1116,7 @@ struct MonitorDetailPanel: View {
                     .controlSize(.regular)
             }
         }
+        .animation(LuminaMotion.state, value: assignment != nil)
     }
 
     /// Help text for the Apply control.
@@ -1231,32 +1254,36 @@ struct MonitorDetailPanel: View {
     private var qualityPowerContent: some View {
         let key = displayKey
         return VStack(alignment: .leading, spacing: LuminaSpace.md) {
-            Toggle(isOn: Binding(
-                get: { usesGlobalQualityPower },
-                set: { on in
-                    guard let prefs else { return }
-                    if on {
-                        var power = prefs.power
-                        power.clearOverride(for: key)
-                        prefs.power = power
-                        var playback = prefs.playback
-                        playback.clearOverride(for: key)
-                        prefs.playback = playback
-                    } else {
-                        var power = prefs.power
-                        power[display: key] = power.defaults
-                        prefs.power = power
-                        var playback = prefs.playback
-                        playback[display: key] = playback.defaultQuality
-                        prefs.playback = playback
-                    }
-                }
-            )) {
+            HStack {
                 Text("Use global settings")
                     .font(uiScale.font(.bodyStrong))
+                Spacer(minLength: 0)
+                Toggle("", isOn: Binding(
+                    get: { usesGlobalQualityPower },
+                    set: { on in
+                        guard let prefs else { return }
+                        if on {
+                            var power = prefs.power
+                            power.clearOverride(for: key)
+                            prefs.power = power
+                            var playback = prefs.playback
+                            playback.clearOverride(for: key)
+                            prefs.playback = playback
+                        } else {
+                            var power = prefs.power
+                            power[display: key] = power.defaults
+                            prefs.power = power
+                            var playback = prefs.playback
+                            playback[display: key] = playback.defaultQuality
+                            prefs.playback = playback
+                        }
+                    }
+                ))
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(uiScale.controlSize())
+                .accessibilityLabel("Use global settings")
             }
-            .toggleStyle(.switch)
-            .controlSize(uiScale.controlSize())
 
             if usesGlobalQualityPower {
                 HStack(spacing: LuminaSpace.xs) {
@@ -1323,21 +1350,20 @@ struct MonitorDetailPanel: View {
         let choice = DecodeCapChoice(preset)
         VStack(alignment: .leading, spacing: LuminaSpace.xs) {
             LuminaSliderLabel(title: "Resolution")
-            Picker("Resolution", selection: Binding(
-                get: { DecodeCapChoice(prefs?.playback[display: key] ?? .automatic) },
-                set: { newChoice in
-                    guard let prefs else { return }
-                    var playback = prefs.playback
-                    playback[display: key] = newChoice.qualityPreset
-                    prefs.playback = playback
+            LuminaSegmentedPicker(
+                selection: Binding(
+                    get: { DecodeCapChoice(prefs?.playback[display: key] ?? .automatic) },
+                    set: { newChoice in
+                        guard let prefs else { return }
+                        var playback = prefs.playback
+                        playback[display: key] = newChoice.qualityPreset
+                        prefs.playback = playback
+                    }
+                ),
+                options: DecodeCapChoice.allCases.map {
+                    LuminaSegmentedOption($0, title: $0.label)
                 }
-            )) {
-                ForEach(DecodeCapChoice.allCases) { c in
-                    Text(c.label).tag(c)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
+            )
             .disabled(disabled)
             Text(choice.caption)
                 .font(uiScale.font(.caption))
@@ -1357,23 +1383,22 @@ struct MonitorDetailPanel: View {
         let choice = FrameRateChoice(cap)
         VStack(alignment: .leading, spacing: LuminaSpace.xs) {
             LuminaSliderLabel(title: "Frame rate", value: choice.longLabel)
-            Picker("Frame rate", selection: Binding(
-                get: { FrameRateChoice(prefs?.power[display: key].frameCap ?? .native) },
-                set: { newChoice in
-                    guard let prefs else { return }
-                    var power = prefs.power
-                    var rules = power[display: key]
-                    rules.frameCap = newChoice.frameRateCap
-                    power[display: key] = rules
-                    prefs.power = power
+            LuminaSegmentedPicker(
+                selection: Binding(
+                    get: { FrameRateChoice(prefs?.power[display: key].frameCap ?? .native) },
+                    set: { newChoice in
+                        guard let prefs else { return }
+                        var power = prefs.power
+                        var rules = power[display: key]
+                        rules.frameCap = newChoice.frameRateCap
+                        power[display: key] = rules
+                        prefs.power = power
+                    }
+                ),
+                options: FrameRateChoice.choices(includingSelected: cap).map {
+                    LuminaSegmentedOption($0, title: $0.shortLabel)
                 }
-            )) {
-                ForEach(FrameRateChoice.choices(includingSelected: cap)) { c in
-                    Text(c.shortLabel).tag(c)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
+            )
             .disabled(disabled)
             Text("Lower rates use less power.")
                 .font(uiScale.font(.caption))
@@ -1392,25 +1417,32 @@ struct MonitorDetailPanel: View {
         let pauseOnBattery = prefs?.power[display: key].battery.pauseOnBattery ?? false
         let pauseBelowEnabled = prefs?.power[display: key].battery.pauseBelowEnabled ?? false
 
-        Toggle("On battery", isOn: Binding(
-            get: { prefs?.power[display: key].battery.pauseOnBattery ?? false },
-            set: { val in
-                guard let prefs else { return }
-                var power = prefs.power
-                var rules = power[display: key]
-                rules.battery.pauseOnBattery = val
-                power[display: key] = rules
-                prefs.power = power
-            }
-        ))
-        .toggleStyle(.switch)
-        .controlSize(uiScale.controlSize())
+        HStack {
+            Text("On battery")
+                .font(uiScale.font(.body))
+            Spacer(minLength: 0)
+            Toggle("", isOn: Binding(
+                get: { prefs?.power[display: key].battery.pauseOnBattery ?? false },
+                set: { val in
+                    guard let prefs else { return }
+                    var power = prefs.power
+                    var rules = power[display: key]
+                    rules.battery.pauseOnBattery = val
+                    power[display: key] = rules
+                    prefs.power = power
+                }
+            ))
+            .labelsHidden()
+            .toggleStyle(.switch)
+            .controlSize(uiScale.controlSize())
+            .accessibilityLabel("On battery")
+        }
         .disabled(disabled)
 
         HStack {
             Text("Battery is below")
                 .font(uiScale.font(.body))
-            Spacer()
+            Spacer(minLength: 0)
             if pauseBelowEnabled {
                 Text("\(Int(prefs?.power[display: key].battery.pauseBelowPercent ?? 20))%")
                     .font(uiScale.font(.callout).monospacedDigit())
@@ -1430,6 +1462,7 @@ struct MonitorDetailPanel: View {
             .labelsHidden()
             .toggleStyle(.switch)
             .controlSize(uiScale.controlSize())
+            .accessibilityLabel("Battery is below")
         }
         .disabled(disabled || pauseOnBattery)
 
@@ -1459,34 +1492,48 @@ struct MonitorDetailPanel: View {
             .disabled(disabled)
         }
 
-        Toggle("A window covers it", isOn: Binding(
-            get: { prefs?.power[display: key].pauseWhenCovered ?? true },
-            set: { val in
-                guard let prefs else { return }
-                var power = prefs.power
-                var rules = power[display: key]
-                rules.pauseWhenCovered = val
-                power[display: key] = rules
-                prefs.power = power
-            }
-        ))
-        .toggleStyle(.switch)
-        .controlSize(uiScale.controlSize())
+        HStack {
+            Text("A window covers it")
+                .font(uiScale.font(.body))
+            Spacer(minLength: 0)
+            Toggle("", isOn: Binding(
+                get: { prefs?.power[display: key].pauseWhenCovered ?? true },
+                set: { val in
+                    guard let prefs else { return }
+                    var power = prefs.power
+                    var rules = power[display: key]
+                    rules.pauseWhenCovered = val
+                    power[display: key] = rules
+                    prefs.power = power
+                }
+            ))
+            .labelsHidden()
+            .toggleStyle(.switch)
+            .controlSize(uiScale.controlSize())
+            .accessibilityLabel("A window covers it")
+        }
         .disabled(disabled)
 
-        Toggle("Low Power Mode is on", isOn: Binding(
-            get: { prefs?.power[display: key].pauseInLowPowerMode ?? true },
-            set: { val in
-                guard let prefs else { return }
-                var power = prefs.power
-                var rules = power[display: key]
-                rules.pauseInLowPowerMode = val
-                power[display: key] = rules
-                prefs.power = power
-            }
-        ))
-        .toggleStyle(.switch)
-        .controlSize(uiScale.controlSize())
+        HStack {
+            Text("Low Power Mode is on")
+                .font(uiScale.font(.body))
+            Spacer(minLength: 0)
+            Toggle("", isOn: Binding(
+                get: { prefs?.power[display: key].pauseInLowPowerMode ?? true },
+                set: { val in
+                    guard let prefs else { return }
+                    var power = prefs.power
+                    var rules = power[display: key]
+                    rules.pauseInLowPowerMode = val
+                    power[display: key] = rules
+                    prefs.power = power
+                }
+            ))
+            .labelsHidden()
+            .toggleStyle(.switch)
+            .controlSize(uiScale.controlSize())
+            .accessibilityLabel("Low Power Mode is on")
+        }
         .disabled(disabled)
     }
 
@@ -1513,13 +1560,12 @@ struct MonitorDetailPanel: View {
                     .font(uiScale.scaledFont(13))
                     .foregroundStyle(.secondary)
 
-                Picker("", selection: $selectedPreset) {
-                    ForEach(VideoCompressor.QualityPreset.allCases) { preset in
-                        Text(preset.label).tag(preset)
+                LuminaSegmentedPicker(
+                    selection: $selectedPreset,
+                    options: VideoCompressor.QualityPreset.allCases.map {
+                        LuminaSegmentedOption($0, title: $0.label)
                     }
-                }
-                .pickerStyle(.segmented)
-                .controlSize(uiScale.controlSize())
+                )
 
                 // Dynamic description + size estimate
                 VStack(alignment: .leading, spacing: 2) {
@@ -1626,8 +1672,8 @@ struct MonitorDetailPanel: View {
         }
         .padding(.horizontal, DisplayScale.points(8))
         .padding(.vertical, DisplayScale.points(4))
-        .background(Color.luminaCard.opacity(0.8), in: RoundedRectangle(cornerRadius: 6))
-        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color(NSColor.separatorColor).opacity(0.5), lineWidth: 0.5))
+        .background(Color.luminaCard.opacity(0.8), in: RoundedRectangle(cornerRadius: LuminaRadius.small, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: LuminaRadius.small, style: .continuous).strokeBorder(Color(NSColor.separatorColor).opacity(0.5), lineWidth: 0.5))
     }
 
 } // end MonitorDetailPanel

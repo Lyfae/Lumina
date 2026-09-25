@@ -181,16 +181,11 @@ struct WallpaperManagerView: View {
 
     private var headerBar: some View {
         HStack(spacing: LuminaSpace.md) {
-            HStack(spacing: LuminaSpace.sm) {
+            HStack(alignment: .center, spacing: LuminaSpace.sm) {
                 LuminaBrandMark(side: LuminaMetrics.brandMark)
                     .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: LuminaSpace.hair) {
-                    Text("Lumina Studio")
-                        .font(uiScale.font(.title))
-                    Text("Live wallpapers")
-                        .font(uiScale.font(.caption))
-                        .foregroundStyle(.secondary)
-                }
+                Text("Lumina Studio")
+                    .font(uiScale.font(.title))
             }
 
             Spacer(minLength: LuminaSpace.md)
@@ -341,7 +336,6 @@ struct WallpaperManagerView: View {
 
                     LuminaSectionHeader(
                         title: "Library",
-                        subtitle: "Click one to set it on the selected display",
                         trailing: "\(filteredMedia.count)"
                     )
                 }
@@ -377,28 +371,16 @@ struct WallpaperManagerView: View {
                         .strokeBorder(Color.luminaBorder, lineWidth: 1)
                 )
 
-                // Hidden ⌘F focus helper
                 Button("") { isSearchFocused = true }
                     .keyboardShortcut("f", modifiers: .command)
                     .frame(width: 0, height: 0)
                     .opacity(0)
                     .accessibilityHidden(true)
 
-                LuminaWrappingHStack(spacing: LuminaSpace.sm) {
-                    ForEach(LibraryFilter.allCases) { filter in
-                        LuminaFilterChip(
-                            label: filter.label,
-                            icon: filter.icon,
-                            isSelected: selectedFilter == filter,
-                            help: filter.helpText
-                        ) {
-                            LuminaMotion.animate(LuminaMotion.state) { selectedFilter = filter }
-                        }
-                    }
-                }
+                libraryFilterChips
             }
             .padding(.horizontal, LuminaLayout.contentPadding)
-            .padding(.top, LuminaSpace.lg)
+            .padding(.top, LuminaSpace.md)
             .padding(.bottom, LuminaSpace.md)
 
             LuminaDivider()
@@ -410,14 +392,11 @@ struct WallpaperManagerView: View {
                     LazyVGrid(
                         columns: [
                             GridItem(
-                                .adaptive(
-                                    minimum: LuminaLayout.thumbnailWidth,
-                                    maximum: LuminaLayout.thumbnailWidth + LuminaSpace.xxl
-                                ),
-                                spacing: LuminaSpace.gridGap
+                                .adaptive(minimum: DisplayScale.points(120)),
+                                spacing: LuminaSpace.md
                             )
                         ],
-                        spacing: LuminaSpace.gridGap
+                        spacing: LuminaSpace.md
                     ) {
                         ForEach(Array(filteredMedia.enumerated()), id: \.element.id) { index, recent in
                             let isCurrent = isCurrentWallpaper(recent: recent)
@@ -435,7 +414,7 @@ struct WallpaperManagerView: View {
                         }
                     }
                     .padding(.horizontal, LuminaLayout.contentPadding)
-                    .padding(.vertical, LuminaSpace.lg)
+                    .padding(.vertical, LuminaSpace.md)
                 }
             }
             .frame(maxHeight: .infinity)
@@ -450,12 +429,41 @@ struct WallpaperManagerView: View {
                 .buttonStyle(LuminaProminentButtonStyle())
                 .controlSize(.large)
             }
-            .padding(.horizontal, LuminaSpace.xl)
+            .padding(.horizontal, LuminaLayout.contentPadding)
             .padding(.vertical, LuminaSpace.md)
             .luminaGlassChrome()
         }
         .frame(width: LuminaLayout.libraryColumnWidth)
-        .luminaWindowBackdrop()
+        .background(Color.luminaCard)
+    }
+
+    private var libraryFilterChips: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: LuminaSpace.xs) {
+                ForEach(LibraryFilter.allCases) { filter in
+                    CompactLibraryFilterChip(
+                        label: filter.label,
+                        icon: filter.icon,
+                        isSelected: selectedFilter == filter,
+                        help: filter.helpText
+                    ) {
+                        LuminaMotion.animate(LuminaMotion.state) { selectedFilter = filter }
+                    }
+                }
+            }
+            .padding(.trailing, LuminaSpace.xl)
+        }
+        .mask(
+            HStack(spacing: 0) {
+                Color.white
+                LinearGradient(
+                    colors: [.white, .white.opacity(0)],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+                .frame(width: LuminaSpace.xl)
+            }
+        )
     }
 
     private func moveLibraryFocus(from index: Int, direction: MoveCommandDirection) {
@@ -481,12 +489,9 @@ struct WallpaperManagerView: View {
                             .accessibilityHidden(true)
 
                         VStack(alignment: .leading, spacing: LuminaSpace.hair) {
-                            Text(displayCaption(for: monitor))
-                                .font(uiScale.font(.caption))
-                                .foregroundStyle(.secondary)
                             Text(monitor.name)
                                 .font(uiScale.font(.headline))
-                            Text(monitor.resolution)
+                            Text("\(monitor.resolution) · \(displayCaption(for: monitor))")
                                 .font(uiScale.font(.caption))
                                 .foregroundStyle(.secondary)
                         }
@@ -666,7 +671,7 @@ struct WallpaperManagerView: View {
         if selectedFilter != .all {
             return "Nothing in this filter yet."
         }
-        return "Add a video, GIF, or image, then click it to set it on a display."
+        return "Add a video, GIF, or image, then click one to set it on the selected display."
     }
 
 }
@@ -717,85 +722,84 @@ private struct AudioFooterBar: View {
                     alignment: .leading
                 )
 
-                HStack(spacing: LuminaSpace.xs) {
-                    transportIcon("shuffle", active: audioManager.shuffle, label: "Shuffle") {
-                        audioManager.setShuffle(!audioManager.shuffle)
-                    }
-                    .disabled(audioManager.library.count < 2)
+                if hasTrack {
+                    HStack(spacing: LuminaSpace.xs) {
+                        transportIcon("shuffle", active: audioManager.shuffle, label: "Shuffle") {
+                            audioManager.setShuffle(!audioManager.shuffle)
+                        }
+                        .disabled(audioManager.library.count < 2)
 
-                    transportIcon("backward.end.fill", label: "Previous") {
-                        audioManager.previousTrack()
-                    }
-                    .disabled(audioManager.library.count < 2)
+                        transportIcon("backward.end.fill", label: "Previous") {
+                            audioManager.previousTrack()
+                        }
+                        .disabled(audioManager.library.count < 2)
 
-                    transportIcon("gobackward.10", label: "Back 10 seconds") {
-                        audioManager.seek(by: -10)
-                    }
-                    .disabled(!hasTrack)
+                        transportIcon("gobackward.10", label: "Back 10 seconds") {
+                            audioManager.seek(by: -10)
+                        }
 
-                    Button { audioManager.toggle() } label: {
-                        Image(systemName: audioManager.isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                            .font(.system(size: LuminaMetrics.footerPlay))
-                            .foregroundStyle(hasTrack ? themeManager.current.color : .secondary)
-                    }
-                    .buttonStyle(LuminaPressableButtonStyle())
-                    .help(audioManager.isPlaying ? "Pause" : "Play")
-                    .accessibilityLabel(audioManager.isPlaying ? "Pause" : "Play")
-                    .disabled(!hasTrack)
+                        Button { audioManager.toggle() } label: {
+                            Image(systemName: audioManager.isPlaying ? "pause.circle.fill" : "play.circle.fill")
+                                .font(.system(size: LuminaMetrics.footerPlay))
+                                .foregroundStyle(themeManager.current.color)
+                        }
+                        .buttonStyle(LuminaPressableButtonStyle())
+                        .help(audioManager.isPlaying ? "Pause" : "Play")
+                        .accessibilityLabel(audioManager.isPlaying ? "Pause" : "Play")
 
-                    transportIcon("goforward.10", label: "Forward 10 seconds") {
-                        audioManager.seek(by: 10)
-                    }
-                    .disabled(!hasTrack)
+                        transportIcon("goforward.10", label: "Forward 10 seconds") {
+                            audioManager.seek(by: 10)
+                        }
 
-                    transportIcon("forward.end.fill", label: "Next") {
-                        if audioManager.library.count >= 2 {
-                            audioManager.nextTrack()
-                        } else {
-                            audioManager.seekToTime(0)
+                        transportIcon("forward.end.fill", label: "Next") {
+                            if audioManager.library.count >= 2 {
+                                audioManager.nextTrack()
+                            } else {
+                                audioManager.seekToTime(0)
+                            }
+                        }
+
+                        transportIcon("repeat", active: audioManager.loops, label: "Repeat") {
+                            audioManager.setLoops(!audioManager.loops)
                         }
                     }
-                    .disabled(!hasTrack)
 
-                    transportIcon("repeat", active: audioManager.loops, label: "Repeat") {
-                        audioManager.setLoops(!audioManager.loops)
-                    }
-                }
-                .opacity(hasTrack ? 1 : 0.4)
-
-                LuminaWaveformScrubber(
-                    currentTime: audioManager.currentTime,
-                    duration: audioManager.duration,
-                    isPlaying: audioManager.isPlaying,
-                    style: .footer,
-                    source: .live,
-                    preview: $scrubPreview,
-                    onSeek: { audioManager.seekToTime($0) }
-                )
-                .frame(maxWidth: .infinity)
-
-                HStack(spacing: LuminaSpace.sm) {
-                    Button {
-                        toggleMute()
-                    } label: {
-                        Image(systemName: audioManager.volume < 0.01 ? "speaker.slash.fill" : "speaker.wave.2.fill")
-                            .font(.system(size: uiScale.iconSize(.card)))
-                            .foregroundStyle(.secondary)
-                            .frame(width: LuminaMetrics.iconColumn, alignment: .leading)
-                    }
-                    .buttonStyle(LuminaPressableButtonStyle())
-                    .accessibilityLabel(audioManager.volume < 0.01 ? "Unmute" : "Mute")
-
-                    LuminaSlider(
-                        value: Binding(get: { audioManager.volume }, set: { audioManager.setVolume($0) }),
-                        range: 0...1,
-                        compact: true,
-                        label: "Music volume"
+                    LuminaWaveformScrubber(
+                        currentTime: audioManager.currentTime,
+                        duration: audioManager.duration,
+                        isPlaying: audioManager.isPlaying,
+                        style: .footer,
+                        source: .live,
+                        preview: $scrubPreview,
+                        onSeek: { audioManager.seekToTime($0) }
                     )
-                    .frame(width: LuminaMetrics.footerVolumeWidth)
-                }
+                    .frame(maxWidth: .infinity)
 
-                LuminaVerticalDivider().frame(height: DisplayScale.points(24))
+                    HStack(spacing: LuminaSpace.sm) {
+                        Button {
+                            toggleMute()
+                        } label: {
+                            Image(systemName: audioManager.volume < 0.01 ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                                .font(.system(size: uiScale.iconSize(.card)))
+                                .foregroundStyle(.secondary)
+                                .frame(width: LuminaMetrics.iconColumn, alignment: .leading)
+                        }
+                        .buttonStyle(LuminaPressableButtonStyle())
+                        .accessibilityLabel(audioManager.volume < 0.01 ? "Unmute" : "Mute")
+
+                        LuminaSlider(
+                            value: Binding(get: { audioManager.volume }, set: { audioManager.setVolume($0) }),
+                            range: 0...1,
+                            compact: true,
+                            label: "Music volume"
+                        )
+                        .frame(width: LuminaMetrics.footerVolumeWidth)
+                    }
+
+                    LuminaVerticalDivider().frame(height: DisplayScale.points(24))
+                } else {
+                    Spacer(minLength: LuminaSpace.md)
+                }
 
                 if hasTrack {
                     Button {
@@ -849,6 +853,7 @@ private struct AudioFooterBar: View {
             .padding(.horizontal, LuminaLayout.contentPadding)
             .padding(.vertical, LuminaSpace.barPaddingV)
             .luminaGlassChrome()
+            .animation(LuminaMotion.state, value: hasTrack)
         }
     }
 
@@ -1086,6 +1091,55 @@ private struct AudioFooterBar: View {
     }
 }
 
+// MARK: - Compact Library Filter Chip
+
+private struct CompactLibraryFilterChip: View {
+    let label: String
+    let icon: String
+    let isSelected: Bool
+    let help: String
+    var action: () -> Void
+
+    @StateObject private var theme = ThemeManager.shared
+    @StateObject private var uiScale = UIScaleManager.shared
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: LuminaSpace.xs) {
+                Image(systemName: icon)
+                    .font(.system(size: uiScale.iconSize(.inline), weight: .semibold))
+                Text(label)
+                    .font(uiScale.font(.caption).weight(.semibold))
+            }
+            .padding(.horizontal, LuminaSpace.sm)
+            .padding(.vertical, LuminaSpace.xs)
+            .foregroundStyle(isSelected ? theme.current.text(in: colorScheme) : .secondary)
+            .background(
+                RoundedRectangle(cornerRadius: LuminaRadius.panel, style: .continuous)
+                    .fill(fill)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: LuminaRadius.panel, style: .continuous)
+                    .strokeBorder(isSelected ? theme.current.color.opacity(0.45) : Color.clear, lineWidth: 1.5)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: LuminaRadius.panel, style: .continuous))
+        }
+        .buttonStyle(LuminaPressableButtonStyle())
+        .help(help)
+        .accessibilityLabel(label)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .onHover { isHovered = $0 }
+    }
+
+    private var fill: Color {
+        if isSelected { return theme.current.color.opacity(0.14) }
+        if isHovered { return Color.luminaFillHover }
+        return Color.luminaFill
+    }
+}
+
 // MARK: - Wallpaper Grid Item
 
 struct WallpaperGridItem: View {
@@ -1113,68 +1167,80 @@ struct WallpaperGridItem: View {
         }
     }
 
+    private var displayTitle: String {
+        (recent.displayName as NSString).deletingPathExtension
+    }
+
     var body: some View {
-        let thumbW = LuminaLayout.thumbnailWidth
-        let thumbH = LuminaLayout.thumbnailHeight
         let accent = theme.current.color
+        let shape = RoundedRectangle(cornerRadius: LuminaRadius.card, style: .continuous)
 
-        ZStack(alignment: .bottomLeading) {
-            thumbnailContent
-                .frame(width: thumbW, height: thumbH)
-                .clipShape(RoundedRectangle(cornerRadius: LuminaRadius.control, style: .continuous))
+        VStack(alignment: .leading, spacing: LuminaSpace.xs) {
+            Color.clear
+                .aspectRatio(16 / 10, contentMode: .fit)
+                .overlay {
+                    thumbnailContent
+                }
+                .clipShape(shape)
+                .overlay(alignment: .bottomLeading) {
+                    typeBadge
+                        .padding(LuminaSpace.tight)
+                        .accessibilityLabel(typeLabel)
+                }
+                .overlay {
+                    if isHovered || isFocused {
+                        shape
+                            .fill(Color.luminaOverlay.opacity(0.8))
+                            .overlay(
+                                HStack(spacing: LuminaSpace.lg) {
+                                    Button { onApply() } label: {
+                                        Image(systemName: "checkmark.circle.fill")
+                                            .foregroundStyle(.white)
+                                    }
+                                    .buttonStyle(LuminaIconButtonStyle())
+                                    .accessibilityLabel("Set as Wallpaper")
 
-            typeBadge
-                .padding(LuminaSpace.tight)
-                .accessibilityLabel(typeLabel)
-
-            if isHovered || isFocused {
-                RoundedRectangle(cornerRadius: LuminaRadius.control, style: .continuous)
-                    .fill(Color.luminaOverlay.opacity(0.8))
-                    .frame(width: thumbW, height: thumbH)
-                    .overlay(
-                        HStack(spacing: LuminaSpace.lg) {
-                            Button { onApply() } label: {
-                                Image(systemName: "checkmark.circle.fill")
-                                    .foregroundStyle(.white)
-                            }
-                            .buttonStyle(LuminaIconButtonStyle())
-                            .accessibilityLabel("Set as Wallpaper")
-
-                            Button { onFavorite() } label: {
-                                Image(systemName: isFavorite ? "star.fill" : "star")
-                                    .foregroundStyle(isFavorite ? LuminaStatusColor.star : .white)
-                            }
-                            .buttonStyle(LuminaIconButtonStyle())
-                            .accessibilityLabel(isFavorite ? "Unstar" : "Star")
-                        }
-                    )
-                    .transition(.opacity)
-            }
-
-            if isSelected {
-                RoundedRectangle(cornerRadius: LuminaRadius.control, style: .continuous)
-                    .strokeBorder(accent, lineWidth: 2)
-                    .frame(width: thumbW, height: thumbH)
-                    .overlay(alignment: .topTrailing) {
+                                    Button { onFavorite() } label: {
+                                        Image(systemName: isFavorite ? "star.fill" : "star")
+                                            .foregroundStyle(isFavorite ? LuminaStatusColor.star : .white)
+                                    }
+                                    .buttonStyle(LuminaIconButtonStyle())
+                                    .accessibilityLabel(isFavorite ? "Unstar" : "Star")
+                                }
+                            )
+                            .transition(.opacity)
+                    }
+                }
+                .overlay(alignment: .topTrailing) {
+                    if isSelected {
                         Image(systemName: "checkmark.circle.fill")
                             .font(.system(size: DisplayScale.points(16)))
                             .foregroundStyle(accent)
                             .background(Circle().fill(Color.luminaCard).padding(2))
                             .padding(LuminaSpace.tight)
+                    } else if isFavorite && !isHovered {
+                        Image(systemName: "star.fill")
+                            .font(.system(size: uiScale.iconSize(.inline)))
+                            .foregroundStyle(LuminaStatusColor.star)
+                            .padding(LuminaSpace.tight)
                     }
-            } else {
-                RoundedRectangle(cornerRadius: LuminaRadius.control, style: .continuous)
-                    .strokeBorder(Color.luminaBorder.opacity(0.5), lineWidth: 1)
-                    .frame(width: thumbW, height: thumbH)
-            }
+                }
+                .overlay {
+                    shape
+                        .strokeBorder(
+                            isSelected || isHovered || isFocused
+                                ? accent
+                                : Color.luminaBorder.opacity(0.5),
+                            lineWidth: isSelected ? 2 : 1
+                        )
+                }
 
-            if isFavorite && !isHovered {
-                Image(systemName: "star.fill")
-                    .font(.system(size: uiScale.iconSize(.inline)))
-                    .foregroundStyle(LuminaStatusColor.star)
-                    .padding(LuminaSpace.tight)
-                    .frame(width: thumbW, height: thumbH, alignment: .topTrailing)
-            }
+            Text(displayTitle)
+                .font(uiScale.font(.caption).weight(.medium))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
         .focusable()
         .focused($isFocused)
@@ -1186,22 +1252,12 @@ struct WallpaperGridItem: View {
             onMoveFocus?(direction)
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(recent.displayName)
+        .accessibilityLabel(displayTitle)
         .accessibilityValue(isFavorite ? "\(typeLabel), starred" : typeLabel)
         .accessibilityHint("Sets it on the selected display")
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
         .accessibilityAction(named: Text(isFavorite ? "Unstar" : "Star")) { onFavorite() }
         .accessibilityAction(named: Text("Remove from Library")) { onRemove?() }
-        .overlay(alignment: .bottom) {
-            Text(recent.displayName)
-                .font(uiScale.font(.callout).weight(.medium))
-                .foregroundStyle(isSelected ? .primary : .secondary)
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .frame(width: thumbW, height: LuminaMetrics.thumbLabelHeight, alignment: .leading)
-                .offset(y: LuminaMetrics.thumbLabelHeight)
-        }
-        .padding(.bottom, LuminaMetrics.thumbLabelHeight)
         .contextMenu {
             Button { onApply() } label: {
                 Label("Set as Wallpaper", systemImage: "photo.on.rectangle")
@@ -1219,14 +1275,12 @@ struct WallpaperGridItem: View {
     }
 
     @ViewBuilder private var thumbnailContent: some View {
-        RoundedRectangle(cornerRadius: LuminaRadius.control, style: .continuous)
-            .fill(Color.luminaFill)
+        Color.luminaFill
             .overlay {
                 if let thumb = thumbnail {
                     Image(nsImage: thumb)
                         .resizable()
-                        .aspectRatio(contentMode: .fill)
-                        .clipped()
+                        .scaledToFill()
                 } else if isLoading {
                     ProgressView().controlSize(.small)
                 } else {
@@ -1255,7 +1309,10 @@ struct WallpaperGridItem: View {
             .font(uiScale.font(.micro).weight(.bold))
             .foregroundStyle(.white)
             .padding(LuminaSpace.xs)
-            .background(Color.luminaOverlay, in: Capsule(style: .continuous))
+            .background(
+                Color.luminaOverlay,
+                in: RoundedRectangle(cornerRadius: LuminaRadius.badge, style: .continuous)
+            )
     }
 
     private func loadThumbnail() async {

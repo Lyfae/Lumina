@@ -509,10 +509,8 @@ public enum CoreSelfTest {
             inputs.session.isLaunching = true
             inputs.preferences.startup.restoreAtLaunch = false
             let plan = Planner.plan(inputs)
-            check("launch restoreAtLaunch false → empty", {
-                if case .empty = plan.surfaces[.desktop(DisplayKey("D0"))]?.content { return true }
-                return false
-            }())
+            check("launch restoreAtLaunch false → no desktop window",
+                  plan.surfaces[.desktop(DisplayKey("D0"))] == nil)
         }
 
         // ops idempotent under reapply (ops(p,p) already; also applying empty→p→p)

@@ -39,20 +39,27 @@ struct SettingsView: View {
             LuminaSheetHeader(icon: "gearshape.fill", title: "Settings", onClose: onClose)
 
             ScrollView {
-                VStack(alignment: .leading, spacing: LuminaSpace.cardGap) {
+                VStack(alignment: .leading, spacing: LuminaSpace.sm) {
                     ForEach(SettingsSection.allCases) { section in
                         SettingsDisclosureCard(section: section, expandedSection: $expandedSection) {
                             sectionContent(section, prefs: prefs)
                         }
                     }
                 }
-                .padding(LuminaSpace.xl)
+                .padding(.horizontal, LuminaSpace.xxl)
+                .padding(.vertical, LuminaSpace.xl)
                 .animation(LuminaMotion.reveal, value: expandedSection)
             }
             .frame(maxHeight: .infinity)
         }
-        .scaledFrame(width: 480, height: 660)
+        .frame(minWidth: DisplayScale.points(520))
+        .scaledFrame(width: 520, height: 660)
         .luminaWindowBackdrop()
+        .clipShape(RoundedRectangle(cornerRadius: LuminaRadius.floating, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: LuminaRadius.floating, style: .continuous)
+                .strokeBorder(Color.luminaBorder, lineWidth: 1)
+        )
         .tint(themeManager.current.color)
         .alert(
             "Couldn’t change Open at Login",
@@ -93,25 +100,23 @@ struct SettingsView: View {
 
     @ViewBuilder private var appearanceContent: some View {
         SettingsPickerRow(
-            title: "Appearance",
+            title: "Theme",
             subtitle: "Lumina’s windows only. Your wallpaper isn’t affected.",
-            placesControlBelow: false
+            placesControlBelow: true
         ) {
-            Picker("Appearance", selection: appearanceBinding) {
-                ForEach(AppAppearance.allCases) { mode in
-                    Label(mode.label, systemImage: mode.icon).tag(mode)
+            LuminaSegmentedPicker(
+                selection: appearanceBinding,
+                options: AppAppearance.allCases.map {
+                    LuminaSegmentedOption($0, title: $0.label, systemImage: $0.icon)
                 }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .controlSize(uiScale.controlSize())
-            .frame(maxWidth: DisplayScale.points(280))
+            )
+            .frame(maxWidth: .infinity)
         }
 
         LuminaDivider()
 
         VStack(alignment: .leading, spacing: LuminaSpace.sm) {
-            HStack(spacing: LuminaSpace.sm) {
+            HStack(alignment: .firstTextBaseline, spacing: LuminaSpace.sm) {
                 Text("Accent color")
                     .font(uiScale.font(.bodyStrong))
                 Spacer(minLength: 0)
@@ -119,7 +124,7 @@ struct SettingsView: View {
                     .font(uiScale.font(.callout))
                     .foregroundStyle(.secondary)
             }
-            HStack(spacing: LuminaSpace.sm) {
+            HStack(spacing: 0) {
                 ForEach(AccentTheme.allCases) { theme in
                     LuminaAccentSwatch(
                         theme: theme,
@@ -127,95 +132,100 @@ struct SettingsView: View {
                     ) {
                         themeManager.set(theme)
                     }
+                    .frame(maxWidth: .infinity)
                 }
             }
         }
         .frame(minHeight: LuminaSpace.rowHeight, alignment: .top)
+        .padding(.vertical, LuminaSpace.md)
 
         LuminaDivider()
 
         SettingsPickerRow(
             title: "Toolbar style",
             subtitle: "How Studio’s toolbars look.",
-            placesControlBelow: false
+            placesControlBelow: true
         ) {
-            Picker("Toolbar style", selection: materialBinding) {
-                Text("Glass").tag(StudioLookPreferences.Material.glass)
-                Text("Solid").tag(StudioLookPreferences.Material.solid)
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .controlSize(uiScale.controlSize())
-            .frame(maxWidth: DisplayScale.points(200))
+            LuminaSegmentedPicker(
+                selection: materialBinding,
+                options: [
+                    LuminaSegmentedOption(.glass, title: "Glass"),
+                    LuminaSegmentedOption(.solid, title: "Solid"),
+                ]
+            )
+            .frame(maxWidth: .infinity)
         }
     }
 
     // MARK: - Size & Spacing
 
     @ViewBuilder private var sizeContent: some View {
-        Text("Changes the size of text, buttons, and thumbnails.")
-            .font(uiScale.font(.caption))
-            .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: LuminaSpace.sm) {
+            Text("Changes the size of text, buttons, and thumbnails.")
+                .font(uiScale.font(.caption))
+                .foregroundStyle(.secondary)
 
-        HStack(spacing: LuminaSpace.sm) {
-            ForEach(UIScaleManager.Preset.allCases) { preset in
-                Button {
-                    LuminaMotion.animate(LuminaMotion.state) { uiScale.set(preset) }
-                } label: {
-                    VStack(spacing: LuminaSpace.tight) {
-                        Image(systemName: "square.grid.2x2.fill")
-                            .font(.system(size: DisplayScale.points(preset.sampleIconSize), weight: .semibold))
-                            .foregroundStyle(uiScale.preset == preset ? themeManager.current.color : .secondary)
-                        Text(preset.label)
-                            .font(uiScale.font(.micro))
-                            .foregroundStyle(uiScale.preset == preset ? .primary : .secondary)
+            HStack(spacing: LuminaSpace.sm) {
+                ForEach(UIScaleManager.Preset.allCases) { preset in
+                    Button {
+                        LuminaMotion.animate(LuminaMotion.state) { uiScale.set(preset) }
+                    } label: {
+                        VStack(spacing: LuminaSpace.tight) {
+                            Image(systemName: "square.grid.2x2.fill")
+                                .font(.system(size: DisplayScale.points(preset.sampleIconSize), weight: .semibold))
+                                .foregroundStyle(uiScale.preset == preset ? themeManager.current.color : .secondary)
+                            Text(preset.label)
+                                .font(uiScale.font(.micro))
+                                .foregroundStyle(uiScale.preset == preset ? .primary : .secondary)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, LuminaSpace.md)
+                        .background(
+                            RoundedRectangle(cornerRadius: LuminaRadius.control, style: .continuous)
+                                .fill(uiScale.preset == preset
+                                      ? themeManager.current.color.opacity(0.16)
+                                      : Color.luminaFill)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: LuminaRadius.control, style: .continuous)
+                                .strokeBorder(
+                                    uiScale.preset == preset
+                                        ? themeManager.current.color.opacity(0.4)
+                                        : Color.clear,
+                                    lineWidth: 1
+                                )
+                        )
+                        .contentShape(Rectangle())
                     }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, LuminaSpace.md)
-                    .background(
-                        RoundedRectangle(cornerRadius: LuminaRadius.control, style: .continuous)
-                            .fill(uiScale.preset == preset
-                                  ? themeManager.current.color.opacity(0.16)
-                                  : Color.luminaFill)
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: LuminaRadius.control, style: .continuous)
-                            .strokeBorder(
-                                uiScale.preset == preset
-                                    ? themeManager.current.color.opacity(0.4)
-                                    : Color.clear,
-                                lineWidth: 1
-                            )
-                    )
-                    .contentShape(Rectangle())
+                    .buttonStyle(LuminaPressableButtonStyle())
+                    .luminaHoverPlate()
+                    .accessibilityLabel(preset.label)
+                    .accessibilityAddTraits(uiScale.preset == preset ? .isSelected : [])
                 }
-                .buttonStyle(LuminaPressableButtonStyle())
-                .luminaHoverPlate()
-                .accessibilityLabel(preset.label)
-                .accessibilityAddTraits(uiScale.preset == preset ? .isSelected : [])
             }
-        }
 
-        Text(uiScale.preset.subtitle)
-            .font(uiScale.font(.caption))
-            .foregroundStyle(.secondary)
+            Text(uiScale.preset.subtitle)
+                .font(uiScale.font(.caption))
+                .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, LuminaSpace.md)
 
         LuminaDivider()
 
         SettingsPickerRow(
             title: "Spacing",
             subtitle: "Space between rows and cards.",
-            placesControlBelow: false
+            placesControlBelow: true
         ) {
-            Picker("Spacing", selection: densityBinding) {
-                Text("Tight").tag(StudioLookPreferences.Density.tight)
-                Text("Regular").tag(StudioLookPreferences.Density.regular)
-                Text("Roomy").tag(StudioLookPreferences.Density.airy)
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .controlSize(uiScale.controlSize())
-            .frame(maxWidth: DisplayScale.points(280))
+            LuminaSegmentedPicker(
+                selection: densityBinding,
+                options: [
+                    LuminaSegmentedOption(.tight, title: "Tight"),
+                    LuminaSegmentedOption(.regular, title: "Regular"),
+                    LuminaSegmentedOption(.airy, title: "Roomy"),
+                ]
+            )
+            .frame(maxWidth: .infinity)
         }
     }
 
@@ -231,20 +241,19 @@ struct SettingsView: View {
                 : "Sets the frame rate and heat rules below.",
             placesControlBelow: true
         ) {
-            Picker("Power preset", selection: Binding(
-                get: { prefs.power.profile ?? .balanced },
-                set: { profile in
-                    prefs.power.apply(profile)
-                    store.reapplyPowerPolicy()
+            LuminaSegmentedPicker(
+                selection: Binding(
+                    get: { prefs.power.profile ?? .balanced },
+                    set: { profile in
+                        prefs.power.apply(profile)
+                        store.reapplyPowerPolicy()
+                    }
+                ),
+                options: PowerProfile.allCases.map {
+                    LuminaSegmentedOption($0, title: $0.label)
                 }
-            )) {
-                ForEach(PowerProfile.allCases) { profile in
-                    Text(profile.label).tag(profile)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .controlSize(uiScale.controlSize())
+            )
+            .frame(maxWidth: .infinity)
         }
 
         settingsSubheader("Pause wallpapers")
@@ -280,6 +289,7 @@ struct SettingsView: View {
                     label: "Battery threshold"
                 )
             }
+            .padding(.vertical, LuminaSpace.md)
             .onChange(of: prefs.power.defaults.battery.pauseBelowPercent) { _, _ in
                 store.reapplyPowerPolicy()
             }
@@ -323,20 +333,19 @@ struct SettingsView: View {
             subtitle: "Auto uses only what each display needs.",
             placesControlBelow: true
         ) {
-            Picker("Resolution", selection: Binding(
-                get: { DecodeCapChoice(prefs.playback.defaultQuality) },
-                set: { choice in
-                    prefs.playback.defaultQuality = choice.qualityPreset
-                    store.reapplyPowerPolicy()
+            LuminaSegmentedPicker(
+                selection: Binding(
+                    get: { DecodeCapChoice(prefs.playback.defaultQuality) },
+                    set: { choice in
+                        prefs.playback.defaultQuality = choice.qualityPreset
+                        store.reapplyPowerPolicy()
+                    }
+                ),
+                options: DecodeCapChoice.allCases.map {
+                    LuminaSegmentedOption($0, title: $0.label)
                 }
-            )) {
-                ForEach(DecodeCapChoice.allCases) { choice in
-                    Text(choice.label).tag(choice)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .controlSize(uiScale.controlSize())
+            )
+            .frame(maxWidth: .infinity)
         }
 
         LuminaDivider()
@@ -346,27 +355,26 @@ struct SettingsView: View {
             subtitle: "Lower rates use less power.",
             placesControlBelow: true
         ) {
-            Picker("Frame rate", selection: Binding(
-                get: { FrameRateChoice(prefs.power.defaults.frameCap) },
-                set: { choice in
-                    prefs.power.defaults.frameCap = choice.frameRateCap
-                    store.reapplyPowerPolicy()
+            LuminaSegmentedPicker(
+                selection: Binding(
+                    get: { FrameRateChoice(prefs.power.defaults.frameCap) },
+                    set: { choice in
+                        prefs.power.defaults.frameCap = choice.frameRateCap
+                        store.reapplyPowerPolicy()
+                    }
+                ),
+                options: FrameRateChoice.choices(includingSelected: prefs.power.defaults.frameCap).map {
+                    LuminaSegmentedOption($0, title: $0.shortLabel)
                 }
-            )) {
-                ForEach(FrameRateChoice.choices(includingSelected: prefs.power.defaults.frameCap)) { choice in
-                    Text(choice.shortLabel).tag(choice)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .controlSize(uiScale.controlSize())
+            )
+            .frame(maxWidth: .infinity)
         }
 
         LuminaDivider()
 
         SettingsPickerRow(
             title: "On battery, limit to",
-            placesControlBelow: false
+            placesControlBelow: true
         ) {
             Picker("On battery, limit to", selection: Binding(
                 get: { FrameRateChoice(prefs.power.defaults.battery.capOnBattery) },
@@ -416,15 +424,15 @@ struct SettingsView: View {
         @Bindable var prefs = prefs
 
         SettingsPickerRow(title: "Size", placesControlBelow: false) {
-            Picker("Size", selection: $prefs.widget.size) {
-                Text("Compact").tag(MusicWidgetPreferences.Size.compact)
-                Text("Regular").tag(MusicWidgetPreferences.Size.regular)
-                Text("Large").tag(MusicWidgetPreferences.Size.expanded)
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .controlSize(uiScale.controlSize())
-            .frame(maxWidth: DisplayScale.points(280))
+            LuminaSegmentedPicker(
+                selection: $prefs.widget.size,
+                options: [
+                    LuminaSegmentedOption(.compact, title: "Compact"),
+                    LuminaSegmentedOption(.regular, title: "Regular"),
+                    LuminaSegmentedOption(.expanded, title: "Large"),
+                ]
+            )
+            .frame(maxWidth: DisplayScale.points(320))
         }
 
         LuminaDivider()
@@ -460,6 +468,7 @@ struct SettingsView: View {
                     .font(uiScale.font(.caption))
                     .foregroundStyle(.secondary)
             }
+            .padding(.vertical, LuminaSpace.md)
         }
 
         LuminaDivider()
@@ -570,6 +579,7 @@ struct SettingsView: View {
                     .foregroundStyle(LuminaStatusColor.paused)
             }
         }
+        .padding(.vertical, LuminaSpace.md)
     }
 
     // MARK: - Privacy
@@ -665,7 +675,7 @@ struct SettingsView: View {
         Text(title)
             .font(uiScale.font(.callout).weight(.semibold))
             .foregroundStyle(.secondary)
-            .padding(.top, LuminaSpace.sm)
+            .padding(.top, LuminaSpace.md)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 
@@ -802,19 +812,25 @@ private struct SettingsToggleRow: View {
     }
 
     var body: some View {
-        Toggle(isOn: $isOn) {
-            VStack(alignment: .leading, spacing: LuminaSpace.hair) {
+        HStack(alignment: .center, spacing: 0) {
+            VStack(alignment: .leading, spacing: LuminaSpace.xs) {
                 Text(title).font(uiScale.font(.bodyStrong))
                 if let subtitle {
                     Text(subtitle)
                         .font(uiScale.font(.caption))
                         .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
+            Spacer(minLength: LuminaSpace.sm)
+            Toggle("", isOn: $isOn)
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(toggleSize)
+                .accessibilityLabel(title)
         }
-        .toggleStyle(.switch)
-        .controlSize(toggleSize)
         .frame(minHeight: LuminaSpace.rowHeight, alignment: .center)
+        .padding(.vertical, LuminaSpace.md)
     }
 }
 
@@ -843,15 +859,17 @@ private struct SettingsPickerRow<Control: View>: View {
             }
         }
         .frame(minHeight: LuminaSpace.rowHeight, alignment: .center)
+        .padding(.vertical, LuminaSpace.md)
     }
 
     private var titleBlock: some View {
-        VStack(alignment: .leading, spacing: LuminaSpace.hair) {
+        VStack(alignment: .leading, spacing: LuminaSpace.xs) {
             Text(title).font(uiScale.font(.bodyStrong))
             if let subtitle {
                 Text(subtitle)
                     .font(uiScale.font(.caption))
                     .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -883,6 +901,7 @@ private struct SettingsButtonRow: View {
         }
         .buttonStyle(LuminaPressableButtonStyle())
         .luminaHoverPlate()
+        .padding(.vertical, LuminaSpace.md)
     }
 }
 
@@ -919,7 +938,7 @@ private struct SettingsDisclosureCard<Content: View>: View {
                         .foregroundStyle(.secondary)
                         .rotationEffect(.degrees(isExpanded ? 180 : 0))
                 }
-                .padding(.horizontal, LuminaSpace.cardPadding)
+                .padding(.horizontal, LuminaSpace.lg)
                 .frame(minHeight: LuminaSpace.rowHeight + DisplayScale.points(4))
                 .contentShape(Rectangle())
             }
@@ -933,14 +952,22 @@ private struct SettingsDisclosureCard<Content: View>: View {
                 VStack(alignment: .leading, spacing: 0) {
                     content()
                 }
-                .padding(.horizontal, LuminaSpace.cardPadding)
-                .padding(.bottom, LuminaSpace.cardPadding)
+                .padding(.horizontal, LuminaSpace.lg)
+                .padding(.top, LuminaSpace.md)
+                .padding(.bottom, LuminaSpace.md)
                 .transition(NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
                             ? .opacity
                             : .opacity.combined(with: .move(edge: .top)))
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .luminaGlassPanel(cornerRadius: LuminaRadius.panel)
+        .background(
+            Color.luminaCard,
+            in: RoundedRectangle(cornerRadius: LuminaRadius.card, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: LuminaRadius.card, style: .continuous)
+                .strokeBorder(Color.luminaBorder, lineWidth: 1)
+        )
     }
 }
