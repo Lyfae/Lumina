@@ -762,19 +762,18 @@ private struct AudioFooterBar: View {
                 VStack(alignment: .leading, spacing: LuminaSpace.hair) {
                     Text(nowPlayingTitle)
                         .font(uiScale.font(.bodyStrong))
-                        .lineLimit(1).truncationMode(.tail)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
                         .foregroundStyle(hasTrack ? .primary : .secondary)
                     Text(nowPlayingSubtitle)
                         .font(uiScale.font(.caption))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
+                        .truncationMode(.tail)
                 }
-                .frame(
-                    minWidth: LuminaMetrics.footerTitleMin,
-                    idealWidth: LuminaMetrics.footerTitleIdeal,
-                    maxWidth: LuminaMetrics.footerTitleMax,
-                    alignment: .leading
-                )
+                .frame(minWidth: 140, maxWidth: 260, alignment: .leading)
+                .layoutPriority(1)
+                .help(nowPlayingTitle)
 
                 if hasTrack {
                     HStack(spacing: LuminaSpace.xs) {

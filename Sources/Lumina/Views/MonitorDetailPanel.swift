@@ -979,7 +979,7 @@ struct MonitorDetailPanel: View {
 
             VStack(alignment: .leading, spacing: LuminaSpace.xs) {
                 LuminaSliderLabel(
-                    title: "Volume",
+                    title: "Video sound",
                     value: audioVolume < 0.01 ? "Muted" : "\(Int((audioVolume * 100).rounded()))%"
                 )
                 HStack {
@@ -1582,7 +1582,7 @@ struct MonitorDetailPanel: View {
                 }
             )
             .disabled(disabled)
-            Text("Lower rates use less power.")
+            Text("Caps GIFs and slideshows. Videos save the most power when paused.")
                 .font(uiScale.font(.caption))
                 .foregroundStyle(.secondary)
             if prefs?.power[display: key].fullQualityWhileStudioOpen == true {

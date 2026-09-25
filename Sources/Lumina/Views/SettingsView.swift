@@ -421,7 +421,7 @@ struct SettingsView: View {
 
         SettingsPickerRow(
             title: "Frame rate",
-            subtitle: "Lower rates use less power.",
+            subtitle: "Caps GIFs and slideshows. Videos save the most power when paused.",
             placesControlBelow: true
         ) {
             LuminaSegmentedPicker(
@@ -442,10 +442,11 @@ struct SettingsView: View {
         LuminaDivider()
 
         SettingsPickerRow(
-            title: "On battery, limit to",
+            title: "On battery, limit frame rate to",
+            subtitle: "Caps GIFs and slideshows. Videos save the most power when paused.",
             placesControlBelow: true
         ) {
-            Picker("On battery, limit to", selection: Binding(
+            Picker("On battery, limit frame rate to", selection: Binding(
                 get: { FrameRateChoice(prefs.power.defaults.battery.capOnBattery) },
                 set: { choice in
                     prefs.power.defaults.battery.capOnBattery = choice.frameRateCap
