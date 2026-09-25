@@ -19,13 +19,14 @@ struct SettingsView: View {
     @StateObject private var uiScale = UIScaleManager.shared
     @StateObject private var mediaAccess = MediaAccessSettings.shared
 
+    @AppStorage("lumina.settings.selectedSection") private var selectedSectionRaw: String =
+        SettingsSection.appearance.rawValue
+    @FocusState private var focusedSidebarSection: SettingsSection?
+
     @State private var launchAtLogin: Bool = false
     @State private var loginItemError: String?
-    @State private var expandedSection: SettingsSection? = .appearance
     @State private var shortcutConflicts: [ShortcutAction: String] = [:]
     @State private var shortcutCautions: [ShortcutAction: String] = [:]
-    /// Measured scroll content height; drives sheet hugging (no dead space).
-    @State private var scrollContentHeight: CGFloat = 0
 
     private var hotKeys: HotKeyCenter? {
         store.appDelegate?.hotKeyCenter ?? HotKeyCenter.shared
@@ -35,86 +36,54 @@ struct SettingsView: View {
         engine ?? store.appDelegate?.playbackEngine
     }
 
-    /// Cap the sheet at ~80% of the host Studio window (fallback: main screen).
-    private var maxSheetHeight: CGFloat {
-        let hostHeight =
-            NSApp.windows.first(where: { $0.isMainWindow && $0.isVisible })?.frame.height
-            ?? NSApp.mainWindow?.frame.height
-            ?? NSScreen.main?.visibleFrame.height
-            ?? 900
-        return hostHeight * 0.8
+    private var selectedSection: SettingsSection {
+        SettingsSection(rawValue: selectedSectionRaw) ?? .appearance
     }
 
-    private var headerReserve: CGFloat {
-        // LuminaSheetHeader: icon row + vertical padding + divider.
-        DisplayScale.points(56)
+    private var hostWindowSize: CGSize {
+        NSApp.windows.first(where: { $0.isMainWindow && $0.isVisible })?.frame.size
+            ?? NSApp.mainWindow?.frame.size
+            ?? NSScreen.main?.visibleFrame.size
+            ?? CGSize(width: 1200, height: 800)
     }
 
-    private var maxScrollHeight: CGFloat {
-        max(DisplayScale.points(160), maxSheetHeight - headerReserve)
+    private var sheetWidth: CGFloat {
+        let preferred = DisplayScale.points(760)
+        let minimum = DisplayScale.points(640)
+        let limit = hostWindowSize.width - DisplayScale.points(48)
+        return min(preferred, max(minimum, limit))
     }
 
-    private var fittedScrollHeight: CGFloat {
-        // Before the first preference pass, use a modest estimate so the sheet
-        // doesn't flash at maxScrollHeight (the old 660pt dead-space bug).
-        let content = scrollContentHeight > 0 ? scrollContentHeight : DisplayScale.points(480)
-        return min(content, maxScrollHeight)
+    private var sheetHeight: CGFloat {
+        let preferred = DisplayScale.points(540)
+        let minimum = DisplayScale.points(420)
+        let limit = hostWindowSize.height - DisplayScale.points(48)
+        return min(preferred, max(minimum, limit))
     }
+
+    private var sidebarWidth: CGFloat { DisplayScale.points(190) }
 
     var body: some View {
         @Bindable var prefs = prefs
         return VStack(spacing: 0) {
             LuminaSheetHeader(icon: "gearshape.fill", title: "Settings", onClose: onClose)
 
-            ScrollViewReader { proxy in
-                ScrollView {
-                    VStack(alignment: .leading, spacing: LuminaSpace.sm) {
-                        ForEach(SettingsSection.allCases) { section in
-                            SettingsDisclosureCard(section: section, expandedSection: $expandedSection) {
-                                sectionContent(section, prefs: prefs)
-                            }
-                            .id(section)
-                        }
-                    }
-                    .padding(.horizontal, LuminaSpace.xxl)
-                    .padding(.vertical, LuminaSpace.xl)
-                    .background(
-                        GeometryReader { geo in
-                            Color.clear.preference(
-                                key: SettingsScrollContentHeightKey.self,
-                                value: geo.size.height
-                            )
-                        }
-                    )
-                }
-                .frame(height: fittedScrollHeight)
-                .frame(maxHeight: maxScrollHeight, alignment: .top)
-                .animation(Self.accordionAnimation, value: scrollContentHeight)
-                .onPreferenceChange(SettingsScrollContentHeightKey.self) { height in
-                    guard abs(height - scrollContentHeight) > 0.5 else { return }
-                    if scrollContentHeight == 0 {
-                        // First measure: snap, don't spring open from the estimate.
-                        var transaction = Transaction()
-                        transaction.disablesAnimations = true
-                        withTransaction(transaction) { scrollContentHeight = height }
-                    } else {
-                        scrollContentHeight = height
-                    }
-                }
-                .onChange(of: expandedSection) { _, section in
-                    guard let section else { return }
-                    // Wait one turn so the expanding card has laid out, then reveal it.
-                    DispatchQueue.main.async {
-                        LuminaMotion.animate(Self.accordionAnimation) {
-                            proxy.scrollTo(section, anchor: .top)
-                        }
-                    }
-                }
+            HStack(spacing: 0) {
+                settingsSidebar
+                    .frame(width: sidebarWidth)
+                    .frame(maxHeight: .infinity, alignment: .top)
+
+                Rectangle()
+                    .fill(Color.luminaBorder)
+                    .frame(width: 1)
+                    .frame(maxHeight: .infinity)
+
+                settingsDetail(prefs: prefs)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(width: DisplayScale.points(520))
-        .frame(maxHeight: maxSheetHeight)
-        .fixedSize(horizontal: false, vertical: true)
+        .frame(width: sheetWidth, height: sheetHeight)
         .presentationSizing(.fitted)
         .luminaWindowBackdrop()
         .clipShape(RoundedRectangle(cornerRadius: LuminaRadius.floating, style: .continuous))
@@ -134,19 +103,87 @@ struct SettingsView: View {
         } message: {
             Text(loginItemError ?? "")
         }
+        .onExitCommand(perform: onClose)
         .onAppear(perform: prepareOnAppear)
         .onChange(of: router.pendingSection) { _, section in
             guard let section else { return }
-            LuminaMotion.animate(Self.accordionAnimation) { expandedSection = section }
+            selectSection(section)
             router.pendingSection = nil
+        }
+        .onChange(of: focusedSidebarSection) { _, section in
+            guard let section, section.rawValue != selectedSectionRaw else { return }
+            selectedSectionRaw = section.rawValue
         }
     }
 
-    /// Spring used for accordion open/close (and matching scroll). Respects Reduce Motion.
-    fileprivate static var accordionAnimation: Animation? {
-        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-            ? nil
-            : .spring(response: 0.32, dampingFraction: 0.86)
+    private var settingsSidebar: some View {
+        VStack(alignment: .leading, spacing: LuminaSpace.xs) {
+            ForEach(SettingsSection.allCases) { section in
+                SettingsSidebarRow(
+                    section: section,
+                    isSelected: selectedSection == section,
+                    isKeyboardFocused: focusedSidebarSection == section,
+                    focusedSection: $focusedSidebarSection
+                ) {
+                    selectSection(section)
+                }
+                .onMoveCommand { direction in
+                    moveSidebarSelection(direction)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, LuminaSpace.sm)
+        .padding(.vertical, LuminaSpace.md)
+        .environment(\.luminaButtonFocusRing, false)
+    }
+
+    @ViewBuilder
+    private func settingsDetail(prefs: PreferencesStore) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: LuminaSpace.lg) {
+                Text(selectedSection.title)
+                    .font(uiScale.font(.title).weight(.semibold))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                VStack(alignment: .leading, spacing: 0) {
+                    sectionContent(selectedSection, prefs: prefs)
+                }
+                .padding(.horizontal, LuminaSpace.lg)
+                .padding(.vertical, LuminaSpace.md)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.luminaCard)
+                .clipShape(RoundedRectangle(cornerRadius: LuminaRadius.card, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: LuminaRadius.card, style: .continuous)
+                        .strokeBorder(Color.luminaBorder, lineWidth: 1)
+                )
+            }
+            .padding(.horizontal, LuminaSpace.xl)
+            .padding(.vertical, LuminaSpace.lg)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .id(selectedSection)
+        .transition(.opacity)
+        .animation(LuminaMotion.state, value: selectedSection)
+    }
+
+    private func selectSection(_ section: SettingsSection) {
+        selectedSectionRaw = section.rawValue
+        focusedSidebarSection = section
+    }
+
+    private func moveSidebarSelection(_ direction: MoveCommandDirection) {
+        let all = SettingsSection.allCases
+        guard let index = all.firstIndex(of: selectedSection) else { return }
+        switch direction {
+        case .up where index > 0:
+            selectSection(all[index - 1])
+        case .down where index < all.count - 1:
+            selectSection(all[index + 1])
+        default:
+            break
+        }
     }
 
     // MARK: - Section content
@@ -753,8 +790,12 @@ struct SettingsView: View {
     }
 
     private func prepareOnAppear() {
-        expandedSection = router.pendingSection ?? .appearance
-        router.pendingSection = nil
+        if let pending = router.pendingSection {
+            selectSection(pending)
+            router.pendingSection = nil
+        } else {
+            focusedSidebarSection = selectedSection
+        }
         let status = SMAppService.mainApp.status
         launchAtLogin = (status == .enabled || status == .requiresApproval)
     }
@@ -978,87 +1019,67 @@ private struct SettingsButtonRow: View {
     }
 }
 
-// MARK: - Scroll content sizing
+// MARK: - Sidebar row
 
-private struct SettingsScrollContentHeightKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = max(value, nextValue())
-    }
-}
-
-// MARK: - Disclosure Card
-
-private struct SettingsDisclosureCard<Content: View>: View {
+private struct SettingsSidebarRow: View {
     let section: SettingsSection
-    @Binding var expandedSection: SettingsSection?
-    @ViewBuilder let content: () -> Content
+    let isSelected: Bool
+    let isKeyboardFocused: Bool
+    var focusedSection: FocusState<SettingsSection?>.Binding
+    var action: () -> Void
 
     @StateObject private var uiScale = UIScaleManager.shared
     @StateObject private var theme = ThemeManager.shared
+    @State private var isHovered = false
 
-    private var isExpanded: Bool { expandedSection == section }
-
-    private var cardShape: RoundedRectangle {
-        RoundedRectangle(cornerRadius: LuminaRadius.card, style: .continuous)
-    }
-
-    private var contentTransition: AnyTransition {
-        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
-            return .opacity
-        }
-        return .opacity
-            .combined(with: .move(edge: .top))
-            .combined(with: .scale(scale: 0.98, anchor: .top))
+    private var rowShape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: LuminaRadius.control, style: .continuous)
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Button {
-                // Single transaction: opening this card closes any other in the same spring.
-                LuminaMotion.animate(SettingsView.accordionAnimation) {
-                    expandedSection = isExpanded ? nil : section
-                }
-            } label: {
-                HStack(spacing: LuminaSpace.sm) {
-                    Image(systemName: section.icon)
-                        .font(.system(size: uiScale.iconSize(.card), weight: .semibold))
-                        .foregroundStyle(theme.current.color)
-                        .frame(width: DisplayScale.points(20))
-                    Text(section.title)
-                        .font(uiScale.font(.bodyStrong))
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
-                    Spacer(minLength: 0)
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: uiScale.iconSize(.inline), weight: .semibold))
-                        .foregroundStyle(.secondary)
-                        .rotationEffect(.degrees(isExpanded ? 180 : 0))
-                }
-                .padding(.horizontal, LuminaSpace.lg)
-                .frame(minHeight: LuminaSpace.rowHeight + DisplayScale.points(4))
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(LuminaPressableButtonStyle())
-            .luminaHoverPlate()
-            .accessibilityLabel(section.title)
-            .accessibilityAddTraits(.isHeader)
-            .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
-
-            if isExpanded {
-                VStack(alignment: .leading, spacing: 0) {
-                    content()
-                }
-                .padding(.horizontal, LuminaSpace.lg)
-                .padding(.top, LuminaSpace.md)
-                .padding(.bottom, LuminaSpace.md)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .transition(contentTransition)
+        HStack(spacing: LuminaSpace.sm) {
+            Image(systemName: section.icon)
+                .font(.system(size: uiScale.iconSize(.card), weight: .semibold))
+                .symbolRenderingMode(.monochrome)
+                .foregroundStyle(theme.current.color)
+                .frame(width: DisplayScale.points(20))
+            Text(section.title)
+                .font(uiScale.font(.bodyStrong))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, LuminaSpace.sm)
+        .frame(minHeight: LuminaSpace.rowHeight)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+        .background(rowShape.fill(rowFill))
+        .overlay {
+            if isKeyboardFocused {
+                RoundedRectangle(cornerRadius: LuminaRadius.control + 3, style: .continuous)
+                    .strokeBorder(theme.current.color.opacity(0.9), lineWidth: 2)
+                    .padding(-3)
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.luminaCard)
-        .clipShape(cardShape)
-        .overlay(cardShape.strokeBorder(Color.luminaBorder, lineWidth: 1))
+        .onTapGesture(perform: action)
+        .focusable()
+        .focused(focusedSection, equals: section)
+        .focusEffectDisabled()
+        .onKeyPress(.return) { action(); return .handled }
+        .onKeyPress(.space) { action(); return .handled }
+        .onHover { isHovered = $0 }
+        .accessibilityLabel(section.title)
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+        .accessibilityAction(named: Text("Select")) { action() }
+    }
+
+    private var rowFill: Color {
+        if isSelected {
+            return theme.current.color.opacity(0.22)
+        }
+        if isHovered {
+            return Color.luminaFillHover
+        }
+        return .clear
     }
 }
