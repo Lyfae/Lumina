@@ -1,6 +1,6 @@
+import LuminaCore
 import SwiftUI
 
-/// Unified waveform scrubber for Studio footer and the floating music widget.
 struct LuminaWaveformScrubber: View {
     enum Style { case footer, widget }
     enum Source { case live, staticSeed(Int) }
@@ -15,9 +15,11 @@ struct LuminaWaveformScrubber: View {
 
     @StateObject private var theme = ThemeManager.shared
     @StateObject private var uiScale = UIScaleManager.shared
+    @ObservedObject private var pets = PetCatalog.shared
     @State private var isHovered = false
-    @State private var levels: [CGFloat] = []
+    @State private var dragDirection: Double = 0
     @FocusState private var isFocused: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var safeDuration: Double {
         duration.isFinite ? max(0, duration) : 0
@@ -29,8 +31,6 @@ struct LuminaWaveformScrubber: View {
         return min(safeDuration, max(0, t))
     }
 
-    private var showThumb: Bool { isHovered || preview != nil || isFocused }
-
     private var fraction: CGFloat {
         guard safeDuration > 0 else { return 0 }
         return CGFloat(min(1, max(0, displayTime / safeDuration)))
@@ -38,30 +38,47 @@ struct LuminaWaveformScrubber: View {
 
     private var accent: Color { theme.current.color }
     private var interactive: Bool { safeDuration > 0 }
+    private var isDragging: Bool { preview != nil }
+    private var hasTrack: Bool { interactive }
 
-    private var liveTrackURL: URL? {
-        AmbientAudioManager.shared.trackURL
+    private var didFinish: Bool {
+        guard hasTrack, !isPlaying, !isDragging else { return false }
+        return displayTime >= safeDuration - 0.12
     }
 
-    private var waveformIdentity: String {
-        switch source {
-        case .live:
-            return liveTrackURL?.absoluteString ?? ""
-        case .staticSeed(let seed):
-            return "seed:\(seed)"
+    private var petState: PetState {
+        let mapped = PetState.forPlayback(
+            isPlaying: isPlaying,
+            isDragging: isDragging,
+            dragDirection: dragDirection,
+            didFinish: didFinish,
+            loadFailed: false,
+            hasTrack: hasTrack
+        )
+        if reduceMotion {
+            switch mapped {
+            case .runningRight, .runningLeft, .running, .jumping, .waving:
+                return .idle
+            default:
+                return mapped
+            }
         }
+        return mapped
     }
 
     private var timeColumnWidth: CGFloat {
         safeDuration >= 3600 ? DisplayScale.points(56) : LuminaMetrics.timeLabelWidth
     }
 
+    private var petsEnabled: Bool { pets.isEnabled }
+
     var body: some View {
+        let _ = source
         Group {
             if style == .footer {
                 footerBody
             } else {
-                waveformBand(fixedHeight: nil)
+                journeyBand(bandHeight: nil)
             }
         }
         .opacity(interactive ? 1 : 0.35)
@@ -84,6 +101,8 @@ struct LuminaWaveformScrubber: View {
         }
         .focusable(interactive)
         .focused($isFocused)
+        .focusEffectDisabled()
+        .environment(\.luminaButtonFocusRing, false)
         .onKeyPress(.leftArrow) {
             seekBy(NSEvent.modifierFlags.contains(.shift) ? -30 : -5)
             return .handled
@@ -97,9 +116,6 @@ struct LuminaWaveformScrubber: View {
             commitSeek(0)
             return .handled
         }
-        .task(id: waveformIdentity) {
-            await refreshLevels()
-        }
     }
 
     private var footerBody: some View {
@@ -110,7 +126,7 @@ struct LuminaWaveformScrubber: View {
                 .frame(width: timeColumnWidth, alignment: .trailing)
                 .accessibilityHidden(true)
 
-            waveformBand(fixedHeight: LuminaMetrics.waveformFooterBand)
+            journeyBand(bandHeight: DisplayScale.points(28))
 
             Text(formatTime(safeDuration))
                 .font(uiScale.font(.caption).monospacedDigit())
@@ -120,36 +136,75 @@ struct LuminaWaveformScrubber: View {
         }
     }
 
-    private func waveformBand(fixedHeight: CGFloat?) -> some View {
+    private func journeyBand(bandHeight: CGFloat?) -> some View {
         GeometryReader { geo in
             let width = max(geo.size.width, 1)
-            let height = max(fixedHeight ?? geo.size.height, 1)
-            let barPitch = LuminaMetrics.waveformBarWidth + LuminaMetrics.waveformBarGap
-            let count = min(96, max(24, Int(floor(width / max(barPitch, 1)))))
-            let playhead = width * fraction
-            let thumb = LuminaMetrics.waveformThumb
-            let displayLevels = resolvedLevels(count: count)
-
-            ZStack(alignment: .leading) {
-                WaveformBars(
-                    levels: displayLevels,
-                    height: height,
-                    width: width,
-                    playedWidth: playhead,
-                    accent: accent,
-                    playedOpacity: isPlaying ? 1.0 : 0.6
-                )
-
-                if showThumb && interactive {
-                    Circle()
-                        .fill(Color.luminaCard)
-                        .overlay(Circle().strokeBorder(accent, lineWidth: 1.5))
-                        .shadow(color: .black.opacity(0.2), radius: 1.5, y: 0.5)
-                        .frame(width: thumb, height: thumb)
-                        .offset(x: max(0, min(width - thumb, playhead - thumb / 2)))
+            let height = max(bandHeight ?? geo.size.height, 1)
+            let petHeight: CGFloat = {
+                if style == .footer {
+                    return min(DisplayScale.points(28), max(DisplayScale.points(22), height - DisplayScale.points(2)))
                 }
+                return min(max(height * 0.9, DisplayScale.points(22)), DisplayScale.points(34))
+            }()
+            let knobSize = DisplayScale.points(12)
+            let aspect: CGFloat = 192.0 / 208.0
+            let playheadW = petsEnabled ? petHeight * aspect : knobSize
+            let trackH: CGFloat = isHovered || isDragging || isFocused
+                ? DisplayScale.points(6)
+                : DisplayScale.points(4)
+            let inset = max(playheadW * 0.5, knobSize * 0.5)
+            let travel = max(width - inset * 2, 1)
+            let playheadX = inset + travel * fraction
+
+            ZStack(alignment: .bottomLeading) {
+                Capsule()
+                    .fill(Color.clear)
+                    .frame(width: width, height: trackH)
+                    .overlay {
+                        Canvas { context, size in
+                            let spacing: CGFloat = 5
+                            let r: CGFloat = 0.9
+                            var x: CGFloat = r
+                            let y = size.height * 0.5
+                            while x < size.width {
+                                let rect = CGRect(x: x - r, y: y - r, width: r * 2, height: r * 2)
+                                context.fill(
+                                    Path(ellipseIn: rect),
+                                    with: .color(Color.secondary.opacity(0.35))
+                                )
+                                x += spacing
+                            }
+                        }
+                    }
+                    .overlay(alignment: .leading) {
+                        Capsule()
+                            .fill(accent)
+                            .frame(width: max(trackH, playheadX), height: trackH)
+                            .shadow(color: accent.opacity(0.45), radius: 4, y: 0)
+                    }
+                    .clipShape(Capsule())
+                    .frame(width: width, height: trackH)
+                    .frame(maxHeight: .infinity, alignment: .bottom)
+
+                if isDragging {
+                    Text(formatTime(displayTime))
+                        .font(uiScale.font(.micro).monospacedDigit().weight(.semibold))
+                        .foregroundStyle(accent)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(.ultraThinMaterial, in: Capsule())
+                        .fixedSize()
+                        .offset(x: playheadX - 24, y: trackH + DisplayScale.points(16))
+                        .allowsHitTesting(false)
+                        .zIndex(2)
+                }
+
+                playheadContent(petHeight: petHeight, knobSize: knobSize)
+                    .frame(width: playheadW, height: petsEnabled ? petHeight : knobSize, alignment: .bottom)
+                    .offset(x: playheadX - playheadW * 0.5, y: -trackH * 0.35)
+                    .allowsHitTesting(false)
             }
-            .frame(width: width, height: height)
+            .frame(width: width, height: height, alignment: .bottom)
             .contentShape(Rectangle())
             .onHover { hovering in
                 LuminaMotion.animate(LuminaMotion.hover) { isHovered = hovering }
@@ -158,9 +213,16 @@ struct LuminaWaveformScrubber: View {
                 DragGesture(minimumDistance: 0, coordinateSpace: .local)
                     .onChanged { value in
                         guard interactive else { return }
+                        let dx = value.translation.width
+                        if abs(dx) < 0.5 {
+                            dragDirection = 0
+                        } else {
+                            dragDirection = dx < 0 ? -1 : 1
+                        }
                         preview = time(at: value.location.x, width: width)
                     }
                     .onEnded { value in
+                        dragDirection = 0
                         guard interactive else {
                             preview = nil
                             return
@@ -172,49 +234,36 @@ struct LuminaWaveformScrubber: View {
                     }
             )
         }
-        .frame(height: fixedHeight)
+        .frame(height: bandHeight)
     }
 
-    private func resolvedLevels(count: Int) -> [CGFloat] {
-        if !levels.isEmpty {
-            return TrackWaveformCache.resample(levels, count: count)
-        }
-        switch source {
-        case .live:
-            let seed = liveTrackURL?.absoluteString.hashValue ?? 0
-            return Self.staticLevels(count: count, seed: seed)
-        case .staticSeed(let seed):
-            return Self.staticLevels(count: count, seed: seed)
-        }
-    }
-
-    private func refreshLevels() async {
-        switch source {
-        case .staticSeed(let seed):
-            levels = Self.staticLevels(count: TrackWaveformCache.resolution, seed: seed)
-        case .live:
-            guard let url = liveTrackURL else {
-                levels = []
-                return
-            }
-            let key = url.absoluteString
-            if let cached = await TrackWaveformCache.shared.cached(for: url) {
-                levels = cached
+    @ViewBuilder
+    private func playheadContent(petHeight: CGFloat, knobSize: CGFloat) -> some View {
+        if petsEnabled, let pet = pets.currentPet {
+            let hasFrames = !pet.frames(for: petState).isEmpty || !pet.frames(for: .idle).isEmpty
+            if hasFrames {
+                PetSprite(state: petState, height: petHeight, pet: pet)
+                    .shadow(color: isFocused ? accent.opacity(0.5) : .clear, radius: isFocused ? 5 : 0)
+            } else if let thumb = pet.thumbnailImage() {
+                Image(nsImage: thumb)
+                    .resizable()
+                    .interpolation(.high)
+                    .aspectRatio(contentMode: .fit)
+                    .frame(height: petHeight)
             } else {
-                levels = Self.staticLevels(count: 48, seed: key.hashValue)
+                knobView(size: knobSize)
             }
-            let loaded = await TrackWaveformCache.shared.levels(for: url, count: TrackWaveformCache.resolution)
-            guard !Task.isCancelled, AmbientAudioManager.shared.trackURL?.absoluteString == key else { return }
-            levels = loaded
+        } else {
+            knobView(size: knobSize)
         }
     }
 
-    static func staticLevels(count: Int, seed: Int) -> [CGFloat] {
-        let s = Double(abs(seed) % 1000) / 97
-        return (0..<count).map { i in
-            let di = Double(i)
-            return CGFloat(0.25 + 0.55 * abs(sin(0.9 * di + s)) * (0.6 + 0.4 * abs(sin(0.37 * di + 1.3 * s))))
-        }
+    private func knobView(size: CGFloat) -> some View {
+        Circle()
+            .fill(accent)
+            .overlay(Circle().strokeBorder(Color.primary.opacity(0.2), lineWidth: 1))
+            .shadow(color: accent.opacity(isFocused ? 0.55 : 0.3), radius: isFocused ? 5 : 2, y: 0)
+            .frame(width: size, height: size)
     }
 
     private func seekBy(_ delta: Double) {
@@ -249,41 +298,6 @@ struct LuminaWaveformScrubber: View {
     }
 }
 
-/// Bars laid out across the full width so playhead coloring matches seek geometry.
-private struct WaveformBars: View {
-    let levels: [CGFloat]
-    let height: CGFloat
-    let width: CGFloat
-    let playedWidth: CGFloat
-    let accent: Color
-    let playedOpacity: Double
-
-    var body: some View {
-        Canvas { context, size in
-            let count = levels.count
-            guard count > 0, size.width > 0, size.height > 0 else { return }
-            let barW = LuminaMetrics.waveformBarWidth
-            let pitch = size.width / CGFloat(count)
-            let minH = DisplayScale.points(2)
-
-            for (i, level) in levels.enumerated() {
-                let x = CGFloat(i) * pitch + max(0, (pitch - barW) / 2)
-                let h = max(minH, CGFloat(level) * size.height)
-                let y = (size.height - h) / 2
-                let rect = CGRect(x: x, y: y, width: min(barW, pitch), height: h)
-                let centerX = rect.midX
-                let color = centerX <= playedWidth
-                    ? accent.opacity(playedOpacity)
-                    : Color.primary.opacity(0.22)
-                context.fill(Path(roundedRect: rect, cornerRadius: min(barW, h) / 2), with: .color(color))
-            }
-        }
-        .frame(width: width, height: height)
-        .allowsHitTesting(false)
-    }
-}
-
-/// Temporary wrapper — Batch 2 switches the footer to `LuminaWaveformScrubber` and deletes this.
 struct AudioProgressScrubber: View {
     let currentTime: Double
     let duration: Double

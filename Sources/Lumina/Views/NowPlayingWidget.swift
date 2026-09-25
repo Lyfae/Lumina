@@ -661,11 +661,9 @@ struct NowPlayingWidgetView: View {
         .accessibilityHidden(true)
     }
 
-    // MARK: Waveform
+    // MARK: Journey scrubber
 
     private func waveformRow(_ m: WidgetMetrics) -> some View {
-        let seed = audio.trackURL?.absoluteString.hashValue ?? 0
-        let showsWave = prefs?.widget.showsWaveform ?? true
         let duration = audio.duration.isFinite ? max(0, audio.duration) : 0
         let timeWidth: CGFloat = duration >= 3600
             ? DisplayScale.points(48)
@@ -681,11 +679,13 @@ struct NowPlayingWidgetView: View {
                 duration: duration,
                 isPlaying: audio.isPlaying,
                 style: .widget,
-                source: showsWave ? .live : .staticSeed(seed),
+                source: .live,
                 preview: $scrubPreview,
                 onSeek: { audio.seekToTime($0) }
             )
             .frame(height: m.waveBand)
+            .focusEffectDisabled()
+            .environment(\.luminaButtonFocusRing, false)
 
             Text(formatTime(duration))
                 .font(uiScale.font(.micro).monospacedDigit())

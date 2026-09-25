@@ -894,5 +894,41 @@ public enum CoreSelfTest {
             check("crop Fill maps crop into display",
                   abs(cropFill.mediaFrame.width / media43.width - cropFill.mediaFrame.height / media43.height) < 0.001)
         }
+
+        // ── PetState.forPlayback ──
+        do {
+            func state(
+                playing: Bool = false,
+                dragging: Bool = false,
+                direction: Double = 0,
+                finished: Bool = false,
+                failed: Bool = false,
+                track: Bool = true
+            ) -> PetState {
+                PetState.forPlayback(
+                    isPlaying: playing,
+                    isDragging: dragging,
+                    dragDirection: direction,
+                    didFinish: finished,
+                    loadFailed: failed,
+                    hasTrack: track
+                )
+            }
+
+            check("no track → idle", state(playing: true, track: false) == .idle)
+            check("paused with track → idle", state(playing: false, track: true) == .idle)
+            check("playing → runningRight", state(playing: true) == .runningRight)
+            check("drag held → review", state(playing: true, dragging: true, direction: 0) == .review)
+            check("drag left → runningLeft", state(dragging: true, direction: -1) == .runningLeft)
+            check("drag right → runningRight", state(dragging: true, direction: 1) == .runningRight)
+            check("didFinish → jumping", state(finished: true) == .jumping)
+            check("loadFailed → failed", state(playing: true, failed: true) == .failed)
+            check("loadFailed beats drag", state(dragging: true, direction: 1, failed: true) == .failed)
+            check("drag beats didFinish", state(dragging: true, finished: true) == .review)
+            check("didFinish beats playing", state(playing: true, finished: true) == .jumping)
+            check("wave alias", PetState.fromRowKey("wave") == .waving)
+            check("jump alias", PetState.fromRowKey("jump") == .jumping)
+            check("run alias", PetState.fromRowKey("run") == .running)
+        }
     }
 }

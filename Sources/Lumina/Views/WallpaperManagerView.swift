@@ -771,8 +771,8 @@ private struct AudioFooterBar: View {
                         .lineLimit(1)
                         .truncationMode(.tail)
                 }
-                .frame(minWidth: 140, maxWidth: 260, alignment: .leading)
-                .layoutPriority(1)
+                .frame(maxWidth: 260, alignment: .leading)
+                .fixedSize(horizontal: true, vertical: false)
                 .help(nowPlayingTitle)
 
                 if hasTrack {
@@ -816,6 +816,7 @@ private struct AudioFooterBar: View {
                             audioManager.setLoops(!audioManager.loops)
                         }
                     }
+                    .fixedSize(horizontal: true, vertical: false)
 
                     LuminaWaveformScrubber(
                         currentTime: audioManager.currentTime,
@@ -826,7 +827,8 @@ private struct AudioFooterBar: View {
                         preview: $scrubPreview,
                         onSeek: { audioManager.seekToTime($0) }
                     )
-                    .frame(maxWidth: .infinity)
+                    .frame(minWidth: 80, maxWidth: .infinity)
+                    .layoutPriority(-1)
 
                     HStack(spacing: LuminaSpace.sm) {
                         Button {

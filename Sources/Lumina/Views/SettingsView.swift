@@ -18,6 +18,8 @@ struct SettingsView: View {
     @StateObject private var audioManager = AmbientAudioManager.shared
     @StateObject private var uiScale = UIScaleManager.shared
     @StateObject private var mediaAccess = MediaAccessSettings.shared
+    @StateObject private var petCatalog = PetCatalog.shared
+    @FocusState private var focusedPetSlug: String?
 
     @AppStorage("lumina.settings.selectedSection") private var selectedSectionRaw: String =
         SettingsSection.appearance.rawValue
@@ -530,6 +532,40 @@ struct SettingsView: View {
     @ViewBuilder private func musicContent(prefs: PreferencesStore) -> some View {
         @Bindable var prefs = prefs
 
+        settingsSubheader("Music pet")
+
+        SettingsToggleRow(
+            title: "Show pet on the progress bar",
+            isOn: Binding(
+                get: { petCatalog.isEnabled },
+                set: { petCatalog.isEnabled = $0 }
+            )
+        )
+
+        if !petCatalog.pets.isEmpty {
+            LazyVGrid(
+                columns: [
+                    GridItem(.adaptive(minimum: DisplayScale.points(96), maximum: DisplayScale.points(120)), spacing: LuminaSpace.sm),
+                ],
+                spacing: LuminaSpace.sm
+            ) {
+                ForEach(petCatalog.pets) { pet in
+                    MusicPetCard(
+                        pet: pet,
+                        isSelected: petCatalog.selectedSlug == pet.slug,
+                        isKeyboardFocused: focusedPetSlug == pet.slug,
+                        focusedSlug: $focusedPetSlug
+                    ) {
+                        petCatalog.selectedSlug = pet.slug
+                    }
+                }
+            }
+            .padding(.bottom, LuminaSpace.md)
+            .environment(\.luminaButtonFocusRing, false)
+        }
+
+        LuminaDivider()
+
         SettingsPickerRow(title: "Widget size", placesControlBelow: true) {
             LuminaSegmentedPicker(
                 selection: $prefs.widget.size,
@@ -892,6 +928,86 @@ struct SettingsView: View {
             launchAtLogin = (status == .enabled || status == .requiresApproval)
             loginItemError = "macOS said: \(error.localizedDescription)"
         }
+    }
+}
+
+// MARK: - Music pet picker
+
+private struct MusicPetCard: View {
+    let pet: PetInfo
+    let isSelected: Bool
+    let isKeyboardFocused: Bool
+    var focusedSlug: FocusState<String?>.Binding
+    var action: () -> Void
+
+    @StateObject private var uiScale = UIScaleManager.shared
+    @StateObject private var theme = ThemeManager.shared
+    @State private var isHovered = false
+
+    private var cardShape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: LuminaRadius.card, style: .continuous)
+    }
+
+    private var thumbHeight: CGFloat { DisplayScale.points(72) }
+
+    var body: some View {
+        VStack(spacing: LuminaSpace.xs) {
+            ZStack {
+                if isHovered {
+                    PetSprite(state: .idle, height: thumbHeight, pet: pet)
+                } else if let thumb = pet.thumbnailImage() {
+                    Image(nsImage: thumb)
+                        .resizable()
+                        .interpolation(.high)
+                        .aspectRatio(contentMode: .fit)
+                        .frame(height: thumbHeight)
+                } else {
+                    PetSprite(state: .idle, height: thumbHeight, pet: pet)
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: thumbHeight)
+            .accessibilityHidden(true)
+
+            Text(pet.name)
+                .font(uiScale.font(isSelected ? .bodyStrong : .caption))
+                .foregroundStyle(isSelected ? .primary : .secondary)
+                .lineLimit(1)
+        }
+        .padding(LuminaSpace.sm)
+        .frame(maxWidth: .infinity)
+        .background(cardShape.fill(cardFill))
+        .overlay(
+            cardShape.strokeBorder(
+                isSelected ? theme.current.color : (isHovered ? Color.luminaFillPressed : Color.luminaBorder),
+                lineWidth: isSelected ? 2 : 1
+            )
+        )
+        .overlay {
+            if isKeyboardFocused {
+                RoundedRectangle(cornerRadius: LuminaRadius.card + 3, style: .continuous)
+                    .strokeBorder(theme.current.color.opacity(0.9), lineWidth: 2)
+                    .padding(-3)
+            }
+        }
+        .contentShape(cardShape)
+        .onTapGesture(perform: action)
+        .focusable()
+        .focused(focusedSlug, equals: pet.slug)
+        .focusEffectDisabled()
+        .onKeyPress(.return) { action(); return .handled }
+        .onKeyPress(.space) { action(); return .handled }
+        .onHover { isHovered = $0 }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(pet.name) pet")
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+        .accessibilityAction(named: Text("Select")) { action() }
+    }
+
+    private var cardFill: Color {
+        if isSelected { return theme.current.color.opacity(0.18) }
+        if isHovered { return Color.luminaFillHover }
+        return Color.luminaCard
     }
 }
 
