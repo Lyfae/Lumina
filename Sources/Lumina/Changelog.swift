@@ -34,6 +34,18 @@ enum LuminaChangelog {
     ]
 
     static let releases: [ChangelogRelease] = [
+        ChangelogRelease(version: "0.5.0", entries: [
+            ChangelogEntry(
+                icon: "waveform",
+                title: "Flowing Beat Waveform",
+                description: "The Studio dock and the music widget share a smooth ribbon that travels along the track and lifts with the beat. Quiet moments stay visible, and a glowing dot marks where you are in the song."
+            ),
+            ChangelogEntry(
+                icon: "music.note",
+                title: "Simpler Music Bar",
+                description: "Seek by dragging the waveform. The dock keeps shuffle, previous, play, next, and repeat, and the widget controls stay on screen."
+            ),
+        ]),
         ChangelogRelease(version: "0.4.3", entries: [
             ChangelogEntry(
                 icon: "paintpalette",

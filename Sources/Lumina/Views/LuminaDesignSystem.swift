@@ -178,6 +178,7 @@ private struct LuminaPressableBody: View {
     let isEnabled: Bool
     @State private var isHovered = false
     @Environment(\.isFocused) private var isFocused
+    @Environment(\.luminaButtonFocusRing) private var showsFocusRing
     @StateObject private var theme = ThemeManager.shared
 
     var body: some View {
@@ -190,7 +191,7 @@ private struct LuminaPressableBody: View {
                 }
             }
             .overlay {
-                if isFocused && isEnabled {
+                if isFocused && isEnabled && showsFocusRing {
                     RoundedRectangle(cornerRadius: LuminaRadius.control + 3, style: .continuous)
                         .strokeBorder(theme.current.color.opacity(0.9), lineWidth: 2)
                         .padding(-3)
@@ -1037,12 +1038,16 @@ struct LuminaSecondaryButtonStyle: ButtonStyle {
     var destructive: Bool = false
     /// Filled accent style — same metrics as secondary so pairs align.
     var prominent: Bool = false
+    /// When true, the chrome expands to the proposed width (full-width actions).
+    /// Default false keeps content-hugging pills; pair with `.fixedSize()` for explicit hug.
+    var flexible: Bool = false
 
     func makeBody(configuration: Configuration) -> some View {
         LuminaSecondaryButtonBody(
             configuration: configuration,
             destructive: destructive,
-            prominent: prominent
+            prominent: prominent,
+            flexible: flexible
         )
     }
 }
@@ -1063,6 +1068,7 @@ private struct LuminaSecondaryButtonBody: View {
     let configuration: ButtonStyleConfiguration
     let destructive: Bool
     let prominent: Bool
+    var flexible: Bool = false
     @Environment(\.luminaButtonFocusRing) private var showsFocusRing
 
     @Environment(\.colorScheme) private var colorScheme
@@ -1080,7 +1086,10 @@ private struct LuminaSecondaryButtonBody: View {
         configuration.label
             .font(metrics.font)
             .padding(.horizontal, metrics.paddingH)
-            .frame(minHeight: metrics.height)
+            // Fixed height prevents tall-bar stretch. Width: content-hug by default;
+            // `flexible: true` expands chrome (sidebar primary). Pills use `.fixedSize()`.
+            .frame(maxWidth: flexible ? .infinity : nil)
+            .frame(height: metrics.height)
             .foregroundStyle(foreground)
             .background(
                 RoundedRectangle(cornerRadius: LuminaRadius.control, style: .continuous)
@@ -1151,11 +1160,15 @@ private struct LuminaSecondaryButtonBody: View {
 
 /// Primary filled action (Apply, etc.) with the same press language as secondary buttons.
 struct LuminaProminentButtonStyle: ButtonStyle {
+    /// Expand to proposed width (e.g. sidebar “Add Wallpaper…”). Default hugs content.
+    var flexible: Bool = false
+
     func makeBody(configuration: Configuration) -> some View {
         LuminaSecondaryButtonBody(
             configuration: configuration,
             destructive: false,
-            prominent: true
+            prominent: true,
+            flexible: flexible
         )
     }
 }

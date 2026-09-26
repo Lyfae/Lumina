@@ -33,6 +33,7 @@ final class AmbientAudioManager: NSObject, ObservableObject {
     @Published private(set) var favoriteIDs: Set<String> = []
 
     private var playbackTimer: Timer?
+    private var meterTimer: Timer?
     private var metadataTask: Task<Void, Never>?
     private var libraryMetadataTask: Task<Void, Never>?
     private weak var preferences: PreferencesStore?
@@ -266,11 +267,57 @@ final class AmbientAudioManager: NSObject, ObservableObject {
         // `.common` keeps ticks flowing while the user scrubs / drags the widget.
         RunLoop.main.add(timer, forMode: .common)
         playbackTimer = timer
+        startMeter()
     }
 
     private func stopPlaybackTimer() {
         playbackTimer?.invalidate()
         playbackTimer = nil
+        stopMeter()
+    }
+
+    private func startMeter() {
+        player?.isMeteringEnabled = true
+        meterTimer?.invalidate()
+        let timer = Timer(timeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.sampleMeter()
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        meterTimer = timer
+    }
+
+    private func stopMeter() {
+        meterTimer?.invalidate()
+        meterTimer = nil
+        AudioMeterModel.shared.push(raw: 0.45, playing: false)
+    }
+
+    private func sampleMeter() {
+        guard let player, player.isPlaying else {
+            AudioMeterModel.shared.push(raw: 0.45, playing: false)
+            return
+        }
+        player.updateMeters()
+        let channels = min(max(player.numberOfChannels, 1), 2)
+        var average: Float = -160
+        var peak: Float = -160
+        for channel in 0..<channels {
+            average = max(average, player.averagePower(forChannel: channel))
+            peak = max(peak, player.peakPower(forChannel: channel))
+        }
+        // RMS is the phrase. Peak is mixed in so a transient can outrun the average.
+        let body = Self.meterLevel(average)
+        let spike = Self.meterLevel(peak)
+        AudioMeterModel.shared.push(raw: max(body, spike * 0.72), playing: true)
+    }
+
+    /// Maps dBFS onto 0...1 with a floor at -46 dB and a curve that lets hits stand out.
+    private static func meterLevel(_ db: Float) -> CGFloat {
+        let clamped = max(-46, min(0, db))
+        let unit = CGFloat((clamped + 46) / 46)
+        return unit * unit
     }
 
     func setVisualizerActive(_ active: Bool) {}
@@ -361,6 +408,7 @@ final class AmbientAudioManager: NSObject, ObservableObject {
             // end) while the audio buffer keeps draining.
             p.numberOfLoops = 0
             p.volume = Float(volume)
+            p.isMeteringEnabled = true
             p.delegate = self   // drives loop-restart / auto-advance when the track ends
             p.prepareToPlay()
             player = p
@@ -408,6 +456,11 @@ final class AmbientAudioManager: NSObject, ObservableObject {
 
     func pause() {
         player?.pause()
+        // Publish the player's real position. The 4 Hz timer can lag up to ~0.25s,
+        // which left the scrubber a half-tick behind on pause.
+        if let player {
+            currentTime = player.currentTime
+        }
         isPlaying = false
         stopPlaybackTimer()
     }

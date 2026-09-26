@@ -197,7 +197,7 @@ enum LuminaMetrics {
     static var cropGridOpacity: Double { 0.35 }
     static var waveformBarWidth: CGFloat { DisplayScale.points(2) }
     static var waveformBarGap: CGFloat { DisplayScale.points(2) }
-    static var waveformFooterBand: CGFloat { DisplayScale.points(20) }
+    static var waveformFooterBand: CGFloat { DisplayScale.points(40) }
     static var waveformThumb: CGFloat { DisplayScale.points(12) }
     static var timeLabelWidth: CGFloat { DisplayScale.points(38) }
     static var cornerPickerScreen: CGSize {

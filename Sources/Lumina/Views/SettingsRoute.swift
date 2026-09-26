@@ -2,7 +2,7 @@ import Foundation
 import SwiftUI
 
 enum SettingsSection: String, CaseIterable, Identifiable {
-    case appearance, size, power, music, shortcuts, privacy, general, about
+    case appearance, size, power, music, pets, shortcuts, privacy, general, about
 
     var id: String { rawValue }
 
@@ -12,6 +12,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         case .size: return "Size & Spacing"
         case .power: return "Power"
         case .music: return "Music"
+        case .pets: return "Pets"
         case .shortcuts: return "Keyboard Shortcuts"
         case .privacy: return "Privacy"
         case .general: return "General"
@@ -25,11 +26,17 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         case .size: return "textformat.size"
         case .power: return "bolt.fill"
         case .music: return "music.note"
+        case .pets: return "pawprint.fill"
         case .shortcuts: return "keyboard"
         case .privacy: return "hand.raised.fill"
         case .general: return "gearshape.2.fill"
         case .about: return "info.circle.fill"
         }
+    }
+
+    /// Pet screens stay in the type. They are not offered until that work ships.
+    static var presented: [SettingsSection] {
+        allCases.filter { $0 != .pets }
     }
 }
 

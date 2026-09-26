@@ -39,7 +39,8 @@ struct SettingsView: View {
     }
 
     private var selectedSection: SettingsSection {
-        SettingsSection(rawValue: selectedSectionRaw) ?? .appearance
+        let section = SettingsSection(rawValue: selectedSectionRaw) ?? .appearance
+        return SettingsSection.presented.contains(section) ? section : .appearance
     }
 
     private var hostWindowSize: CGSize {
@@ -120,7 +121,7 @@ struct SettingsView: View {
 
     private var settingsSidebar: some View {
         VStack(alignment: .leading, spacing: LuminaSpace.xs) {
-            ForEach(SettingsSection.allCases) { section in
+            ForEach(SettingsSection.presented) { section in
                 SettingsSidebarRow(
                     section: section,
                     isSelected: selectedSection == section,
@@ -176,7 +177,7 @@ struct SettingsView: View {
     }
 
     private func moveSidebarSelection(_ direction: MoveCommandDirection) {
-        let all = SettingsSection.allCases
+        let all = SettingsSection.presented
         guard let index = all.firstIndex(of: selectedSection) else { return }
         switch direction {
         case .up where index > 0:
@@ -197,6 +198,7 @@ struct SettingsView: View {
         case .size: sizeContent
         case .power: powerContent(prefs: prefs)
         case .music: musicContent(prefs: prefs)
+        case .pets: petsContent
         case .shortcuts: shortcutsContent
         case .privacy: privacyContent
         case .general: generalContent
@@ -532,48 +534,6 @@ struct SettingsView: View {
     @ViewBuilder private func musicContent(prefs: PreferencesStore) -> some View {
         @Bindable var prefs = prefs
 
-        settingsSubheader("Music pet")
-
-        SettingsToggleRow(
-            title: "Show pet on the progress bar",
-            isOn: Binding(
-                get: { petCatalog.isEnabled },
-                set: { petCatalog.isEnabled = $0 }
-            )
-        )
-
-        SettingsToggleRow(
-            title: "Show pet in Studio",
-            isOn: Binding(
-                get: { petCatalog.showInStudio },
-                set: { petCatalog.showInStudio = $0 }
-            )
-        )
-
-        if !petCatalog.pets.isEmpty {
-            LazyVGrid(
-                columns: [
-                    GridItem(.adaptive(minimum: DisplayScale.points(96), maximum: DisplayScale.points(120)), spacing: LuminaSpace.sm),
-                ],
-                spacing: LuminaSpace.sm
-            ) {
-                ForEach(petCatalog.pets) { pet in
-                    MusicPetCard(
-                        pet: pet,
-                        isSelected: petCatalog.selectedSlug == pet.slug,
-                        isKeyboardFocused: focusedPetSlug == pet.slug,
-                        focusedSlug: $focusedPetSlug
-                    ) {
-                        petCatalog.selectedSlug = pet.slug
-                    }
-                }
-            }
-            .padding(.bottom, LuminaSpace.md)
-            .environment(\.luminaButtonFocusRing, false)
-        }
-
-        LuminaDivider()
-
         SettingsPickerRow(title: "Widget size", placesControlBelow: true) {
             LuminaSegmentedPicker(
                 selection: $prefs.widget.size,
@@ -654,6 +614,73 @@ struct SettingsView: View {
                 }
             )
         )
+    }
+
+    // MARK: - Pets
+
+    @ViewBuilder private var petsContent: some View {
+        settingsSubheader("Your pet")
+
+        if !petCatalog.pets.isEmpty {
+            LazyVGrid(
+                columns: [
+                    GridItem(.adaptive(minimum: DisplayScale.points(96), maximum: DisplayScale.points(120)), spacing: LuminaSpace.sm),
+                ],
+                spacing: LuminaSpace.sm
+            ) {
+                ForEach(petCatalog.pets) { pet in
+                    PetCard(
+                        pet: pet,
+                        isSelected: petCatalog.selectedSlug == pet.slug,
+                        isKeyboardFocused: focusedPetSlug == pet.slug,
+                        focusedSlug: $focusedPetSlug
+                    ) {
+                        petCatalog.selectedSlug = pet.slug
+                    }
+                }
+            }
+            .padding(.bottom, LuminaSpace.md)
+            .environment(\.luminaButtonFocusRing, false)
+        }
+
+        SettingsToggleRow(
+            title: "Show on the progress bar",
+            subtitle: "Walks along the Studio bar and the Now Playing widget.",
+            isOn: Binding(
+                get: { petCatalog.isEnabled },
+                set: { petCatalog.isEnabled = $0 }
+            )
+        )
+
+        LuminaDivider()
+
+        SettingsToggleRow(
+            title: "Float in Studio",
+            subtitle: "Wanders anywhere in the window. Drag it, or click to wave.",
+            isOn: Binding(
+                get: { petCatalog.showInStudio },
+                set: { petCatalog.showInStudio = $0 }
+            )
+        )
+
+        if petCatalog.showInStudio {
+            VStack(alignment: .leading, spacing: LuminaSpace.xs) {
+                LuminaSliderLabel(
+                    title: "Floating size",
+                    value: "\(Int((petCatalog.studioScale * 100).rounded()))%"
+                )
+                LuminaSlider(
+                    value: Binding(
+                        get: { petCatalog.studioScale },
+                        set: { petCatalog.studioScale = $0 }
+                    ),
+                    range: 0.5...2,
+                    step: 0.05,
+                    label: "Floating pet size"
+                )
+            }
+            .padding(.vertical, LuminaSpace.md)
+        }
     }
 
     // MARK: - Shortcuts
@@ -939,9 +966,9 @@ struct SettingsView: View {
     }
 }
 
-// MARK: - Music pet picker
+// MARK: - Pet picker
 
-private struct MusicPetCard: View {
+private struct PetCard: View {
     let pet: PetInfo
     let isSelected: Bool
     let isKeyboardFocused: Bool
@@ -956,26 +983,17 @@ private struct MusicPetCard: View {
         RoundedRectangle(cornerRadius: LuminaRadius.card, style: .continuous)
     }
 
-    private var thumbHeight: CGFloat { DisplayScale.points(72) }
+    /// Cropped character, not the raw atlas cell. The cell is mostly empty, so the
+    /// old thumbnail sat on the card edge and the name ran through the feet.
+    private var thumbHeight: CGFloat { DisplayScale.points(64) }
 
     var body: some View {
-        VStack(spacing: LuminaSpace.xs) {
-            ZStack {
-                if isHovered {
-                    PetSprite(state: .idle, height: thumbHeight, pet: pet)
-                } else if let thumb = pet.thumbnailImage() {
-                    Image(nsImage: thumb)
-                        .resizable()
-                        .interpolation(.high)
-                        .aspectRatio(contentMode: .fit)
-                        .frame(height: thumbHeight)
-                } else {
-                    PetSprite(state: .idle, height: thumbHeight, pet: pet)
-                }
-            }
-            .frame(maxWidth: .infinity)
-            .frame(height: thumbHeight)
-            .accessibilityHidden(true)
+        VStack(spacing: LuminaSpace.sm) {
+            PetSprite(state: .idle, height: thumbHeight, pet: pet)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, DisplayScale.points(6))
+                .padding(.horizontal, DisplayScale.points(4))
+                .accessibilityHidden(true)
 
             Text(pet.name)
                 .font(uiScale.font(isSelected ? .bodyStrong : .caption))

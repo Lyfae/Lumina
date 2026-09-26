@@ -273,12 +273,7 @@ struct WallpaperManagerView: View {
                 .fill(Color.luminaBorder)
                 .frame(width: 1)
 
-            ZStack {
-                // Companion stays in the preview/detail column — not over the library rail.
-                configurationColumn
-                StudioPetCompanion()
-                    .padding(.bottom, DisplayScale.points(44)) // clear Adjust / Apply row
-            }
+            configurationColumn
         }
         .frame(maxHeight: .infinity)
     }
@@ -441,8 +436,10 @@ struct WallpaperManagerView: View {
                     Label("Add Wallpaper…", systemImage: "plus")
                         .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(LuminaProminentButtonStyle())
+                // flexible: expand chrome to sidebar width (Add Music keeps default + .fixedSize()).
+                .buttonStyle(LuminaProminentButtonStyle(flexible: true))
                 .controlSize(.large)
+                .frame(maxWidth: .infinity)
             }
             .padding(.horizontal, LuminaLayout.contentPadding)
             .padding(.vertical, LuminaSpace.md)
@@ -735,6 +732,8 @@ struct WallpaperManagerView: View {
 
 }
 
+
+
 // MARK: - Audio Footer Bar
 
 /// The now-playing / queue footer. Kept as a separate view so that the 4 Hz `currentTime`
@@ -760,69 +759,12 @@ private struct AudioFooterBar: View {
                 queuePanel
             }
 
-            HStack(spacing: LuminaSpace.md) {
-                nowPlayingArtwork
-                    .opacity(hasTrack ? 1 : 0.5)
-
-                VStack(alignment: .leading, spacing: LuminaSpace.hair) {
-                    Text(nowPlayingTitle)
-                        .font(uiScale.font(.bodyStrong))
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                        .foregroundStyle(hasTrack ? .primary : .secondary)
-                    Text(nowPlayingSubtitle)
-                        .font(uiScale.font(.caption))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                }
-                .frame(maxWidth: 260, alignment: .leading)
-                .fixedSize(horizontal: true, vertical: false)
-                .help(nowPlayingTitle)
-
-                if hasTrack {
-                    HStack(spacing: LuminaSpace.xs) {
-                        transportIcon("shuffle", active: audioManager.shuffle, label: "Shuffle") {
-                            audioManager.setShuffle(!audioManager.shuffle)
-                        }
-                        .disabled(audioManager.library.count < 2)
-
-                        transportIcon("backward.end.fill", label: "Previous") {
-                            audioManager.previousTrack()
-                        }
-                        .disabled(audioManager.library.count < 2)
-
-                        transportIcon("gobackward.10", label: "Back 10 seconds") {
-                            audioManager.seek(by: -10)
-                        }
-
-                        Button { audioManager.toggle() } label: {
-                            Image(systemName: audioManager.isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                                .font(.system(size: LuminaMetrics.footerPlay))
-                                .foregroundStyle(themeManager.current.color)
-                        }
-                        .buttonStyle(LuminaPressableButtonStyle())
-                        .help(audioManager.isPlaying ? "Pause" : "Play")
-                        .accessibilityLabel(audioManager.isPlaying ? "Pause" : "Play")
-
-                        transportIcon("goforward.10", label: "Forward 10 seconds") {
-                            audioManager.seek(by: 10)
-                        }
-
-                        transportIcon("forward.end.fill", label: "Next") {
-                            if audioManager.library.count >= 2 {
-                                audioManager.nextTrack()
-                            } else {
-                                audioManager.seekToTime(0)
-                            }
-                        }
-
-                        transportIcon("repeat", active: audioManager.loops, label: "Repeat") {
-                            audioManager.setLoops(!audioManager.loops)
-                        }
-                    }
+            // One compact row. Seek lives on the waveform, so the row does not also carry ±10s buttons.
+            HStack(alignment: .center, spacing: LuminaSpace.md) {
+                footerLeadingCluster
                     .fixedSize(horizontal: true, vertical: false)
 
+                if hasTrack {
                     LuminaWaveformScrubber(
                         currentTime: audioManager.currentTime,
                         duration: audioManager.duration,
@@ -834,88 +776,155 @@ private struct AudioFooterBar: View {
                         preview: $scrubPreview,
                         onSeek: { audioManager.seekToTime($0) }
                     )
-                    .frame(minWidth: 80, maxWidth: .infinity)
+                    .frame(minWidth: DisplayScale.points(80), maxWidth: .infinity)
                     .layoutPriority(-1)
-
-                    HStack(spacing: LuminaSpace.sm) {
-                        Button {
-                            toggleMute()
-                        } label: {
-                            Image(systemName: audioManager.volume < 0.01 ? "speaker.slash.fill" : "speaker.wave.2.fill")
-                                .font(.system(size: uiScale.iconSize(.card)))
-                                .foregroundStyle(.secondary)
-                                .frame(width: LuminaMetrics.iconColumn, alignment: .leading)
-                        }
-                        .buttonStyle(LuminaPressableButtonStyle())
-                        .accessibilityLabel(audioManager.volume < 0.01 ? "Unmute" : "Mute")
-
-                        LuminaSlider(
-                            value: Binding(get: { audioManager.volume }, set: { audioManager.setVolume($0) }),
-                            range: 0...1,
-                            compact: true,
-                            label: "Music volume"
-                        )
-                        .frame(width: LuminaMetrics.footerVolumeWidth)
-                    }
-
-                    LuminaVerticalDivider().frame(height: DisplayScale.points(24))
                 } else {
-                    Spacer(minLength: LuminaSpace.md)
+                    Spacer(minLength: LuminaSpace.lg)
                 }
 
-                if hasTrack {
-                    Button {
-                        audioManager.chooseTrack()
-                    } label: {
-                        Label("Add Music…", systemImage: "plus")
-                    }
-                    .buttonStyle(LuminaSecondaryButtonStyle())
-                    .controlSize(.small)
-                    .help("Add songs to the queue")
-                } else {
-                    Button {
-                        audioManager.chooseTrack()
-                    } label: {
-                        Label("Add Music…", systemImage: "plus")
-                    }
-                    .buttonStyle(LuminaProminentButtonStyle())
-                    .controlSize(.small)
-                    .help("Add songs to the queue")
-                }
-
-                if hasTrack {
-                    Button {
-                        audioManager.clearTrack()
-                    } label: {
-                        Image(systemName: "stop.fill")
-                    }
-                    .buttonStyle(LuminaIconButtonStyle())
-                    .accessibilityLabel("Stop")
-                    .help("Stop")
-                }
-
-                Button {
-                    LuminaMotion.animate(LuminaMotion.state) { showQueue.toggle() }
-                } label: {
-                    Image(systemName: "list.bullet.rectangle")
-                }
-                .buttonStyle(LuminaIconButtonStyle(active: showQueue))
-                .accessibilityLabel("Queue")
-                .accessibilityValue(showQueue ? "Shown" : "Hidden")
-
-                Button {
-                    musicWidget.toggle()
-                } label: {
-                    Image(systemName: "rectangle.on.rectangle")
-                }
-                .buttonStyle(LuminaIconButtonStyle(active: musicWidget.isVisible))
-                .accessibilityLabel("Music widget")
-                .accessibilityValue(musicWidget.isVisible ? "Shown" : "Hidden")
+                footerTrailingCluster
+                    .fixedSize(horizontal: true, vertical: false)
             }
+            .frame(maxWidth: .infinity)
             .padding(.horizontal, LuminaLayout.contentPadding)
-            .padding(.vertical, LuminaSpace.barPaddingV + DisplayScale.points(6))
+            .padding(.vertical, LuminaSpace.barPaddingV)
             .luminaGlassChrome()
             .animation(LuminaMotion.state, value: hasTrack)
+        }
+    }
+
+    private var footerLeadingCluster: some View {
+        HStack(alignment: .center, spacing: LuminaSpace.md) {
+            nowPlayingArtwork
+                .opacity(hasTrack ? 1 : 0.5)
+
+            VStack(alignment: .leading, spacing: LuminaSpace.hair) {
+                Text(nowPlayingTitle)
+                    .font(uiScale.font(.bodyStrong))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .foregroundStyle(hasTrack ? .primary : .secondary)
+                Text(nowPlayingSubtitle)
+                    .font(uiScale.font(.caption))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            .frame(maxWidth: DisplayScale.points(260), alignment: .leading)
+            .fixedSize(horizontal: true, vertical: false)
+            .help(nowPlayingTitle)
+
+            if hasTrack {
+                HStack(spacing: LuminaSpace.xs) {
+                    transportIcon("shuffle", active: audioManager.shuffle, label: "Shuffle") {
+                        audioManager.setShuffle(!audioManager.shuffle)
+                    }
+                    .disabled(audioManager.library.count < 2)
+
+                    transportIcon("backward.end.fill", label: "Previous") {
+                        audioManager.previousTrack()
+                    }
+                    .disabled(audioManager.library.count < 2)
+
+                    Button { audioManager.toggle() } label: {
+                        Image(systemName: audioManager.isPlaying ? "pause.circle.fill" : "play.circle.fill")
+                            .font(.system(size: LuminaMetrics.footerPlay))
+                            .foregroundStyle(themeManager.current.color)
+                    }
+                    .buttonStyle(LuminaPressableButtonStyle())
+                    .help(audioManager.isPlaying ? "Pause" : "Play")
+                    .accessibilityLabel(audioManager.isPlaying ? "Pause" : "Play")
+
+                    transportIcon("forward.end.fill", label: "Next") {
+                        if audioManager.library.count >= 2 {
+                            audioManager.nextTrack()
+                        } else {
+                            audioManager.seekToTime(0)
+                        }
+                    }
+
+                    transportIcon("repeat", active: audioManager.loops, label: "Repeat") {
+                        audioManager.setLoops(!audioManager.loops)
+                    }
+                }
+            }
+        }
+    }
+
+    private var footerTrailingCluster: some View {
+        HStack(alignment: .center, spacing: LuminaSpace.md) {
+            if hasTrack {
+                HStack(spacing: LuminaSpace.sm) {
+                    Button {
+                        toggleMute()
+                    } label: {
+                        Image(systemName: audioManager.volume < 0.01 ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                            .font(.system(size: uiScale.iconSize(.card)))
+                            .foregroundStyle(.secondary)
+                            .frame(width: LuminaMetrics.iconColumn, alignment: .leading)
+                    }
+                    .buttonStyle(LuminaPressableButtonStyle())
+                    .accessibilityLabel(audioManager.volume < 0.01 ? "Unmute" : "Mute")
+
+                    LuminaSlider(
+                        value: Binding(get: { audioManager.volume }, set: { audioManager.setVolume($0) }),
+                        range: 0...1,
+                        compact: true,
+                        label: "Music volume"
+                    )
+                    .frame(width: LuminaMetrics.footerVolumeWidth)
+                }
+
+                LuminaVerticalDivider()
+                    .frame(height: DisplayScale.points(24))
+
+                Button {
+                    audioManager.chooseTrack()
+                } label: {
+                    Label("Add Music…", systemImage: "plus")
+                }
+                .buttonStyle(LuminaSecondaryButtonStyle())
+                .controlSize(.small)
+                .fixedSize()
+                .help("Add songs to the queue")
+
+                Button {
+                    audioManager.clearTrack()
+                } label: {
+                    Image(systemName: "stop.fill")
+                }
+                .buttonStyle(LuminaIconButtonStyle())
+                .accessibilityLabel("Stop")
+                .help("Stop")
+            } else {
+                Button {
+                    audioManager.chooseTrack()
+                } label: {
+                    Label("Add Music…", systemImage: "plus")
+                }
+                .buttonStyle(LuminaProminentButtonStyle())
+                .controlSize(.small)
+                .fixedSize()
+                .help("Add songs to the queue")
+            }
+
+            Button {
+                LuminaMotion.animate(LuminaMotion.state) { showQueue.toggle() }
+            } label: {
+                Image(systemName: "list.bullet.rectangle")
+            }
+            .buttonStyle(LuminaIconButtonStyle(active: showQueue))
+            .accessibilityLabel("Queue")
+            .accessibilityValue(showQueue ? "Shown" : "Hidden")
+
+            Button {
+                musicWidget.toggle()
+            } label: {
+                Image(systemName: "rectangle.on.rectangle")
+            }
+            .buttonStyle(LuminaIconButtonStyle(active: musicWidget.isVisible))
+            .accessibilityLabel("Music widget")
+            .accessibilityValue(musicWidget.isVisible ? "Shown" : "Hidden")
         }
     }
 

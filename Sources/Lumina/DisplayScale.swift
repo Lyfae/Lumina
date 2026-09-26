@@ -42,12 +42,53 @@ enum DisplayScale {
     /// Music widget is a fixed-size compact bar: art tile, waveform timeline, hover controls.
     static var musicWidgetSize: NSSize { musicWidgetSize(for: .regular) }
 
-    static func musicWidgetSize(for size: MusicWidgetPreferences.Size) -> NSSize {
+    /// Design points for one widget size. `baseHeight` is the real stack so the panel
+    /// cannot open shorter than the art, the pet band, and the controls.
+    struct MusicWidgetLayout {
+        var width: CGFloat
+        var baseHeight: CGFloat
+        var sidePad: CGFloat
+        var art: CGFloat
+        var waveBand: CGFloat
+        var controlsBand: CGFloat
+        var play: CGFloat
+        var volume: CGFloat
+    }
+
+    static func musicWidgetLayout(for size: MusicWidgetPreferences.Size) -> MusicWidgetLayout {
+        let width: CGFloat
+        let art: CGFloat
+        let controls: CGFloat
+        let side: CGFloat
+        let play: CGFloat
+        let volume: CGFloat
         switch size {
-        case .compact: return nsSize(width: 248, height: 132)
-        case .regular: return nsSize(width: 288, height: 168)
-        case .expanded: return nsSize(width: 336, height: 200)
+        case .compact:
+            width = 248; art = 40; controls = 24; side = 10; play = 28; volume = 44
+        case .regular:
+            width = 288; art = 56; controls = 24; side = 12; play = 34; volume = 56
+        case .expanded:
+            width = 336; art = 72; controls = 28; side = 14; play = 40; volume = 72
         }
+        let artPt = points(art)
+        let controlsPt = points(controls)
+        let wave = LuminaWaveformScrubber.footerBandHeight
+        let height = LuminaSpace.md * 2 + artPt + LuminaSpace.xs + wave + controlsPt
+        return MusicWidgetLayout(
+            width: points(width),
+            baseHeight: height,
+            sidePad: points(side),
+            art: artPt,
+            waveBand: wave,
+            controlsBand: controlsPt,
+            play: points(play),
+            volume: points(volume)
+        )
+    }
+
+    static func musicWidgetSize(for size: MusicWidgetPreferences.Size) -> NSSize {
+        let layout = musicWidgetLayout(for: size)
+        return NSSize(width: layout.width, height: layout.baseHeight)
     }
 
     // MARK: - Icons

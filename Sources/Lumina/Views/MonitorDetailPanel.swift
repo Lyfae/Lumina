@@ -277,7 +277,8 @@ struct MonitorDetailPanel: View {
 
             actionButtons
                 .padding(.horizontal, LuminaSpace.xl)
-                .padding(.vertical, LuminaSpace.barPaddingV)
+                .padding(.top, DisplayScale.points(6))
+                .padding(.bottom, LuminaSpace.barPaddingV)
         }
         .onAppear {
             loadCurrentValues()

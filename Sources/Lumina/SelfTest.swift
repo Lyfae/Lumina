@@ -355,6 +355,18 @@ enum SelfTest {
                   SettingsSection.allCases.first == .appearance)
             check("musicWidgetSize regular matches property",
                   DisplayScale.musicWidgetSize == DisplayScale.musicWidgetSize(for: .regular))
+            let wave = LuminaWaveformScrubber.footerBandHeight
+            let stacks: [(MusicWidgetPreferences.Size, CGFloat, CGFloat)] = [
+                (.compact, 40, 24),
+                (.regular, 56, 24),
+                (.expanded, 72, 28),
+            ]
+            for (size, art, controls) in stacks {
+                let needed = LuminaSpace.md * 2 + DisplayScale.points(art) + LuminaSpace.xs
+                    + wave + DisplayScale.points(controls)
+                let actual = DisplayScale.musicWidgetSize(for: size).height
+                check("widget \(size) fits art, pet band, and controls", actual + 0.5 >= needed)
+            }
             check("iconSize inline is 12×scale",
                   abs(UIScaleManager.shared.iconSize(.inline) - DisplayScale.points(12)) < 0.01)
             let emptyPlan = PlaybackPlan.empty

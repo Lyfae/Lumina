@@ -52,6 +52,16 @@ final class PetInfo: Identifiable, @unchecked Sendable {
         return value > 0 ? value : 8
     }
 
+    /// Whether this pet’s atlas JSON defines the given row (no inventing missing art).
+    func hasState(_ state: PetState) -> Bool {
+        rows[state] != nil
+    }
+
+    /// Atlas rows present for this pet, in `PetState.allCases` order.
+    var availableStates: [PetState] {
+        PetState.allCases.filter { rows[$0] != nil }
+    }
+
     func frameCount(for state: PetState) -> Int {
         frames(for: state).count
     }
@@ -115,7 +125,7 @@ final class PetInfo: Identifiable, @unchecked Sendable {
         return image
     }
 
-    /// CGImage origin is bottom-left; atlas rows are top-down (row 0 at top).
+    /// These atlas PNGs crop with y = 0 at the top row. Row 0 in the JSON is the top of the file.
     private static func crop(
         atlas: CGImage,
         column: Int,
@@ -125,10 +135,11 @@ final class PetInfo: Identifiable, @unchecked Sendable {
     ) -> CGImage? {
         let rect = CGRect(
             x: column * cellWidth,
-            y: atlas.height - (row + 1) * cellHeight,
+            y: row * cellHeight,
             width: cellWidth,
             height: cellHeight
         )
+        guard rect.maxX <= CGFloat(atlas.width), rect.maxY <= CGFloat(atlas.height) else { return nil }
         return atlas.cropping(to: rect)
     }
 }
@@ -141,6 +152,7 @@ final class PetCatalog: ObservableObject {
     private static let slugKey = "music.pet.slug"
     private static let enabledKey = "music.pet.enabled"
     private static let studioKey = "music.pet.studio"
+    private static let studioScaleKey = "music.pet.studio.scale"
     private static let bundledSlugs = ["lumi", "mochi", "nimbus", "ember", "pip", "koi"]
 
     @Published private(set) var pets: [PetInfo] = []
@@ -159,11 +171,24 @@ final class PetCatalog: ObservableObject {
         }
     }
 
-    /// Floating companion inside Lumina Studio (above the music bar).
+    /// Free-floating companion overlay in Lumina Studio (`music.pet.studio`).
     @Published var showInStudio: Bool {
         didSet {
             guard showInStudio != oldValue else { return }
             UserDefaults.standard.set(showInStudio, forKey: Self.studioKey)
+        }
+    }
+
+    /// Size of the floating Studio pet. 1 is the default; range is 0.5...2.
+    @Published var studioScale: Double {
+        didSet {
+            let clamped = min(2, max(0.5, studioScale))
+            if clamped != studioScale {
+                studioScale = clamped
+                return
+            }
+            guard studioScale != oldValue else { return }
+            UserDefaults.standard.set(studioScale, forKey: Self.studioScaleKey)
         }
     }
 
@@ -188,6 +213,8 @@ final class PetCatalog: ObservableObject {
         selectedSlug = defaults.string(forKey: Self.slugKey) ?? "lumi"
         isEnabled = defaults.object(forKey: Self.enabledKey) as? Bool ?? true
         showInStudio = defaults.object(forKey: Self.studioKey) as? Bool ?? true
+        let storedScale = defaults.object(forKey: Self.studioScaleKey) as? Double ?? 1
+        studioScale = min(2, max(0.5, storedScale))
         reload()
     }
 
